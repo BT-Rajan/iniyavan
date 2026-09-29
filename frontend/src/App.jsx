@@ -1,6 +1,6 @@
 import {useState,useEffect,useCallback,useRef,createContext,useContext} from 'react'
 import Markdown from 'react-markdown'
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,Plus,X,ChevronLeft,Check,Pencil,Trash2} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,Plus,X,Search,ChevronLeft,Check,Pencil,Trash2} from 'lucide-react'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -27,7 +27,7 @@ export default function App(){
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='learn'&&<Learn user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
     {page==='add'&&admin&&<Add toast={toast} done={()=>go('learn')}/>}
-    {page==='users'&&admin&&<Users toast={toast}/>}{page==='programs'&&admin&&<Programs toast={toast} onAdd={()=>go('add')}/>}
+    {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onAdd={()=>go('add')}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&admin&&<Reports/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
@@ -114,22 +114,56 @@ function Add({toast,done,edit,cancel}){
 const Sheet=({close,children})=><div className="scrim" onClick={close}><div className="sheet" onClick={e=>e.stopPropagation()}>{children}</div></div>
 const useRun=(toast,load)=>async(fn,m)=>{try{await fn();toast(m);load&&load()}catch(e){toast(e.message)}}
 
-function Users({toast}){
-  const [us,setUs]=useState([]),[n,setN]=useState({name:'',email:'',password:'',role:'student'}),[rp,setRp]=useState(null),[np,setNp]=useState('')
-  const load=()=>api('/admin/users').then(setUs).catch(e=>toast(e.message));useEffect(()=>{load()},[])
-  const run=useRun(toast,load),set=k=>e=>setN({...n,[k]:e.target.value})
-  return <><Bar title="Users" sub={us.length+' accounts'}/><div className="main">
-    {us.map(u=><div className="row" key={u.id}><div>{u.name}<small>{u.email}, {u.role}{!u.active&&', disabled'}</small></div>
-      <button className="pill" aria-label={'Reset password for '+u.email} onClick={()=>setRp(u)}>Reset</button>
-      {u.role!=='admin'&&<button className="pill" onClick={()=>run(()=>api('/admin/users/'+u.id,{method:'PATCH',body:{active:!u.active}}),u.active?'Disabled':'Enabled')}>{u.active?'Disable':'Enable'}</button>}</div>)}
-    <h3 style={{margin:'28px 0 0'}}>New user</h3>
-    <label>Name</label><input value={n.name} onChange={set('name')}/><label>Email</label><input type="email" value={n.email} onChange={set('email')}/>
-    <label>Password (8+ characters)</label><input type="password" value={n.password} onChange={set('password')}/>
-    <label>Role</label><select value={n.role} onChange={set('role')}><option value="student">Student</option><option value="admin">Admin</option></select>
-    <button className="btn" onClick={()=>run(()=>api('/admin/users',{method:'POST',body:n}).then(()=>setN({name:'',email:'',password:'',role:'student'})),'User added')}>Add user</button></div>
-    {rp&&<Sheet close={()=>setRp(null)}><h3>Reset password</h3><p className="known">{rp.email}</p>
-      <input type="password" placeholder="New password (8+ characters)" value={np} onChange={e=>setNp(e.target.value)}/>
-      <button className="btn" onClick={()=>run(()=>api('/admin/users/'+rp.id,{method:'PATCH',body:{password:np}}).then(()=>{setRp(null);setNp('')}),'Password reset')}>Reset password</button></Sheet>}</>}
+const download=(name,text)=>{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));l.download=name;l.click()}
+const USER_TEMPLATE=`name,email,password,role
+Asha Kumar,asha@example.com,,student
+Ravi S,ravi@example.com,Welcome#2026,student
+`
+
+function Users({toast,me}){
+  const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
+  const page=(query,offset)=>api(`/admin/users?q=${encodeURIComponent(query)}&limit=50&offset=${offset}`)
+  const load=()=>page(q,0).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
+  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q])
+  const more=()=>page(q,items.length).then(r=>{setItems([...items,...r.items]);setTotal(r.total)}).catch(e=>toast(e.message))
+  const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/users/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
+  const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/users/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
+  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res
+  return <><Bar title="Users" sub={total+(q?' matches':' accounts')}/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search by name, email or role" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="two"><button className="btn" onClick={()=>setEd({})}>New user</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
+    <div style={{height:14}}/>
+    {items.map(u=><div key={u.id} className="card urow"><button className="hit" onClick={()=>setEd(u)} aria-label={'Edit '+u.name}><span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><div><b>{u.name}</b><span>{u.email}</span></div></button>
+      {u.role==='admin'&&<span className="pill">Admin</span>}{!u.active&&<span className="pill off">Disabled</span>}</div>)}
+    {!items.length&&<p className="known">{q?'No one matches that search.':'No users yet.'}</p>}
+    {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
+    <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
+    {ed&&<UserSheet u={ed} me={me} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
+    {bulk&&<Sheet close={()=>setBulk(null)}>
+      {bulk.stage==='pick'&&<><h3>Bulk upload users</h3><p className="known">One row per person with the columns name, email, password and role. Leave the password blank to generate one. Role is student or admin and defaults to student. Emails that already exist are updated.</p>
+        <button className="btn ghost" onClick={()=>download('users-template.csv',USER_TEMPLATE)}>Download template</button><button className="btn" onClick={()=>fileRef.current.click()}>Choose CSV file</button></>}
+      {bulk.stage==='preview'&&<><h3>Ready to upload</h3><p className="known">{r.valid_rows} of {r.rows} rows are valid: {r.created} new, {r.updated} updated.{r.generated>0&&` ${r.generated} passwords will be generated.`}</p>
+        {r.error_count>0&&<div className="prose" style={{maxHeight:'28vh',overflow:'auto',fontSize:14}}><b>{r.error_count} rows will be skipped</b>{r.errors.map(e=><div key={e.row}>Row {e.row}: {e.error}</div>)}</div>}
+        <button className="btn" disabled={!r.valid_rows} onClick={commit}>Upload {r.valid_rows} rows</button><button className="btn ghost" onClick={()=>setBulk(null)}>Cancel</button></>}
+      {bulk.stage==='done'&&<><h3>Upload complete</h3><p className="known">{r.created} users created, {r.updated} updated.{r.credentials.length>0&&' Download the generated passwords now. They are not shown again.'}</p>
+        {r.credentials.length>0&&<button className="btn" onClick={()=>download('new-user-passwords.csv','name,email,password\n'+r.credentials.map(c=>[c.name,c.email,c.password].map(cell).join(',')).join('\n')+'\n')}>Download passwords</button>}
+        <button className="btn ghost" onClick={()=>setBulk(null)}>Close</button></>}
+    </Sheet>}</>}
+
+function UserSheet({u,me,close,done,toast}){
+  const isNew=!u.id,self=u.id===me.id,[busy,setBusy]=useState(false)
+  const [f,setF]=useState({name:u.name||'',email:u.email||'',role:u.role||'student',active:u.active??true,password:''}),set=k=>e=>setF({...f,[k]:e.target.value})
+  const save=async()=>{setBusy(true);try{
+    if(isNew)await api('/admin/users',{method:'POST',body:f})
+    else await api('/admin/users/'+u.id,{method:'PATCH',body:{name:f.name,email:f.email,password:f.password||undefined,...(self?{}:{role:f.role,active:f.active})}})
+    toast(isNew?'User added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New user':'Edit user'}</h3>
+    <label>Name</label><input value={f.name} onChange={set('name')}/><label>Email</label><input type="email" value={f.email} onChange={set('email')}/>
+    <label>Role</label><select disabled={self} value={f.role} onChange={set('role')}><option value="student">Student</option><option value="admin">Admin</option></select>
+    <label>Status</label><select disabled={self} value={f.active?'1':'0'} onChange={e=>setF({...f,active:e.target.value==='1'})}><option value="1">Active</option><option value="0">Disabled</option></select>
+    <label>{isNew?'Password (8+ characters)':'New password (leave blank to keep the current one)'}</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
+    {self&&<p className="known">You can't change your own role or status.</p>}
+    <button className="btn" disabled={busy} onClick={save}>{isNew?'Add user':'Save changes'}</button></Sheet>}
 
 function Programs({toast,onAdd}){
   const [tree,setTree]=useState([]),[imp,setImp]=useState(null),fileRef=useRef()

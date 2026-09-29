@@ -1,12 +1,12 @@
 from collections import defaultdict
-import csv, io, os, hashlib, secrets, datetime as dt, httpx, jwt
+import csv, io, os, re, hashlib, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, inspect, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -127,26 +127,92 @@ def login(b: Login, s: Session = Depends(db)):
 def whoami(u: User = Depends(me)): return {"id": u.id, "name": u.name, "role": u.role}
 
 # ---- admin ----
-class NewUser(BaseModel): name: str; email: str; password: str; role: str = "student"
-class UserPatch(BaseModel): active: bool | None = None; password: str | None = None
+ROLES = ("student", "admin")
+EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PWCHARS = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+class NewUser(BaseModel): name: str; email: str; password: str; role: str = "student"; active: bool = True
+class UserPatch(BaseModel):
+    name: str | None = None; email: str | None = None; role: str | None = None; active: bool | None = None; password: str | None = None
 @app.get("/api/admin/users")
-def users(_: User = Depends(admin), s: Session = Depends(db)):
-    return [{"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active} for u in s.query(User).order_by(User.id)]
+def users(q: str = "", limit: int = 50, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
+    qs = s.query(User)
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        qs = qs.filter(or_(func.lower(User.name).like(like), func.lower(User.email).like(like), func.lower(User.role).like(like)))
+    rows = qs.order_by(User.role, User.name).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    return {"total": qs.count(), "items": [{"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active} for u in rows]}
 @app.post("/api/admin/users")
 def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
+    e, name = b.email.strip().lower(), b.name.strip()
+    if not name: raise HTTPException(400, "Enter a name")
+    if not EMAIL.match(e): raise HTTPException(400, "Enter a valid email")
+    if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
-    e = b.email.strip().lower()
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
-    s.add(User(name=b.name, email=e, pw=hp(b.password), role="admin" if b.role == "admin" else "student")); s.commit(); return {"ok": True}
+    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active)); s.commit(); return {"ok": True}
 @app.patch("/api/admin/users/{uid}")
 def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
-    if b.active is not None and u.id != a.id: u.active = b.active
+    if u.id == a.id and ((b.role and b.role != u.role) or (b.active is not None and b.active != u.active)):
+        raise HTTPException(400, "You can't change your own role or status")
+    if b.name is not None:
+        if not b.name.strip(): raise HTTPException(400, "Name can't be empty")
+        u.name = b.name.strip()
+    if b.email is not None:
+        e = b.email.strip().lower()
+        if not EMAIL.match(e): raise HTTPException(400, "Enter a valid email")
+        if e != u.email and s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
+        u.email = e
+    if b.role:
+        if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
+        u.role = b.role
+    if b.active is not None: u.active = b.active
     if b.password:
         if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
         u.pw = hp(b.password)
     s.commit(); return {"ok": True}
+class UserImportIn(BaseModel): csv: str; dry_run: bool = True
+UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role"}
+@app.post("/api/admin/users/import")
+def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends(db)):
+    text_ = b.csv.lstrip("\ufeff")
+    if len(text_) > 1_000_000: raise HTTPException(400, "File is too large (limit 1 MB)")
+    rd = csv.DictReader(io.StringIO(text_, newline=""), delimiter=max([",", ";", "\t"], key=text_.split("\n", 1)[0].count))
+    rd.fieldnames = [UALIAS.get(h, h) for h in [(h or "").strip().lower().replace(" ", "_") for h in (rd.fieldnames or [])]]
+    missing = [c for c in ("name", "email") if c not in rd.fieldnames]
+    if missing: raise HTTPException(400, "Missing column(s): " + ", ".join(missing) + ". Download the template to see the format.")
+    rows = list(rd)
+    if len(rows) > 500: raise HTTPException(400, "Too many rows (limit 500 per file)")
+    existing = {u.email: u for u in s.query(User)}
+    seen, errors, creds = set(), [], []; created = updated = generated = 0
+    for n, row in enumerate(rows, start=2):
+        v = {k: (row.get(k) or "").strip() for k in rd.fieldnames if k}
+        if not any(v.values()): continue
+        e = v.get("email", "").lower(); role = v.get("role", "").lower() or None; pw = v.get("password", "")
+        def bad(msg): errors.append({"row": n, "error": msg})
+        if not EMAIL.match(e): bad("Invalid email"); continue
+        if e in seen: bad("Duplicate email in this file"); continue
+        if role and role not in ROLES: bad("Role must be student or admin"); continue
+        if pw and len(pw) < 8: bad("Password needs 8+ characters"); continue
+        name = v.get("name") or e.split("@")[0]
+        if len(name) > 100 or len(e) > 190: bad("Name or email is too long"); continue
+        seen.add(e); u = existing.get(e)
+        if u:
+            if u.id == a.id and role and role != u.role: bad("You can't change your own role"); continue
+            if v.get("name"): u.name = name
+            if role: u.role = role
+            if pw and not b.dry_run: u.pw = hp(pw)
+            updated += 1
+        else:
+            created += 1; generated += not pw
+            if not b.dry_run:
+                final = pw or "".join(secrets.choice(PWCHARS) for _ in range(10))
+                s.add(User(name=name, email=e, pw=hp(final), role=role or "student"))
+                if not pw: creds.append({"name": name, "email": e, "password": final})
+    s.rollback() if b.dry_run else s.commit()
+    return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,
+            "error_count": len(errors), "errors": errors[:20], "credentials": creds}
 class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):

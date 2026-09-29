@@ -25,3 +25,6 @@ Admin tab > Import from CSV. Columns: `program, semester, course, unit, topic` p
 
 ## Name and menu
 The app name comes from `APP_NAME` in `.env` (login screen, top bar, drawer, installed app name). The drawer menu (top left) has Learn, and for admins Users, Programs, AI config, Reports and About.
+
+## Users
+Admin > Users: search, create and edit accounts (name, email, role, status, password). Bulk upload takes a CSV with `name,email,password,role`; blank passwords are generated and offered as a one-time download. Existing emails are updated.

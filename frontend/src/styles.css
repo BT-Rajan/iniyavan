@@ -56,3 +56,9 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .dlink{display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;border-radius:18px;background:none;color:var(--mut);font-weight:600;text-align:left}
 .dlink:active{background:#ffffff10}.dlink.on{color:var(--tx);background:linear-gradient(135deg,#8b5cf655,#ff4d9d44)}.dlink.out{margin-top:auto}
 .fab{position:fixed;right:max(16px,calc((100vw - 520px)/2 + 16px));bottom:calc(24px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:20px;background:linear-gradient(135deg,var(--vio),var(--pink));color:#fff;display:grid;place-items:center;box-shadow:0 10px 30px #ff4d9d55;z-index:6}
+.sheet{max-height:88dvh;overflow:auto}
+.search{display:flex;align-items:center;gap:10px;padding:0 14px;border-radius:18px;background:var(--s1);border:1px solid #ffffff1a;color:var(--mut)}
+.search:focus-within{outline:2px solid var(--vio)}.search input{border:0;background:none;padding:14px 0;outline:none}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.two .btn{margin-top:12px}
+.urow .hit div{min-width:0}.urow b,.urow .hit span:not(.dot){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill.off{background:#ff4d6d33;color:#ff8a9c}
