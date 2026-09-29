@@ -29,6 +29,9 @@ Admin > Programs > Bulk upload. Columns: `program, semester, course, unit, topic
 ## Name and menu
 The app name comes from `APP_NAME` in `.env` (login screen, top bar, drawer, installed app name). The drawer menu (top left) has Learn, and for admins Users, Programs, AI config, Reports and About.
 
+## Bookmarks
+Anyone signed in can bookmark a topic with the bookmark icon at the top of the topic page (tap again to remove it). Bookmarks are private to each user. The Bookmarks page in the drawer arranges them by semester, course and unit: pick a semester button, then a course tab to see its units, then tap a unit and every unit of that course becomes a tab, each showing its bookmarked topics. Bookmarked topics also carry a small bookmark mark in the Learn lists. The `bookmarks` table is created automatically on start.
+
 ## Users
 Admin > Users is a table of name, program and semester (1 to 8). Search matches name, email, role, program or semester ("3", "sem 3"), and you can filter by program or semester and change the sort order. Tap a row to open the user's page: profile, reading activity, Edit, and Reset password (creates a new random password, shown once with a Copy button). New and edited users can be enrolled in a program and semester. You can't change your own role or status.
 Bulk upload takes a CSV with `name,email,password,role,program,semester`. Blank passwords are generated and offered as a one-time download. Program must match a name on the Programs tab; semester is 1 to 8 (`3`, `S3` and `Semester 3` all work). Existing emails are updated, and blank program or semester cells leave the current value alone.

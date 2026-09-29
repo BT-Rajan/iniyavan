@@ -73,3 +73,11 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .pill.off{background:#ff4d6d33;color:#ff8a9c}
 .uhead.p,.utr.p{grid-template-columns:minmax(0,1fr) 54px 60px}.uhead.p span+span{text-align:center}
 .utr .sub{display:block;color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ic.on{color:var(--amb)}.marks{margin-left:auto;display:flex;gap:8px;align-items:center}.marks .done{margin-left:0}.bm{color:var(--amb);flex:none}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 14px;scrollbar-width:none}.chips::-webkit-scrollbar,.tabs.scroll::-webkit-scrollbar{display:none}
+.sbtn{flex:none;display:flex;align-items:center;gap:8px;max-width:78%;padding:10px 16px;border-radius:99px;background:var(--s2);color:var(--mut);font-weight:600;white-space:nowrap}
+.sbtn.on{background:linear-gradient(135deg,var(--vio),var(--pink));color:#fff}
+.sbtn em,.tabs.scroll em{font:700 11px 'Instrument Sans';font-style:normal;background:#ffffff26;padding:2px 7px;border-radius:99px;flex:none}
+.lbl{overflow:hidden;text-overflow:ellipsis}
+.tabs.scroll{overflow-x:auto;scrollbar-width:none}.tabs.scroll button{flex:none;display:flex;align-items:center;gap:6px;padding:10px 14px;max-width:210px;white-space:nowrap}
+.link{display:flex;align-items:center;gap:2px;background:none;color:var(--mut);font-weight:600;padding:2px 0;margin:0 0 12px}

@@ -57,6 +57,11 @@ class Progress(Base):  # what each student has read
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id")); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
     reads = Column(Integer, default=1); last_read = Column(DateTime, default=dt.datetime.utcnow)
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class Bookmark(Base):  # topics a user has saved to their own list
+    __tablename__ = "bookmarks"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE")); created = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
 class AICache(Base):  # shared by all students; key changes when the topic is edited
     __tablename__ = "ai_cache"
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
@@ -335,13 +340,14 @@ M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Uni
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
     read = {p.topic_id for p in s.query(Progress).filter_by(user_id=u.id)}
+    marked = {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}
     def g(model, k):
         d = defaultdict(list)
         for r in s.query(model).order_by(model.id): d[getattr(r, k)].append(r)
         return d
     tp, un, co, se = g(Topic, "unit_id"), g(Unit, "course_id"), g(Course, "semester_id"), g(Semester, "program_id")
     return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "courses": [{"id": c.id, "name": c.name, "units": [
-        {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read} for t in tp[n.id]]} for n in un[c.id]]}
+        {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked} for t in tp[n.id]]} for n in un[c.id]]}
         for c in co[sm.id]]} for sm in se[p.id]]} for p in s.query(Program).order_by(Program.id)]
 def save_row(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
 def course_fields(b, s):
@@ -473,7 +479,19 @@ def full(t, s):
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
-    return full(t, s)
+    return {**full(t, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+@app.put("/api/topics/{tid}/bookmark")
+def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    if not s.get(Topic, tid): raise HTTPException(404, "Topic not found")
+    if not s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first():
+        s.add(Bookmark(user_id=u.id, topic_id=tid))
+        try: s.commit()
+        except Exception: s.rollback()  # a double tap raced us; it is bookmarked either way
+    return {"bookmarked": True}
+@app.delete("/api/topics/{tid}/bookmark")
+def remove_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).delete(); s.commit()
+    return {"bookmarked": False}
 @app.post("/api/topics/{tid}/read")
 def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
