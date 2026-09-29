@@ -1,6 +1,6 @@
 import {useState,useEffect,useCallback} from 'react'
 import Markdown from 'react-markdown'
-import {House,Plus,Shield,LogOut,ChevronLeft,Sparkles,Check} from 'lucide-react'
+import {Home,Plus,Shield,LogOut,ChevronLeft,Sparkles,Check} from 'lucide-react'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -15,7 +15,7 @@ export default function App(){
   if(!ready)return null
   if(!user)return <Login onIn={u=>setUser(u)} toast={toast} msg={msg}/>
   const admin=user.role==='admin'
-  const tabs=[['home',House,'Learn'],['add',Plus,'Add'],...(admin?[['admin',Shield,'Admin']]:[]),['out',LogOut,'Sign out']]
+  const tabs=[['home',Home,'Learn'],['add',Plus,'Add'],...(admin?[['admin',Shield,'Admin']]:[]),['out',LogOut,'Sign out']]
   return <>
     {tab==='home'&&<Learn user={user} toast={toast}/>}
     {tab==='add'&&<Add toast={toast} done={()=>setTab('home')}/>}
