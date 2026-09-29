@@ -19,3 +19,6 @@ No account is created automatically. Create or reset the admin (creates it if mi
 ## Content
 Structure: Program > Semester > Course > Unit > Topic. Only admins create, edit and delete; students read and learn.
 Upgrades are automatic: earlier "courses" become programs, their "subjects" become courses inside a "Semester 1", and loose topics go into a "General" unit. (Table names are unchanged: `courses` = programs, `subjects` = courses.)
+
+## CSV import
+Admin tab > Import from CSV. Columns: `program, semester, course, unit, topic` plus optional `content, question_pattern, sample_content, guideline`. Blank hierarchy cells repeat the row above; existing names are reused and existing topics are updated. A preview shows what will change before anything is saved.

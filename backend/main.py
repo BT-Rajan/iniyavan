@@ -1,5 +1,5 @@
 from collections import defaultdict
-import os, hashlib, secrets, datetime as dt, httpx, jwt
+import csv, io, os, hashlib, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -221,6 +221,65 @@ def remove(kind: str, rid: int, _: User = Depends(admin), s: Session = Depends(d
     if kind == "units": s.query(Topic).filter_by(unit_id=rid).delete()
     if r is not None: s.delete(r)
     s.commit(); return {"ok": True}
+
+# ---- CSV import (admin) ----
+LEVELS = ["program", "semester", "course", "unit"]
+TEXT_COLS = ["content", "question_pattern", "sample_content", "guideline"]
+ALIAS = {"title": "topic", "topic_title": "topic", "notes": "content", "topic_content": "content", "answer_guideline": "guideline",
+         "sample": "sample_content", "pattern": "question_pattern"}
+class ImportIn(BaseModel): csv: str; dry_run: bool = True
+@app.post("/api/admin/import")
+def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
+    text_ = b.csv.lstrip("\ufeff")
+    if len(text_) > 5_000_000: raise HTTPException(400, "File is too large (limit 5 MB)")
+    head = text_.split("\n", 1)[0]
+    rd = csv.DictReader(io.StringIO(text_, newline=""), delimiter=max([",", ";", "\t"], key=head.count))
+    rd.fieldnames = [ALIAS.get(h, h) for h in [(h or "").strip().lower().replace(" ", "_") for h in (rd.fieldnames or [])]]
+    missing = [c for c in LEVELS + ["topic"] if c not in rd.fieldnames]
+    if missing: raise HTTPException(400, "Missing column(s): " + ", ".join(missing) + ". Download the template to see the format.")
+    rows = list(rd)
+    if len(rows) > 5000: raise HTTPException(400, "Too many rows (limit 5000 per file)")
+    cache = {"program": {(x.name or "").lower(): x for x in s.query(Program)},
+             "semester": {(x.program_id, (x.name or "").lower()): x for x in s.query(Semester)},
+             "course": {(x.semester_id, (x.name or "").lower()): x for x in s.query(Course)},
+             "unit": {(x.course_id, (x.name or "").lower()): x for x in s.query(Unit)},
+             "topic": {(x.unit_id, (x.title or "").lower()): x for x in s.query(Topic)}}
+    made = {k + "s": 0 for k in cache}; updated = valid = 0; errors = []; carry = {}
+    def get(kind, key, make):
+        if key not in cache[kind]:
+            o = make(); o.owner_id = a.id; s.add(o); s.flush(); cache[kind][key] = o; made[kind + "s"] += 1
+        return cache[kind][key]
+    try:
+        for n, row in enumerate(rows, start=2):
+            v = {k: (row.get(k) or "").strip() for k in rd.fieldnames if k}
+            if not any(v.values()): continue
+            for i, lv in enumerate(LEVELS):  # blank program/semester/course/unit cells repeat the row above
+                if v[lv]:
+                    if v[lv] != carry.get(lv):
+                        for x in LEVELS[i + 1:]: carry.pop(x, None)
+                    carry[lv] = v[lv]
+                else: v[lv] = carry.get(lv, "")
+            gaps = [c for c in LEVELS + ["topic"] if not v[c]]
+            if gaps: errors.append({"row": n, "error": "Missing " + ", ".join(gaps)}); continue
+            if any(len(v[c]) > 150 for c in LEVELS) or len(v["topic"]) > 200:
+                errors.append({"row": n, "error": "A name is too long (150 characters, topics 200)"}); continue
+            p = get("program", v["program"].lower(), lambda: Program(name=v["program"]))
+            sm = get("semester", (p.id, v["semester"].lower()), lambda: Semester(name=v["semester"], program_id=p.id))
+            co = get("course", (sm.id, v["course"].lower()), lambda: Course(name=v["course"], semester_id=sm.id, program_id=p.id))
+            un = get("unit", (co.id, v["unit"].lower()), lambda: Unit(name=v["unit"], course_id=co.id))
+            vals = {k: v[k] for k in TEXT_COLS if v.get(k)}
+            t = cache["topic"].get((un.id, v["topic"].lower()))
+            if t:
+                for k, val in vals.items(): setattr(t, k, val)
+                updated += bool(vals)
+            else:
+                get("topic", (un.id, v["topic"].lower()), lambda: Topic(title=v["topic"], unit_id=un.id, course_id=co.id, **vals))
+            valid += 1
+        s.rollback() if b.dry_run else s.commit()
+    except Exception:
+        s.rollback(); raise HTTPException(500, "Import failed. Nothing was saved.")
+    return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": valid, "created": made, "updated_topics": updated,
+            "error_count": len(errors), "errors": errors[:20]}
 
 def full(t, s):
     co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co.semester_id else None

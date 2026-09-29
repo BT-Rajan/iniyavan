@@ -1,4 +1,4 @@
-import {useState,useEffect,useCallback} from 'react'
+import {useState,useEffect,useCallback,useRef} from 'react'
 import Markdown from 'react-markdown'
 import {Home,Plus,Shield,LogOut,ChevronLeft,Sparkles,Check,Pencil,Trash2} from 'lucide-react'
 import './styles.css'
@@ -6,6 +6,10 @@ import './styles.css'
 const api=async(p,o={})=>{const t=localStorage.t
   const r=await fetch('/api'+p,{...o,headers:{'Content-Type':'application/json',...(t&&{Authorization:'Bearer '+t})},body:o.body&&JSON.stringify(o.body)})
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Something went wrong');return j}
+const TEMPLATE=`program,semester,course,unit,topic,content,question_pattern,sample_content,guideline
+B.E. Mechanical Engineering,Semester 3,Thermodynamics,Unit 1: Basic concepts,First law of thermodynamics,"Energy can change form but is never created or destroyed.","2 marks: define. 13 marks: derive and solve a numerical.","Q: State the first law for a closed system.","Introduction, labelled diagram, steps, units, conclusion"
+,,,,Zeroth law of thermodynamics,"If A and B are each in equilibrium with C, they are in equilibrium with each other.","2 marks: state the law.","Q: State the zeroth law.","Definition, one example, significance"
+`
 const COL=['#8b5cf6','#ff4d9d','#ffb547','#3ee6b0','#4cc9ff']
 
 export default function App(){
@@ -95,16 +99,27 @@ function Add({toast,done,edit,cancel}){
     <button className="btn" onClick={save}>{edit?'Save changes':'Save '+kind}</button></div></>}
 
 function Admin({toast}){
-  const [st,setSt]=useState({}),[cfg,setCfg]=useState({}),[us,setUs]=useState([]),[key,setKey]=useState(''),[n,setN]=useState({name:'',email:'',password:''}),[rp,setRp]=useState(null),[np,setNp]=useState('')
+  const [st,setSt]=useState({}),[cfg,setCfg]=useState({}),[us,setUs]=useState([]),[key,setKey]=useState(''),[n,setN]=useState({name:'',email:'',password:''}),[rp,setRp]=useState(null),[np,setNp]=useState(''),[imp,setImp]=useState(null)
+  const fileRef=useRef()
+  const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setImp({text,res:await api('/admin/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
+  const go=()=>run(()=>api('/admin/import',{method:'POST',body:{csv:imp.text,dry_run:false}}).then(()=>setImp(null)),'Import complete')
+  const tpl=()=>{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([TEMPLATE],{type:'text/csv'}));l.download='eng-tutor-template.csv';l.click()}
   const load=()=>{api('/admin/stats').then(setSt);api('/admin/settings').then(setCfg);api('/admin/users').then(setUs)};useEffect(load,[])
   const run=async(fn,m)=>{try{await fn();toast(m);load()}catch(e){toast(e.message)}}
   return <><Bar title="Admin"/><div className="main"><div className="stats">
     {[['students','Students'],['topics','Topics'],['cached','Saved AI answers'],['tokens_saved','Tokens saved']].map(([k,l])=><div className="stat" key={k}><b>{(st[k]??0).toLocaleString()}</b>{l}</div>)}</div>
     <label>DeepSeek API key {cfg.key_set&&`(saved ${cfg.key_hint})`}</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="sk-…"/>
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key}}).then(()=>setKey('')),'API key saved')}>Save key</button>
+    <h3 style={{margin:'28px 0 4px'}}>Import from CSV</h3><p className="known">One row per topic. Blank program, semester, course or unit cells repeat the row above. Existing names are reused, existing topics are updated.</p>
+    <button className="btn ghost" style={{marginTop:0}} onClick={tpl}>Download template</button>
+    <button className="btn" onClick={()=>fileRef.current.click()}>Choose CSV file</button><input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/>
     <h3 style={{margin:'28px 0 4px'}}>Students</h3>
     {us.map(u=><div className="row" key={u.id}><div>{u.name}<small>{u.email} · {u.role}</small></div><button className="pill" aria-label={'Reset password for '+u.email} onClick={()=>setRp(u)}>Reset</button>{u.role!=='admin'&&<button className="pill" onClick={()=>run(()=>api('/admin/users/'+u.id,{method:'PATCH',body:{active:!u.active}}),u.active?'Disabled':'Enabled')}>{u.active?'Disable':'Enable'}</button>}</div>)}
     <label>New student</label><input placeholder="Name" value={n.name} onChange={e=>setN({...n,name:e.target.value})}/><input style={{marginTop:8}} placeholder="Email" value={n.email} onChange={e=>setN({...n,email:e.target.value})}/><input style={{marginTop:8}} type="password" placeholder="Password" value={n.password} onChange={e=>setN({...n,password:e.target.value})}/>
-    <button className="btn ghost" onClick={()=>run(()=>api('/admin/users',{method:'POST',body:n}).then(()=>setN({name:'',email:'',password:''})),'Student added')}>Add student</button>{rp&&<div className="scrim" onClick={()=>setRp(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Reset password</h3><p className="known">{rp.email}</p>
+    <button className="btn ghost" onClick={()=>run(()=>api('/admin/users',{method:'POST',body:n}).then(()=>setN({name:'',email:'',password:''})),'Student added')}>Add student</button>{imp&&<div className="scrim" onClick={()=>setImp(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Ready to import</h3>
+      <p className="known">{imp.res.valid_rows} of {imp.res.rows} rows are valid. New: {Object.entries(imp.res.created).map(([k,v])=>v+' '+k).join(', ')}. Topics updated: {imp.res.updated_topics}.</p>
+      {imp.res.error_count>0&&<div className="prose" style={{maxHeight:'28vh',overflow:'auto',fontSize:14}}><b>{imp.res.error_count} rows will be skipped</b>{imp.res.errors.map(e=><div key={e.row}>Row {e.row}: {e.error}</div>)}</div>}
+      <button className="btn" disabled={!imp.res.valid_rows} onClick={go}>Import {imp.res.valid_rows} rows</button><button className="btn ghost" onClick={()=>setImp(null)}>Cancel</button></div></div>}
+    {rp&&<div className="scrim" onClick={()=>setRp(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Reset password</h3><p className="known">{rp.email}</p>
       <input type="password" placeholder="New password (8+ characters)" value={np} onChange={e=>setNp(e.target.value)}/>
       <button className="btn" onClick={()=>run(()=>api('/admin/users/'+rp.id,{method:'PATCH',body:{password:np}}).then(()=>{setRp(null);setNp('')}),'Password reset')}>Reset password</button></div></div>}</div></>}
