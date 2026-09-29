@@ -201,25 +201,66 @@ function UserSheet({u,me,progs,close,done,toast}){
     <button className="btn" disabled={busy} onClick={save}>{isNew?'Add user':'Save changes'}</button></Sheet>}
 
 function Programs({toast,onAdd}){
-  const [tree,setTree]=useState([]),[imp,setImp]=useState(null),fileRef=useRef()
-  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[])
-  const run=useRun(toast,load)
-  const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setImp({text,res:await api('/admin/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
-  const tpl=()=>{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([TEMPLATE],{type:'text/csv'}));l.download='template.csv';l.click()}
-  const cnt=p=>{let c=0,u=0,t=0;p.semesters.forEach(s=>s.courses.forEach(x=>{c++;x.units.forEach(n=>{u++;t+=n.topics.length})}));return `${p.semesters.length} semesters, ${c} courses, ${u} units, ${t} topics`}
-  return <><Bar title="Programs" sub={tree.length+' programs'}/><div className="main">
-    {tree.map((p,i)=><div className="card" key={p.id}><span className="dot" style={{background:COL[i%5]}}>{p.name[0]}</span><div><b>{p.name}</b><span>{cnt(p)}</span></div></div>)}
-    {!tree.length&&<p className="known">No programs yet. Add one or import a CSV.</p>}
-    <p className="known">To rename or delete, open Learn and use the pencil and bin icons.</p>
-    <button className="btn" onClick={onAdd}>Add content</button>
-    <h3 style={{margin:'28px 0 4px'}}>Import from CSV</h3><p className="known">One row per topic. Blank program, semester, course or unit cells repeat the row above. Existing names are reused, existing topics are updated.</p>
-    <button className="btn ghost" style={{marginTop:0}} onClick={tpl}>Download template</button>
-    <button className="btn" onClick={()=>fileRef.current.click()}>Choose CSV file</button><input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
-    {imp&&<Sheet close={()=>setImp(null)}><h3>Ready to import</h3>
-      <p className="known">{imp.res.valid_rows} of {imp.res.rows} rows are valid. New: {Object.entries(imp.res.created).map(([k,v])=>v+' '+k).join(', ')}. Topics updated: {imp.res.updated_topics}.</p>
-      {imp.res.error_count>0&&<div className="prose" style={{maxHeight:'28vh',overflow:'auto',fontSize:14}}><b>{imp.res.error_count} rows will be skipped</b>{imp.res.errors.map(e=><div key={e.row}>Row {e.row}: {e.error}</div>)}</div>}
-      <button className="btn" disabled={!imp.res.valid_rows} onClick={()=>run(()=>api('/admin/import',{method:'POST',body:{csv:imp.text,dry_run:false}}).then(()=>setImp(null)),'Import complete')}>Import {imp.res.valid_rows} rows</button>
-      <button className="btn ghost" onClick={()=>setImp(null)}>Cancel</button></Sheet>}</>}
+  const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[order,setOrder]=useState('name')
+  const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
+  const url=offset=>`/admin/programs?q=${encodeURIComponent(q)}&order=${order}&limit=50&offset=${offset}`
+  const load=()=>api(url(0)).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
+  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q,order])
+  const more=()=>api(url(items.length)).then(r=>{setItems([...items,...r.items]);setTotal(r.total)}).catch(e=>toast(e.message))
+  const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
+  const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
+  const r=bulk?.res,made=r&&Object.entries(r.created).filter(([,v])=>v).map(([k,v])=>v+' '+k).join(', ')||'nothing new'
+  if(view)return <ProgramDetail id={view} onAdd={onAdd} toast={toast} back={()=>{setView(null);load()}}/>
+  return <><Bar title="Programs" sub={total+(q?' matches':' programs')}/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search programs" placeholder="Search program, semester or course" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="filters"><select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="name">Sort: name</option><option value="students">Sort: most students</option><option value="newest">Sort: newest first</option></select></div>
+    <div className="two"><button className="btn" onClick={()=>setEd({})}>New program</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
+    <div style={{height:14}}/>
+    {items.length>0&&<div className="uhead p" aria-hidden="true"><span>Program</span><span>Courses</span><span>Students</span></div>}
+    {items.map(x=><button key={x.id} className="utr p" onClick={()=>setView(x.id)} aria-label={'Open '+x.name}>
+      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}</b><small className="sub">{x.semesters} semesters, {x.topics} topics</small></span></span>
+      <span className="sn">{x.courses}</span><span className="sn">{x.students}</span></button>)}
+    {!items.length&&<p className="known">{q?'No program matches that search.':'No programs yet. Add one or bulk upload a CSV.'}</p>}
+    {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
+    <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
+    {ed&&<ProgramSheet p={ed} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
+    {bulk&&<Sheet close={()=>setBulk(null)}>
+      {bulk.stage==='pick'&&<><h3>Bulk upload content</h3><p className="known">One row per topic, with the columns program, semester, course, unit and topic, plus optional content, question_pattern, sample_content and guideline. Blank program, semester, course or unit cells repeat the row above. Existing names are reused and existing topics are updated. Programs that don't exist yet are created.</p>
+        <button className="btn ghost" onClick={()=>download('template.csv',TEMPLATE)}>Download template</button><button className="btn" onClick={()=>fileRef.current.click()}>Choose CSV file</button></>}
+      {bulk.stage==='preview'&&<><h3>Ready to upload</h3><p className="known">{r.valid_rows} of {r.rows} rows are valid. New: {made}. Topics updated: {r.updated_topics}.</p>
+        {r.error_count>0&&<div className="prose" style={{maxHeight:'28vh',overflow:'auto',fontSize:14}}><b>{r.error_count} rows will be skipped</b>{r.errors.map(e=><div key={e.row}>Row {e.row}: {e.error}</div>)}</div>}
+        <button className="btn" disabled={!r.valid_rows} onClick={commit}>Upload {r.valid_rows} rows</button><button className="btn ghost" onClick={()=>setBulk(null)}>Cancel</button></>}
+      {bulk.stage==='done'&&<><h3>Upload complete</h3><p className="known">Created {made}. {r.updated_topics} topics updated.{r.error_count>0&&` ${r.error_count} rows were skipped.`}</p>
+        <button className="btn ghost" onClick={()=>setBulk(null)}>Close</button></>}
+    </Sheet>}</>}
+
+function ProgramDetail({id,back,onAdd,toast}){
+  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false)
+  const load=()=>api('/admin/programs/'+id).then(setP).catch(e=>{toast(e.message);back()})
+  useEffect(()=>{load()},[id])
+  if(!p)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
+  const del=async()=>{setBusy(true);try{await api('/programs/'+p.id,{method:'DELETE'});toast('Program deleted');back()}catch(e){toast(e.message);setBusy(false)}}
+  const row=(v,l,k)=><div className="row" key={k}><div>{v}<small>{l}</small></div></div>
+  return <><Bar title={p.name} sub={p.semesters+' semesters'} back={back}/><div className="main">
+    <div className="stats">{[['semesters','Semesters'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
+    <h3 style={{margin:'24px 0 4px'}}>Semesters</h3>
+    {p.semester_list.length?p.semester_list.map(x=>row(x.name,x.courses+' courses, '+x.topics+' topics',x.id)):<p className="known">No semesters yet.</p>}
+    <h3 style={{margin:'28px 0 4px'}}>Students</h3>
+    {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?'Semester '+u.semester:'Semester not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
+    {p.students>p.student_list.length&&<p className="known">Showing {p.student_list.length} of {p.students}. Use Users to see everyone.</p>}
+    <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Rename</button><button className="btn danger" onClick={()=>setAsk(true)}>Delete</button></div>
+    <button className="btn ghost" onClick={onAdd}>Add content</button></div>
+    {ed&&<ProgramSheet p={p} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
+    {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {p.semesters} semesters, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
+      <button className="btn danger" disabled={busy} onClick={del}>Delete program</button><button className="btn ghost" onClick={()=>setAsk(false)}>Keep it</button></Sheet>}</>}
+
+function ProgramSheet({p,close,done,toast}){
+  const isNew=!p.id,[name,setName]=useState(p.name||''),[busy,setBusy]=useState(false)
+  const save=async()=>{setBusy(true);try{await api(isNew?'/programs':'/programs/'+p.id,{method:isNew?'POST':'PUT',body:{name}});toast(isNew?'Program added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New program':'Rename program'}</h3>
+    <label>Name</label><input value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&save()} placeholder="B.E. Mechanical Engineering" autoFocus/>
+    <p className="known" style={{marginTop:10}}>Names must be unique. The users CSV import matches programs by name.</p>
+    <button className="btn" disabled={busy||!name.trim()} onClick={save}>{isNew?'Add program':'Save changes'}</button></Sheet>}
 
 function AiConfig({toast}){
   const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({})

@@ -261,6 +261,41 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
     s.rollback() if b.dry_run else s.commit()
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,
             "error_count": len(errors), "errors": errors[:20], "credentials": creds}
+PSORT = {"name": lambda stu: (func.lower(Program.name),), "newest": lambda stu: (Program.id.desc(),), "students": lambda stu: (stu.desc(), func.lower(Program.name))}
+def nat(name): return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name or "")]  # "Semester 2" before "Semester 10"
+def counts(s, ids):
+    """Per program: semesters, courses, units, topics, students."""
+    c = {i: dict(semesters=0, courses=0, units=0, topics=0, students=0) for i in ids}
+    if not ids: return c
+    for pid, n in s.query(Semester.program_id, func.count(Semester.id)).filter(Semester.program_id.in_(ids)).group_by(Semester.program_id): c[pid]["semesters"] = n
+    for pid, n in s.query(Course.program_id, func.count(Course.id)).filter(Course.program_id.in_(ids)).group_by(Course.program_id): c[pid]["courses"] = n
+    for pid, n in s.query(Course.program_id, func.count(Unit.id)).join(Unit, Unit.course_id == Course.id).filter(Course.program_id.in_(ids)).group_by(Course.program_id): c[pid]["units"] = n
+    for pid, n in s.query(Course.program_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id.in_(ids)).group_by(Course.program_id): c[pid]["topics"] = n
+    for pid, n in s.query(User.program_id, func.count(User.id)).filter(User.program_id.in_(ids)).group_by(User.program_id): c[pid]["students"] = n
+    return c
+@app.get("/api/admin/programs")
+def admin_programs(q: str = "", order: str = "name", limit: int = 50, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
+    stu = s.query(func.count(User.id)).filter(User.program_id == Program.id).correlate(Program).scalar_subquery()
+    qs = s.query(Program)
+    if q.strip():
+        like = f"%{q.strip().lower()}%"  # matches the program name, or any of its semester or course names
+        qs = qs.filter(or_(func.lower(Program.name).like(like),
+            Program.id.in_(s.query(Semester.program_id).filter(func.lower(Semester.name).like(like))),
+            Program.id.in_(s.query(Course.program_id).filter(func.lower(Course.name).like(like)))))
+    rows = qs.order_by(*PSORT.get(order, PSORT["name"])(stu), Program.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    c = counts(s, [p.id for p in rows])
+    return {"total": qs.count(), "items": [{"id": p.id, "name": p.name, **c[p.id]} for p in rows]}
+@app.get("/api/admin/programs/{pid}")
+def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
+    p = s.get(Program, pid)
+    if not p: raise HTTPException(404, "No such program")
+    sems = sorted(s.query(Semester).filter_by(program_id=pid).all(), key=lambda x: nat(x.name))
+    cc = dict(s.query(Course.semester_id, func.count(Course.id)).filter(Course.program_id == pid).group_by(Course.semester_id).all())
+    tc = dict(s.query(Course.semester_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id == pid).group_by(Course.semester_id).all())
+    studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(50).all()
+    return {"id": p.id, "name": p.name, **counts(s, [pid])[pid],
+            "semester_list": [{"id": x.id, "name": x.name, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0)} for x in sems],
+            "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
 class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
@@ -321,8 +356,15 @@ def update(row, vals, s):
     if not row: raise HTTPException(404, "Not found")
     for k, v in vals.items(): setattr(row, k, v)
     s.commit(); return {"ok": True}
+def program_name(name, s, keep=None):  # names must be unique: the users CSV import finds programs by name
+    n = (name or "").strip()
+    if not n: raise HTTPException(400, "Enter a program name")
+    if len(n) > 150: raise HTTPException(400, "Program name is too long")
+    dup = s.query(Program).filter(func.lower(Program.name) == n.lower(), Program.id != (keep or 0)).first()
+    if dup: raise HTTPException(400, "A program with that name already exists")
+    return n
 @app.post("/api/programs")
-def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Program(name=b.name), u, s)
+def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Program(name=program_name(b.name, s)), u, s)
 @app.post("/api/semesters")
 def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(db)):
     if not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
@@ -336,7 +378,7 @@ def new_unit(b: UnitIn, u: User = Depends(admin), s: Session = Depends(db)):
 @app.post("/api/topics")
 def new_topic(b: TopicIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Topic(**topic_fields(b, s)), u, s)
 @app.put("/api/programs/{rid}")
-def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), b.dict(), s)
+def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), {"name": program_name(b.name, s, rid)}, s)
 @app.put("/api/semesters/{rid}")
 def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Semester, rid), b.dict(), s)
 @app.put("/api/courses/{rid}")

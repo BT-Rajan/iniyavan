@@ -20,8 +20,11 @@ No account is created automatically. Create or reset the admin (creates it if mi
 Structure: Program > Semester > Course > Unit > Topic. Only admins create, edit and delete; students read and learn.
 Upgrades are automatic: earlier "courses" become programs, their "subjects" become courses inside a "Semester 1", and loose topics go into a "General" unit. (Table names are unchanged: `courses` = programs, `subjects` = courses.)
 
-## CSV import
-Admin tab > Import from CSV. Columns: `program, semester, course, unit, topic` plus optional `content, question_pattern, sample_content, guideline`. Blank hierarchy cells repeat the row above; existing names are reused and existing topics are updated. A preview shows what will change before anything is saved.
+## Programs
+Admin > Programs works like Users: a table of programs with course and student counts, search (program, semester or course name), sorting, and New program. Tap a row for the program's page: semesters, enrolled students, Rename, Delete (with a warning of what goes with it) and Add content. Program names must be unique, because the users CSV import matches programs by name. Deleting a program un-enrols its students but keeps their accounts.
+
+## CSV import (content)
+Admin > Programs > Bulk upload. Columns: `program, semester, course, unit, topic` plus optional `content, question_pattern, sample_content, guideline`. Blank hierarchy cells repeat the row above; existing names are reused and existing topics are updated. A preview shows what will change before anything is saved.
 
 ## Name and menu
 The app name comes from `APP_NAME` in `.env` (login screen, top bar, drawer, installed app name). The drawer menu (top left) has Learn, and for admins Users, Programs, AI config, Reports and About.
