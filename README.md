@@ -15,3 +15,6 @@ The PWA installs only over HTTPS (or localhost), so put the app behind a TLS rev
 ## Admins and passwords
 No account is created automatically. Create or reset the admin (creates it if missing, otherwise resets the password and makes sure it is an active admin):
 `./manage.sh admin --email you@example.com`. Reset any user with `./manage.sh passwd --email x@y.com`, or from the Admin tab in the app (Reset).
+
+## Content
+Only admins can create, edit and delete courses, subjects, units and topics (Course › Subject › Unit › Topic). Students read and learn. Upgrading an older database is automatic: existing topics move into a "General" unit per subject.

@@ -4,7 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -29,10 +29,15 @@ class Subject(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
     course_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
+class Unit(Base):
+    __tablename__ = "units"
+    id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
 class Topic(Base):
     __tablename__ = "topics"
     id = Column(Integer, primary_key=True); title = Column(String(200)); owner_id = Column(Integer, ForeignKey("users.id"))
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
+    unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
 class Progress(Base):  # what each student has read
     __tablename__ = "progress"
@@ -71,7 +76,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.on_event("startup")
 def boot():
-    Base.metadata.create_all(engine)  # admins are created with ./manage.sh admin
+    Base.metadata.create_all(engine)
+    if "unit_id" not in [c["name"] for c in inspect(engine).get_columns("topics")]:  # upgrade from the pre-unit schema
+        with engine.begin() as c: c.execute(text("ALTER TABLE topics ADD COLUMN unit_id INT NULL"))
+    with Session_() as s:  # topics without a unit go into a "General" unit per subject
+        for sub in s.query(Subject).all():
+            orphans = s.query(Topic).filter(Topic.subject_id == sub.id, Topic.unit_id.is_(None)).all()
+            if orphans:
+                un = Unit(name="General", subject_id=sub.id, owner_id=sub.owner_id); s.add(un); s.flush()
+                for t in orphans: t.unit_id = un.id
+        s.commit()
 
 class Login(BaseModel): email: str; password: str
 @app.post("/api/login")
@@ -120,56 +134,61 @@ def stats(_: User = Depends(admin), s: Session = Depends(db)):
     return {"students": s.query(User).filter_by(role="student").count(), "topics": s.query(Topic).count(),
             "cached": s.query(AICache).count(), "tokens_saved": int(saved)}
 
-# ---- content ----
+# ---- content: admin writes, everyone reads ----
 class CourseIn(BaseModel): name: str
 class SubjectIn(BaseModel): name: str; course_id: int
+class UnitIn(BaseModel): name: str; subject_id: int
 class TopicIn(BaseModel):
-    title: str; subject_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""
-M = {"courses": Course, "subjects": Subject, "topics": Topic}
+    title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""
+M = {"courses": Course, "subjects": Subject, "units": Unit, "topics": Topic}
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
     read = {p.topic_id for p in s.query(Progress).filter_by(user_id=u.id)}
-    own = lambda r: u.role == "admin" or r.owner_id == u.id
-    topics = s.query(Topic).all(); subs = s.query(Subject).all()
-    return [{"id": c.id, "name": c.name, "own": own(c), "subjects": [{"id": x.id, "name": x.name, "own": own(x), "topics": [
-        {"id": t.id, "title": t.title, "read": t.id in read, "own": own(t)} for t in topics if t.subject_id == x.id]}
-        for x in subs if x.course_id == c.id]} for c in s.query(Course)]
-def create(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
-@app.post("/api/courses")
-def new_course(b: CourseIn, u: User = Depends(me), s: Session = Depends(db)): return create(Course(name=b.name), u, s)
-@app.post("/api/subjects")
-def new_subject(b: SubjectIn, u: User = Depends(me), s: Session = Depends(db)): return create(Subject(**b.dict()), u, s)
-@app.post("/api/topics")
-def new_topic(b: TopicIn, u: User = Depends(me), s: Session = Depends(db)): return create(Topic(**b.dict()), u, s)
-def owned(r, u):
-    if not r or (r.owner_id != u.id and u.role != "admin"): raise HTTPException(403, "You can only edit your own items")
-    return r
-@app.put("/api/courses/{rid}")
-def edit_course(rid: int, b: CourseIn, u: User = Depends(me), s: Session = Depends(db)):
-    owned(s.get(Course, rid), u).name = b.name; s.commit(); return {"ok": True}
-@app.put("/api/subjects/{rid}")
-def edit_subject(rid: int, b: SubjectIn, u: User = Depends(me), s: Session = Depends(db)):
-    r = owned(s.get(Subject, rid), u); r.name = b.name; r.course_id = b.course_id; s.commit(); return {"ok": True}
-@app.put("/api/topics/{tid}")
-def edit_topic(tid: int, b: TopicIn, u: User = Depends(me), s: Session = Depends(db)):
-    t = s.get(Topic, tid)
-    if not t or (t.owner_id != u.id and u.role != "admin"): raise HTTPException(403, "You can only edit your own topics")
-    for k, v in b.dict().items(): setattr(t, k, v)
+    topics = s.query(Topic).order_by(Topic.id).all(); units = s.query(Unit).order_by(Unit.id).all(); subs = s.query(Subject).order_by(Subject.id).all()
+    return [{"id": c.id, "name": c.name, "subjects": [{"id": x.id, "name": x.name, "units": [{"id": n.id, "name": n.name, "topics": [
+        {"id": t.id, "title": t.title, "read": t.id in read} for t in topics if t.unit_id == n.id]}
+        for n in units if n.subject_id == x.id]} for x in subs if x.course_id == c.id]} for c in s.query(Course).order_by(Course.id)]
+def save_row(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
+def topic_fields(b, s):
+    un = s.get(Unit, b.unit_id)
+    if not un: raise HTTPException(400, "Choose a unit for this topic")
+    return {**b.dict(), "subject_id": un.subject_id}
+def update(row, vals, s):
+    if not row: raise HTTPException(404, "Not found")
+    for k, v in vals.items(): setattr(row, k, v)
     s.commit(); return {"ok": True}
+@app.post("/api/courses")
+def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Course(name=b.name), u, s)
+@app.post("/api/subjects")
+def new_subject(b: SubjectIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Subject(**b.dict()), u, s)
+@app.post("/api/units")
+def new_unit(b: UnitIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Unit(**b.dict()), u, s)
+@app.post("/api/topics")
+def new_topic(b: TopicIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Topic(**topic_fields(b, s)), u, s)
+@app.put("/api/courses/{rid}")
+def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Course, rid), b.dict(), s)
+@app.put("/api/subjects/{rid}")
+def edit_subject(rid: int, b: SubjectIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Subject, rid), b.dict(), s)
+@app.put("/api/units/{rid}")
+def edit_unit(rid: int, b: UnitIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Unit, rid), b.dict(), s)
+@app.put("/api/topics/{rid}")
+def edit_topic(rid: int, b: TopicIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Topic, rid), topic_fields(b, s), s)
 @app.delete("/api/{kind}/{rid}")
-def remove(kind: str, rid: int, u: User = Depends(me), s: Session = Depends(db)):
+def remove(kind: str, rid: int, _: User = Depends(admin), s: Session = Depends(db)):
     if kind not in M: raise HTTPException(404, "Unknown item")
     r = s.get(M[kind], rid)
-    if not r or (r.owner_id != u.id and u.role != "admin"): raise HTTPException(403, "You can only delete your own items")
+    if not r: raise HTTPException(404, "Not found")
+    def clear(sid): s.query(Topic).filter_by(subject_id=sid).delete(); s.query(Unit).filter_by(subject_id=sid).delete()
     if kind == "courses":
-        for x in s.query(Subject).filter_by(course_id=rid): s.query(Topic).filter_by(subject_id=x.id).delete(); s.delete(x)
-    if kind == "subjects": s.query(Topic).filter_by(subject_id=rid).delete()
+        for x in s.query(Subject).filter_by(course_id=rid).all(): clear(x.id); s.delete(x)
+    if kind == "subjects": clear(rid)
+    if kind == "units": s.query(Topic).filter_by(unit_id=rid).delete()
     s.delete(r); s.commit(); return {"ok": True}
 
 def full(t, s):
-    sub = s.get(Subject, t.subject_id); c = s.get(Course, sub.course_id)
-    return {"id": t.id, "title": t.title, "subject_id": t.subject_id, "subject": sub.name, "course": c.name, "content": t.content,
-            "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "owner_id": t.owner_id}
+    sub = s.get(Subject, t.subject_id); c = s.get(Course, sub.course_id); un = s.get(Unit, t.unit_id) if t.unit_id else None
+    return {"id": t.id, "title": t.title, "subject_id": t.subject_id, "unit_id": t.unit_id, "unit": un.name if un else "", "subject": sub.name, "course": c.name,
+            "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline}
 @app.get("/api/topics/{tid}")
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
@@ -204,7 +223,7 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
     key = setting(s, "deepseek_key")
     if not key: raise HTTPException(503, "AI isn't set up yet. Ask your admin to add the DeepSeek key.")
-    msg = f"Course: {f['course']}\nSubject: {f['subject']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
+    msg = f"Course: {f['course']}\nSubject: {f['subject']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
         "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
     try:
         async with httpx.AsyncClient(timeout=90) as c:
