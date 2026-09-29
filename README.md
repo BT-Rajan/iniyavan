@@ -8,3 +8,6 @@ Multi-user engineering study app: FastAPI + MariaDB/MySQL + React PWA. DeepSeek 
 6. Sign in as the admin, add the DeepSeek key under Admin, then add students.
 
 The PWA installs only over HTTPS (or localhost), so put the app behind a TLS reverse proxy.
+
+## Managing users from the terminal
+`./manage.sh add --name "Name" --email a@b.com [--role admin]` (prompts for the password), `passwd`, `enable`, `disable`, `role`, `list`. Use `VENV=/path/to/venv` if your venv is not `./venv`.
