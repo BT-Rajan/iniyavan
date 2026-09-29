@@ -9,6 +9,7 @@ VENV="${VENV:-$ROOT/venv}"
 cd "$ROOT"
 
 [ -f .env ] || { echo "Missing $ROOT/.env. Copy .env.example to .env and fill it in."; exit 1; }
+grep -q '^APP_NAME=' .env || { printf '\nAPP_NAME="Eng Tutor"\n' >> .env; echo "Added APP_NAME to .env (edit it to rename the app)."; }
 command -v pm2 >/dev/null || { echo "pm2 is not installed or not on PATH."; exit 1; }
 command -v npm >/dev/null || { echo "npm is not installed or not on PATH."; exit 1; }
 

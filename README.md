@@ -22,3 +22,6 @@ Upgrades are automatic: earlier "courses" become programs, their "subjects" beco
 
 ## CSV import
 Admin tab > Import from CSV. Columns: `program, semester, course, unit, topic` plus optional `content, question_pattern, sample_content, guideline`. Blank hierarchy cells repeat the row above; existing names are reused and existing topics are updated. A preview shows what will change before anything is saved.
+
+## Name and menu
+The app name comes from `APP_NAME` in `.env` (login screen, top bar, drawer, installed app name). The drawer menu (top left) has Learn, and for admins Users, Programs, AI config, Reports and About.

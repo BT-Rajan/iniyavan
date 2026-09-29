@@ -45,3 +45,14 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .sheet{width:100%;max-width:520px;background:var(--s2);border-radius:28px 28px 0 0;padding:22px 20px calc(20px + env(safe-area-inset-bottom))}
 .btn.danger{background:linear-gradient(135deg,#ff4d6d,#ff8a4c)}
 .tabs button{font-size:13px;padding:10px 2px}
+.brand{font:800 16px 'Bricolage Grotesque';color:var(--pink);margin:0 0 14px}
+.toast{bottom:calc(24px + env(safe-area-inset-bottom))}
+.drawer{position:fixed;top:0;bottom:0;left:50%;width:100%;max-width:520px;transform:translateX(-50%);z-index:20;overflow:hidden;pointer-events:none;visibility:hidden;transition:visibility 0s linear .32s}
+.drawer.open{pointer-events:auto;visibility:visible;transition-delay:0s}
+.dscrim{position:absolute;inset:0;background:rgba(6,3,16,.62);opacity:0;transition:opacity .3s ease}.open .dscrim{opacity:1}
+.panel{position:absolute;top:0;bottom:0;left:0;width:min(84%,320px);display:flex;flex-direction:column;gap:4px;padding:calc(env(safe-area-inset-top) + 16px) 12px calc(16px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#261c45,#140e29);border-radius:0 28px 28px 0;box-shadow:10px 0 40px #000a;transform:translateX(-104%);transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+.open .panel{transform:none}
+.dhead{display:flex;align-items:center;gap:12px;padding:4px 6px 18px}.dhead div{flex:1;min-width:0}.dhead b{display:block;font:800 21px 'Bricolage Grotesque';background:linear-gradient(135deg,var(--vio),var(--pink),var(--amb));-webkit-background-clip:text;background-clip:text;color:transparent;overflow-wrap:anywhere}.dhead small{color:var(--mut)}
+.dlink{display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;border-radius:18px;background:none;color:var(--mut);font-weight:600;text-align:left}
+.dlink:active{background:#ffffff10}.dlink.on{color:var(--tx);background:linear-gradient(135deg,#8b5cf655,#ff4d9d44)}.dlink.out{margin-top:auto}
+.fab{position:fixed;right:max(16px,calc((100vw - 520px)/2 + 16px));bottom:calc(24px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:20px;background:linear-gradient(135deg,var(--vio),var(--pink));color:#fff;display:grid;place-items:center;box-shadow:0 10px 30px #ff4d9d55;z-index:6}

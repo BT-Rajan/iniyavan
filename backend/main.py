@@ -4,11 +4,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+APP_NAME = (os.getenv("APP_NAME") or "Eng Tutor").strip()
+VERSION = "1.1.0"
 DB = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost/engtutor")
 SECRET = os.getenv("JWT_SECRET", "change-me")
 engine = create_engine(DB, pool_pre_ping=True)
@@ -79,8 +82,18 @@ def admin(u: User = Depends(me)):
 def setting(s, k, d=""):
     r = s.get(Setting, k); return r.v if r else d
 
-app = FastAPI(title="Eng Tutor")
+app = FastAPI(title=APP_NAME)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@app.get("/api/config")
+def config(): return {"name": APP_NAME, "version": VERSION}
+@app.get("/manifest.json")  # served dynamically so the installed app carries APP_NAME
+def manifest():
+    icons = [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+             {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+             {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
+    return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
+                         "background_color": "#0e0a1f", "theme_color": "#0e0a1f", "icons": icons})
 
 @app.on_event("startup")
 def boot():
@@ -149,6 +162,18 @@ def stats(_: User = Depends(admin), s: Session = Depends(db)):
     saved = s.query(func.coalesce(func.sum(AICache.hits * AICache.tokens), 0)).scalar()
     return {"students": s.query(User).filter_by(role="student").count(), "topics": s.query(Topic).count(),
             "cached": s.query(AICache).count(), "tokens_saved": int(saved)}
+
+@app.get("/api/admin/reports")
+def reports(_: User = Depends(admin), s: Session = Depends(db)):
+    top = s.query(Topic.title, func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0)).join(Progress, Progress.topic_id == Topic.id) \
+        .group_by(Topic.id, Topic.title).order_by(func.sum(Progress.reads).desc()).limit(10).all()
+    studs = s.query(User.name, User.email, User.active, func.count(Progress.id), func.max(Progress.last_read)).outerjoin(Progress, Progress.user_id == User.id) \
+        .filter(User.role == "student").group_by(User.id, User.name, User.email, User.active).order_by(func.max(Progress.last_read).desc()).all()
+    ai = s.query(Topic.title, AICache.kind, AICache.hits, AICache.tokens).join(AICache, AICache.topic_id == Topic.id) \
+        .order_by((AICache.hits * AICache.tokens).desc()).limit(10).all()
+    return {"top_topics": [{"title": t, "readers": r, "reads": int(n)} for t, r, n in top],
+            "students": [{"name": n, "email": e, "active": a, "topics_read": c, "last_active": (l.isoformat() + "Z") if l else None} for n, e, a, c, l in studs],
+            "ai": [{"title": t, "kind": k, "hits": h or 0, "tokens": tk or 0, "saved": (h or 0) * (tk or 0)} for t, k, h, tk in ai]}
 
 # ---- content: admin writes, everyone reads ----
 class ProgramIn(BaseModel): name: str
