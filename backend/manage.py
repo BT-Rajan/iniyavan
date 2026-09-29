@@ -4,7 +4,7 @@ import argparse, getpass, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
-from main import Base, engine, Session_, User, hp
+from main import Base, engine, Session_, User, hp, upgrade_schema
 
 def password(given):
     while True:
@@ -28,7 +28,7 @@ def main():
     for c in ("enable", "disable"): sub.add_parser(c, help=c + " a user").add_argument("--email", required=True)
     r = sub.add_parser("role", help="change a user's role"); r.add_argument("--email", required=True); r.add_argument("--role", choices=["student", "admin"], required=True)
     sub.add_parser("list", help="list users"); sub.add_parser("check", help="exit 1 if there is no active admin")
-    x = ap.parse_args(); Base.metadata.create_all(engine)
+    x = ap.parse_args(); upgrade_schema()
     with Session_() as s:
         if x.cmd == "check": sys.exit(0 if s.query(User).filter_by(role="admin", active=True).first() else 1)
         if x.cmd == "list":

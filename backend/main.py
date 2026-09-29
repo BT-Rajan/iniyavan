@@ -23,6 +23,8 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(100)); email = Column(String(190), unique=True)
     pw = Column(String(200)); role = Column(String(10), default="student"); active = Column(Boolean, default=True)
+    program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
+    semester = Column(Integer, nullable=True)  # current semester, 1 to 8
 class Setting(Base):
     __tablename__ = "settings"
     k = Column(String(50), primary_key=True); v = Column(Text)
@@ -95,14 +97,16 @@ def manifest():
     return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
                          "background_color": "#0e0a1f", "theme_color": "#0e0a1f", "icons": icons})
 
-@app.on_event("startup")
-def boot():
+def upgrade_schema():
     Base.metadata.create_all(engine)
     cols = lambda t: [c["name"] for c in inspect(engine).get_columns(t)]
-    add_unit, add_sem = "unit_id" not in cols("topics"), "semester_id" not in cols("subjects")
+    add = [("topics", "unit_id", "INT NULL"), ("subjects", "semester_id", "INT NULL"), ("users", "program_id", "INT NULL"), ("users", "semester", "INT NULL")]
     with engine.begin() as c:  # upgrade older schemas in place
-        if add_unit: c.execute(text("ALTER TABLE topics ADD COLUMN unit_id INT NULL"))
-        if add_sem: c.execute(text("ALTER TABLE subjects ADD COLUMN semester_id INT NULL"))
+        for t, col, typ in add:
+            if col not in cols(t): c.execute(text(f"ALTER TABLE {t} ADD COLUMN {col} {typ}"))
+@app.on_event("startup")
+def boot():
+    upgrade_schema()
     with Session_() as s:
         for co in s.query(Course).all():  # topics without a unit go into "General"
             orphans = s.query(Topic).filter(Topic.course_id == co.id, Topic.unit_id.is_(None)).all()
@@ -130,17 +134,52 @@ def whoami(u: User = Depends(me)): return {"id": u.id, "name": u.name, "role": u
 ROLES = ("student", "admin")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PWCHARS = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
-class NewUser(BaseModel): name: str; email: str; password: str; role: str = "student"; active: bool = True
+SEM = re.compile(r"^(?:s|sem|semester)?\s*([1-8])$", re.I)
+def gen_pw(): return "".join(secrets.choice(PWCHARS) for _ in range(10))
+def to_sem(v):  # 3, "3", "Semester 3", "S3" -> 3; blank -> None; anything else -> error
+    if v is None or str(v).strip() == "": return None
+    m = SEM.match(str(v).strip())
+    if not m: raise HTTPException(400, "Semester must be a number from 1 to 8")
+    return int(m.group(1))
+def check_program(pid, s):
+    if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
+    return pid
+class NewUser(BaseModel):
+    name: str; email: str; password: str; role: str = "student"; active: bool = True; program_id: int | None = None; semester: int | None = None
 class UserPatch(BaseModel):
     name: str | None = None; email: str | None = None; role: str | None = None; active: bool | None = None; password: str | None = None
+    program_id: int | None = None; semester: int | None = None  # send null to clear
+USORT = {"name": (func.lower(User.name),), "role": (User.role, func.lower(User.name)), "program": (func.lower(func.coalesce(Program.name, "~")), User.semester, func.lower(User.name)),
+         "semester": (func.coalesce(User.semester, 99), func.lower(User.name)), "newest": (User.id.desc(),)}
+def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester}
 @app.get("/api/admin/users")
-def users(q: str = "", limit: int = 50, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
-    qs = s.query(User)
+def users(q: str = "", program_id: int | None = None, semester: int | None = None, order: str = "role", limit: int = 50, offset: int = 0,
+          _: User = Depends(admin), s: Session = Depends(db)):
+    qs = s.query(User, Program.name).outerjoin(Program, Program.id == User.program_id)
     if q.strip():
-        like = f"%{q.strip().lower()}%"
-        qs = qs.filter(or_(func.lower(User.name).like(like), func.lower(User.email).like(like), func.lower(User.role).like(like)))
-    rows = qs.order_by(User.role, User.name).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
-    return {"total": qs.count(), "items": [{"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active} for u in rows]}
+        like = f"%{q.strip().lower()}%"; conds = [func.lower(User.name).like(like), func.lower(User.email).like(like), func.lower(User.role).like(like), func.lower(Program.name).like(like)]
+        m = SEM.match(q.strip())
+        if m: conds.append(User.semester == int(m.group(1)))  # "3", "sem 3" and "semester 3" find semester-3 students
+        qs = qs.filter(or_(*conds))
+    if program_id is not None: qs = qs.filter(User.program_id == program_id)
+    if semester is not None: qs = qs.filter(User.semester == semester)
+    rows = qs.order_by(*USORT.get(order, USORT["role"]), User.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    return {"total": qs.count(), "items": [urow(u, pn) for u, pn in rows]}
+@app.get("/api/admin/users/{uid}")
+def user_detail(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
+    u = s.get(User, uid)
+    if not u: raise HTTPException(404, "No such user")
+    prog = s.get(Program, u.program_id) if u.program_id else None
+    n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid).one()
+    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid).order_by(Progress.last_read.desc()).limit(10).all()
+    return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
+            "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent]}
+@app.post("/api/admin/users/{uid}/reset-password")
+def reset_password(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
+    u = s.get(User, uid)
+    if not u: raise HTTPException(404, "No such user")
+    pw = gen_pw(); u.pw = hp(pw); s.commit()
+    return {"email": u.email, "password": pw}  # shown once; only the hash is stored
 @app.post("/api/admin/users")
 def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
     e, name = b.email.strip().lower(), b.name.strip()
@@ -149,7 +188,7 @@ def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
     if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
-    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active)); s.commit(); return {"ok": True}
+    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=to_sem(b.semester))); s.commit(); return {"ok": True}
 @app.patch("/api/admin/users/{uid}")
 def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -168,12 +207,15 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
         if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
         u.role = b.role
     if b.active is not None: u.active = b.active
+    sent = b.dict(exclude_unset=True)
+    if "program_id" in sent: u.program_id = check_program(b.program_id, s)
+    if "semester" in sent: u.semester = to_sem(b.semester)
     if b.password:
         if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
         u.pw = hp(b.password)
     s.commit(); return {"ok": True}
 class UserImportIn(BaseModel): csv: str; dry_run: bool = True
-UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role"}
+UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role", "programme": "program", "sem": "semester"}
 @app.post("/api/admin/users/import")
 def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends(db)):
     text_ = b.csv.lstrip("\ufeff")
@@ -184,7 +226,7 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
     if missing: raise HTTPException(400, "Missing column(s): " + ", ".join(missing) + ". Download the template to see the format.")
     rows = list(rd)
     if len(rows) > 500: raise HTTPException(400, "Too many rows (limit 500 per file)")
-    existing = {u.email: u for u in s.query(User)}
+    existing = {u.email: u for u in s.query(User)}; progs = {(p.name or "").strip().lower(): p for p in s.query(Program)}
     seen, errors, creds = set(), [], []; created = updated = generated = 0
     for n, row in enumerate(rows, start=2):
         v = {k: (row.get(k) or "").strip() for k in rd.fieldnames if k}
@@ -197,18 +239,24 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
         if pw and len(pw) < 8: bad("Password needs 8+ characters"); continue
         name = v.get("name") or e.split("@")[0]
         if len(name) > 100 or len(e) > 190: bad("Name or email is too long"); continue
+        prog = progs.get(v.get("program", "").lower()) if v.get("program") else None
+        if v.get("program") and not prog: bad("Unknown program '" + v["program"][:40] + "'. Names must match the Programs tab"); continue
+        try: sem = to_sem(v.get("semester"))
+        except HTTPException: bad("Semester must be a number from 1 to 8"); continue
         seen.add(e); u = existing.get(e)
         if u:
             if u.id == a.id and role and role != u.role: bad("You can't change your own role"); continue
             if v.get("name"): u.name = name
             if role: u.role = role
+            if prog: u.program_id = prog.id  # blank program/semester cells leave the current value alone
+            if sem: u.semester = sem
             if pw and not b.dry_run: u.pw = hp(pw)
             updated += 1
         else:
             created += 1; generated += not pw
             if not b.dry_run:
-                final = pw or "".join(secrets.choice(PWCHARS) for _ in range(10))
-                s.add(User(name=name, email=e, pw=hp(final), role=role or "student"))
+                final = pw or gen_pw()
+                s.add(User(name=name, email=e, pw=hp(final), role=role or "student", program_id=prog.id if prog else None, semester=sem))
                 if not pw: creds.append({"name": name, "email": e, "password": final})
     s.rollback() if b.dry_run else s.commit()
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,
@@ -306,6 +354,7 @@ def remove(kind: str, rid: int, _: User = Depends(admin), s: Session = Depends(d
     if kind == "programs":
         for c in s.query(Course).filter_by(program_id=rid).all(): drop_course(c)
         s.query(Semester).filter_by(program_id=rid).delete()
+        s.query(User).filter_by(program_id=rid).update({"program_id": None})
     if kind == "semesters":
         for c in s.query(Course).filter_by(semester_id=rid).all(): drop_course(c)
     if kind == "courses": drop_course(r); r = None

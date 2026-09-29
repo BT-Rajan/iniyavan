@@ -27,4 +27,6 @@ Admin tab > Import from CSV. Columns: `program, semester, course, unit, topic` p
 The app name comes from `APP_NAME` in `.env` (login screen, top bar, drawer, installed app name). The drawer menu (top left) has Learn, and for admins Users, Programs, AI config, Reports and About.
 
 ## Users
-Admin > Users: search, create and edit accounts (name, email, role, status, password). Bulk upload takes a CSV with `name,email,password,role`; blank passwords are generated and offered as a one-time download. Existing emails are updated.
+Admin > Users is a table of name, program and semester (1 to 8). Search matches name, email, role, program or semester ("3", "sem 3"), and you can filter by program or semester and change the sort order. Tap a row to open the user's page: profile, reading activity, Edit, and Reset password (creates a new random password, shown once with a Copy button). New and edited users can be enrolled in a program and semester. You can't change your own role or status.
+Bulk upload takes a CSV with `name,email,password,role,program,semester`. Blank passwords are generated and offered as a one-time download. Program must match a name on the Programs tab; semester is 1 to 8 (`3`, `S3` and `Semester 3` all work). Existing emails are updated, and blank program or semester cells leave the current value alone.
+Older databases upgrade automatically: two nullable columns (`users.program_id`, `users.semester`) are added on start.

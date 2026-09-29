@@ -115,32 +115,42 @@ const Sheet=({close,children})=><div className="scrim" onClick={close}><div clas
 const useRun=(toast,load)=>async(fn,m)=>{try{await fn();toast(m);load&&load()}catch(e){toast(e.message)}}
 
 const download=(name,text)=>{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));l.download=name;l.click()}
-const USER_TEMPLATE=`name,email,password,role
-Asha Kumar,asha@example.com,,student
-Ravi S,ravi@example.com,Welcome#2026,student
+const USER_TEMPLATE=`name,email,password,role,program,semester
+Asha Kumar,asha@example.com,,student,B.E. Mechanical Engineering,3
+Ravi S,ravi@example.com,Welcome#2026,student,B.E. Mechanical Engineering,1
 `
+const SEMS=[1,2,3,4,5,6,7,8]
 
 function Users({toast,me}){
-  const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
-  const page=(query,offset)=>api(`/admin/users?q=${encodeURIComponent(query)}&limit=50&offset=${offset}`)
-  const load=()=>page(q,0).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
-  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q])
-  const more=()=>page(q,items.length).then(r=>{setItems([...items,...r.items]);setTotal(r.total)}).catch(e=>toast(e.message))
+  const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[prog,setProg]=useState(''),[sem,setSem]=useState(''),[order,setOrder]=useState('role'),[progs,setProgs]=useState([])
+  const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
+  const url=offset=>`/admin/users?q=${encodeURIComponent(q)}&order=${order}&limit=50&offset=${offset}`+(prog?'&program_id='+prog:'')+(sem?'&semester='+sem:'')
+  const load=()=>api(url(0)).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
+  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q,prog,sem,order])
+  useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name})))).catch(()=>{})},[])
+  const more=()=>api(url(items.length)).then(r=>{setItems([...items,...r.items]);setTotal(r.total)}).catch(e=>toast(e.message))
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/users/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/users/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
-  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res
-  return <><Bar title="Users" sub={total+(q?' matches':' accounts')}/><div className="main">
-    <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search by name, email or role" value={q} onChange={e=>setQ(e.target.value)}/></div>
+  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem
+  if(view)return <UserDetail id={view} me={me} progs={progs} toast={toast} back={()=>{setView(null);load()}}/>
+  return <><Bar title="Users" sub={total+(filtered?' matches':' accounts')}/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search name, email, program or semester" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="filters">
+      <select aria-label="Filter by program" value={prog} onChange={e=>setProg(e.target.value)}><option value="">All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      <select aria-label="Filter by semester" value={sem} onChange={e=>setSem(e.target.value)}><option value="">All semesters</option>{SEMS.map(n=><option key={n} value={n}>Semester {n}</option>)}</select>
+      <select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="role">Sort: role, then name</option><option value="name">Sort: name</option><option value="program">Sort: program</option><option value="semester">Sort: semester</option><option value="newest">Sort: newest first</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>New user</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
     <div style={{height:14}}/>
-    {items.map(u=><div key={u.id} className="card urow"><button className="hit" onClick={()=>setEd(u)} aria-label={'Edit '+u.name}><span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><div><b>{u.name}</b><span>{u.email}</span></div></button>
-      {u.role==='admin'&&<span className="pill">Admin</span>}{!u.active&&<span className="pill off">Disabled</span>}</div>)}
-    {!items.length&&<p className="known">{q?'No one matches that search.':'No users yet.'}</p>}
+    {items.length>0&&<div className="uhead" aria-hidden="true"><span>Name</span><span>Program</span><span>Sem</span></div>}
+    {items.map(u=><button key={u.id} className="utr" onClick={()=>setView(u.id)} aria-label={'Open '+u.name}>
+      <span className="nm"><span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role==='admin'||!u.active)&&<span className="tags">{u.role==='admin'&&<span className="pill">Admin</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
+      <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
+    {!items.length&&<p className="known">{filtered?'No one matches that search.':'No users yet.'}</p>}
     {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
     <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
-    {ed&&<UserSheet u={ed} me={me} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
+    {ed&&<UserSheet u={ed} me={me} progs={progs} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
     {bulk&&<Sheet close={()=>setBulk(null)}>
-      {bulk.stage==='pick'&&<><h3>Bulk upload users</h3><p className="known">One row per person with the columns name, email, password and role. Leave the password blank to generate one. Role is student or admin and defaults to student. Emails that already exist are updated.</p>
+      {bulk.stage==='pick'&&<><h3>Bulk upload users</h3><p className="known">One row per person with the columns name, email, password, role, program and semester. Leave the password blank to generate one. Role is student or admin and defaults to student. Program must match a name on the Programs tab, and semester is a number from 1 to 8. Emails that already exist are updated, and blank program or semester cells leave the current value alone.</p>
         <button className="btn ghost" onClick={()=>download('users-template.csv',USER_TEMPLATE)}>Download template</button><button className="btn" onClick={()=>fileRef.current.click()}>Choose CSV file</button></>}
       {bulk.stage==='preview'&&<><h3>Ready to upload</h3><p className="known">{r.valid_rows} of {r.rows} rows are valid: {r.created} new, {r.updated} updated.{r.generated>0&&` ${r.generated} passwords will be generated.`}</p>
         {r.error_count>0&&<div className="prose" style={{maxHeight:'28vh',overflow:'auto',fontSize:14}}><b>{r.error_count} rows will be skipped</b>{r.errors.map(e=><div key={e.row}>Row {e.row}: {e.error}</div>)}</div>}
@@ -150,18 +160,43 @@ function Users({toast,me}){
         <button className="btn ghost" onClick={()=>setBulk(null)}>Close</button></>}
     </Sheet>}</>}
 
-function UserSheet({u,me,close,done,toast}){
+function UserDetail({id,me,progs,back,toast}){
+  const [u,setU]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[pw,setPw]=useState(null),[busy,setBusy]=useState(false)
+  const load=()=>api('/admin/users/'+id).then(setU).catch(e=>{toast(e.message);back()})
+  useEffect(()=>{load()},[id])
+  if(!u)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
+  const reset=async()=>{setBusy(true);try{const r=await api(`/admin/users/${u.id}/reset-password`,{method:'POST'});setAsk(false);setPw(r.password)}catch(e){toast(e.message)}setBusy(false)}
+  const copy=async()=>{try{await navigator.clipboard.writeText(pw);toast('Copied')}catch{toast('Press and hold the password to copy it')}}
+  const row=(v,l)=><div className="row"><div>{v}<small>{l}</small></div></div>
+  return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
+    <div className="stats"><div className="stat"><b>{u.topics_read}</b>Topics read</div><div className="stat"><b>{u.reads}</b>Total reads</div></div>
+    <h3 style={{margin:'24px 0 4px'}}>Profile</h3>
+    {row(u.role==='admin'?'Admin':'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set','Semester')}{row(day(u.last_active),'Last active')}
+    <h3 style={{margin:'28px 0 4px'}}>Recently read</h3>
+    {u.recent.length?u.recent.map((x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads} reads, last {day(x.last_read)}</small></div></div>):<p className="known">No reading activity yet.</p>}
+    <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Edit</button><button className="btn" onClick={()=>setAsk(true)}>Reset password</button></div></div>
+    {ed&&<UserSheet u={u} me={me} progs={progs} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
+    {ask&&<Sheet close={()=>setAsk(false)}><h3>Reset password?</h3><p className="known">This gives {u.name} a new password and replaces the old one straight away. You will see the new password once.</p>
+      <button className="btn danger" disabled={busy} onClick={reset}>Reset password</button><button className="btn ghost" onClick={()=>setAsk(false)}>Cancel</button></Sheet>}
+    {pw&&<Sheet close={()=>setPw(null)}><h3>New password</h3><p className="known">Share this with {u.name} now. It is not shown again.</p><div className="pw">{pw}</div>
+      <button className="btn" onClick={copy}>Copy password</button><button className="btn ghost" onClick={()=>setPw(null)}>Done</button></Sheet>}</>}
+
+function UserSheet({u,me,progs,close,done,toast}){
   const isNew=!u.id,self=u.id===me.id,[busy,setBusy]=useState(false)
-  const [f,setF]=useState({name:u.name||'',email:u.email||'',role:u.role||'student',active:u.active??true,password:''}),set=k=>e=>setF({...f,[k]:e.target.value})
+  const [f,setF]=useState({name:u.name||'',email:u.email||'',role:u.role||'student',active:u.active??true,password:'',program_id:u.program_id||'',semester:u.semester||''}),set=k=>e=>setF({...f,[k]:e.target.value})
   const save=async()=>{setBusy(true);try{
-    if(isNew)await api('/admin/users',{method:'POST',body:f})
-    else await api('/admin/users/'+u.id,{method:'PATCH',body:{name:f.name,email:f.email,password:f.password||undefined,...(self?{}:{role:f.role,active:f.active})}})
+    const enrol={program_id:f.program_id?+f.program_id:null,semester:f.semester?+f.semester:null}
+    if(isNew)await api('/admin/users',{method:'POST',body:{...f,...enrol}})
+    else await api('/admin/users/'+u.id,{method:'PATCH',body:{name:f.name,email:f.email,...enrol,...(self?{}:{role:f.role,active:f.active})}})
     toast(isNew?'User added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
   return <Sheet close={close}><h3>{isNew?'New user':'Edit user'}</h3>
     <label>Name</label><input value={f.name} onChange={set('name')}/><label>Email</label><input type="email" value={f.email} onChange={set('email')}/>
+    <label>Program</label><select value={f.program_id} onChange={set('program_id')}><option value="">Not set</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+    <label>Semester</label><select value={f.semester} onChange={set('semester')}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
     <label>Role</label><select disabled={self} value={f.role} onChange={set('role')}><option value="student">Student</option><option value="admin">Admin</option></select>
     <label>Status</label><select disabled={self} value={f.active?'1':'0'} onChange={e=>setF({...f,active:e.target.value==='1'})}><option value="1">Active</option><option value="0">Disabled</option></select>
-    <label>{isNew?'Password (8+ characters)':'New password (leave blank to keep the current one)'}</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
+    {isNew?<><label>Password (8+ characters)</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/></>
+      :<p className="known" style={{marginTop:14}}>To give this person a new password, use Reset password on their page.</p>}
     {self&&<p className="known">You can't change your own role or status.</p>}
     <button className="btn" disabled={busy} onClick={save}>{isNew?'Add user':'Save changes'}</button></Sheet>}
 

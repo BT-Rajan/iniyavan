@@ -60,5 +60,14 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .search{display:flex;align-items:center;gap:10px;padding:0 14px;border-radius:18px;background:var(--s1);border:1px solid #ffffff1a;color:var(--mut)}
 .search:focus-within{outline:2px solid var(--vio)}.search input{border:0;background:none;padding:14px 0;outline:none}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.two .btn{margin-top:12px}
-.urow .hit div{min-width:0}.urow b,.urow .hit span:not(.dot){display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filters{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0 0}.filters select{padding:12px;font-size:14px;min-width:0}.filters select:nth-child(3){grid-column:1/-1}
+.uhead,.utr{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 34px;gap:10px;align-items:center}
+.uhead{padding:0 14px 6px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}.uhead span:last-child,.utr .sn{text-align:center}
+.utr{width:100%;padding:10px 14px;margin:0 0 8px;border-radius:18px;background:var(--s1);border:1px solid #ffffff12;text-align:left}.utr:active{opacity:.7}
+.utr .nm{display:flex;align-items:center;gap:10px;min-width:0}.utr .tx{display:block;min-width:0}
+.utr .dot{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;font:800 15px 'Bricolage Grotesque';color:#160d2e;flex:none}
+.utr b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.utr .pg{color:var(--mut);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.utr .sn{font:700 15px 'Bricolage Grotesque'}
+.utr .tags{display:block}.utr .pill{padding:1px 8px;font-size:11px;margin-right:4px}
+.pw{font:600 22px ui-monospace,Menlo,Consolas,monospace;letter-spacing:.08em;text-align:center;padding:16px;border-radius:16px;background:var(--ink);user-select:all;overflow-wrap:anywhere}
 .pill.off{background:#ff4d6d33;color:#ff8a9c}
