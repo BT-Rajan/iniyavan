@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os, hashlib, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -22,21 +23,28 @@ class User(Base):
 class Setting(Base):
     __tablename__ = "settings"
     k = Column(String(50), primary_key=True); v = Column(Text)
-class Course(Base):
+# Hierarchy: Program > Semester > Course > Unit > Topic.
+# Program and Course keep their original table names ("courses", "subjects") so existing databases upgrade in place.
+class Program(Base):
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
-class Subject(Base):
+class Semester(Base):
+    __tablename__ = "semesters"
+    id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
+    program_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
+class Course(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
-    course_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
+    program_id = Column("course_id", Integer, ForeignKey("courses.id", ondelete="CASCADE"))
+    semester_id = Column(Integer, ForeignKey("semesters.id", ondelete="CASCADE"), nullable=True)
 class Unit(Base):
     __tablename__ = "units"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
-    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
+    course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
 class Topic(Base):
     __tablename__ = "topics"
     id = Column(Integer, primary_key=True); title = Column(String(200)); owner_id = Column(Integer, ForeignKey("users.id"))
-    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
+    course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
     unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
 class Progress(Base):  # what each student has read
@@ -77,14 +85,22 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.on_event("startup")
 def boot():
     Base.metadata.create_all(engine)
-    if "unit_id" not in [c["name"] for c in inspect(engine).get_columns("topics")]:  # upgrade from the pre-unit schema
-        with engine.begin() as c: c.execute(text("ALTER TABLE topics ADD COLUMN unit_id INT NULL"))
-    with Session_() as s:  # topics without a unit go into a "General" unit per subject
-        for sub in s.query(Subject).all():
-            orphans = s.query(Topic).filter(Topic.subject_id == sub.id, Topic.unit_id.is_(None)).all()
+    cols = lambda t: [c["name"] for c in inspect(engine).get_columns(t)]
+    add_unit, add_sem = "unit_id" not in cols("topics"), "semester_id" not in cols("subjects")
+    with engine.begin() as c:  # upgrade older schemas in place
+        if add_unit: c.execute(text("ALTER TABLE topics ADD COLUMN unit_id INT NULL"))
+        if add_sem: c.execute(text("ALTER TABLE subjects ADD COLUMN semester_id INT NULL"))
+    with Session_() as s:
+        for co in s.query(Course).all():  # topics without a unit go into "General"
+            orphans = s.query(Topic).filter(Topic.course_id == co.id, Topic.unit_id.is_(None)).all()
             if orphans:
-                un = Unit(name="General", subject_id=sub.id, owner_id=sub.owner_id); s.add(un); s.flush()
+                un = Unit(name="General", course_id=co.id, owner_id=co.owner_id); s.add(un); s.flush()
                 for t in orphans: t.unit_id = un.id
+        for p in s.query(Program).all():  # courses without a semester go into "Semester 1"
+            orphans = s.query(Course).filter(Course.program_id == p.id, Course.semester_id.is_(None)).all()
+            if orphans:
+                sem = Semester(name="Semester 1", program_id=p.id, owner_id=p.owner_id); s.add(sem); s.flush()
+                for co in orphans: co.semester_id = sem.id
         s.commit()
 
 class Login(BaseModel): email: str; password: str
@@ -135,40 +151,57 @@ def stats(_: User = Depends(admin), s: Session = Depends(db)):
             "cached": s.query(AICache).count(), "tokens_saved": int(saved)}
 
 # ---- content: admin writes, everyone reads ----
-class CourseIn(BaseModel): name: str
-class SubjectIn(BaseModel): name: str; course_id: int
-class UnitIn(BaseModel): name: str; subject_id: int
+class ProgramIn(BaseModel): name: str
+class SemesterIn(BaseModel): name: str; program_id: int
+class CourseIn(BaseModel): name: str; semester_id: int
+class UnitIn(BaseModel): name: str; course_id: int
 class TopicIn(BaseModel):
     title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""
-M = {"courses": Course, "subjects": Subject, "units": Unit, "topics": Topic}
+M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Unit, "topics": Topic}
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
     read = {p.topic_id for p in s.query(Progress).filter_by(user_id=u.id)}
-    topics = s.query(Topic).order_by(Topic.id).all(); units = s.query(Unit).order_by(Unit.id).all(); subs = s.query(Subject).order_by(Subject.id).all()
-    return [{"id": c.id, "name": c.name, "subjects": [{"id": x.id, "name": x.name, "units": [{"id": n.id, "name": n.name, "topics": [
-        {"id": t.id, "title": t.title, "read": t.id in read} for t in topics if t.unit_id == n.id]}
-        for n in units if n.subject_id == x.id]} for x in subs if x.course_id == c.id]} for c in s.query(Course).order_by(Course.id)]
+    def g(model, k):
+        d = defaultdict(list)
+        for r in s.query(model).order_by(model.id): d[getattr(r, k)].append(r)
+        return d
+    tp, un, co, se = g(Topic, "unit_id"), g(Unit, "course_id"), g(Course, "semester_id"), g(Semester, "program_id")
+    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "courses": [{"id": c.id, "name": c.name, "units": [
+        {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read} for t in tp[n.id]]} for n in un[c.id]]}
+        for c in co[sm.id]]} for sm in se[p.id]]} for p in s.query(Program).order_by(Program.id)]
 def save_row(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
+def course_fields(b, s):
+    sem = s.get(Semester, b.semester_id)
+    if not sem: raise HTTPException(400, "Choose a semester for this course")
+    return {"name": b.name, "semester_id": sem.id, "program_id": sem.program_id}
 def topic_fields(b, s):
     un = s.get(Unit, b.unit_id)
     if not un: raise HTTPException(400, "Choose a unit for this topic")
-    return {**b.dict(), "subject_id": un.subject_id}
+    return {**b.dict(), "course_id": un.course_id}
 def update(row, vals, s):
     if not row: raise HTTPException(404, "Not found")
     for k, v in vals.items(): setattr(row, k, v)
     s.commit(); return {"ok": True}
+@app.post("/api/programs")
+def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Program(name=b.name), u, s)
+@app.post("/api/semesters")
+def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(db)):
+    if not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
+    return save_row(Semester(**b.dict()), u, s)
 @app.post("/api/courses")
-def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Course(name=b.name), u, s)
-@app.post("/api/subjects")
-def new_subject(b: SubjectIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Subject(**b.dict()), u, s)
+def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Course(**course_fields(b, s)), u, s)
 @app.post("/api/units")
-def new_unit(b: UnitIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Unit(**b.dict()), u, s)
+def new_unit(b: UnitIn, u: User = Depends(admin), s: Session = Depends(db)):
+    if not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
+    return save_row(Unit(**b.dict()), u, s)
 @app.post("/api/topics")
 def new_topic(b: TopicIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Topic(**topic_fields(b, s)), u, s)
+@app.put("/api/programs/{rid}")
+def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), b.dict(), s)
+@app.put("/api/semesters/{rid}")
+def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Semester, rid), b.dict(), s)
 @app.put("/api/courses/{rid}")
-def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Course, rid), b.dict(), s)
-@app.put("/api/subjects/{rid}")
-def edit_subject(rid: int, b: SubjectIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Subject, rid), b.dict(), s)
+def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Course, rid), course_fields(b, s), s)
 @app.put("/api/units/{rid}")
 def edit_unit(rid: int, b: UnitIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Unit, rid), b.dict(), s)
 @app.put("/api/topics/{rid}")
@@ -178,16 +211,22 @@ def remove(kind: str, rid: int, _: User = Depends(admin), s: Session = Depends(d
     if kind not in M: raise HTTPException(404, "Unknown item")
     r = s.get(M[kind], rid)
     if not r: raise HTTPException(404, "Not found")
-    def clear(sid): s.query(Topic).filter_by(subject_id=sid).delete(); s.query(Unit).filter_by(subject_id=sid).delete()
-    if kind == "courses":
-        for x in s.query(Subject).filter_by(course_id=rid).all(): clear(x.id); s.delete(x)
-    if kind == "subjects": clear(rid)
+    def drop_course(c): s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
+    if kind == "programs":
+        for c in s.query(Course).filter_by(program_id=rid).all(): drop_course(c)
+        s.query(Semester).filter_by(program_id=rid).delete()
+    if kind == "semesters":
+        for c in s.query(Course).filter_by(semester_id=rid).all(): drop_course(c)
+    if kind == "courses": drop_course(r); r = None
     if kind == "units": s.query(Topic).filter_by(unit_id=rid).delete()
-    s.delete(r); s.commit(); return {"ok": True}
+    if r is not None: s.delete(r)
+    s.commit(); return {"ok": True}
 
 def full(t, s):
-    sub = s.get(Subject, t.subject_id); c = s.get(Course, sub.course_id); un = s.get(Unit, t.unit_id) if t.unit_id else None
-    return {"id": t.id, "title": t.title, "subject_id": t.subject_id, "unit_id": t.unit_id, "unit": un.name if un else "", "subject": sub.name, "course": c.name,
+    co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co.semester_id else None
+    un = s.get(Unit, t.unit_id) if t.unit_id else None
+    return {"id": t.id, "title": t.title, "course_id": t.course_id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
+            "semester": sem.name if sem else "", "program": s.get(Program, co.program_id).name,
             "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline}
 @app.get("/api/topics/{tid}")
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
@@ -203,7 +242,7 @@ def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     else: s.add(Progress(user_id=u.id, topic_id=tid))
     s.commit()
     known = [x.title for x in s.query(Topic).join(Progress, Progress.topic_id == Topic.id)
-             .filter(Progress.user_id == u.id, Topic.subject_id == t.subject_id, Topic.id != tid).limit(8)]
+             .filter(Progress.user_id == u.id, Topic.course_id == t.course_id, Topic.id != tid).limit(8)]
     n = s.query(Progress).filter_by(user_id=u.id).count()
     return {"known": known, "topics_read": n}
 
@@ -223,7 +262,7 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
     key = setting(s, "deepseek_key")
     if not key: raise HTTPException(503, "AI isn't set up yet. Ask your admin to add the DeepSeek key.")
-    msg = f"Course: {f['course']}\nSubject: {f['subject']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
+    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
         "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
     try:
         async with httpx.AsyncClient(timeout=90) as c:

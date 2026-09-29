@@ -17,4 +17,5 @@ No account is created automatically. Create or reset the admin (creates it if mi
 `./manage.sh admin --email you@example.com`. Reset any user with `./manage.sh passwd --email x@y.com`, or from the Admin tab in the app (Reset).
 
 ## Content
-Only admins can create, edit and delete courses, subjects, units and topics (Course › Subject › Unit › Topic). Students read and learn. Upgrading an older database is automatic: existing topics move into a "General" unit per subject.
+Structure: Program > Semester > Course > Unit > Topic. Only admins create, edit and delete; students read and learn.
+Upgrades are automatic: earlier "courses" become programs, their "subjects" become courses inside a "Semester 1", and loose topics go into a "General" unit. (Table names are unchanged: `courses` = programs, `subjects` = courses.)
