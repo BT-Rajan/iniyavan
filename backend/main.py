@@ -71,10 +71,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.on_event("startup")
 def boot():
-    Base.metadata.create_all(engine)
-    with Session_() as s:
-        if not s.query(User).filter_by(role="admin").first():
-            s.add(User(name="Admin", email=os.getenv("ADMIN_EMAIL", "admin@example.com"), pw=hp(os.getenv("ADMIN_PASSWORD", "admin123")), role="admin")); s.commit()
+    Base.metadata.create_all(engine)  # admins are created with ./manage.sh admin
 
 class Login(BaseModel): email: str; password: str
 @app.post("/api/login")
@@ -94,6 +91,7 @@ def users(_: User = Depends(admin), s: Session = Depends(db)):
     return [{"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active} for u in s.query(User).order_by(User.id)]
 @app.post("/api/admin/users")
 def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
+    if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     e = b.email.strip().lower()
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
     s.add(User(name=b.name, email=e, pw=hp(b.password), role="admin" if b.role == "admin" else "student")); s.commit(); return {"ok": True}
@@ -102,7 +100,9 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
     if b.active is not None and u.id != a.id: u.active = b.active
-    if b.password: u.pw = hp(b.password)
+    if b.password:
+        if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
+        u.pw = hp(b.password)
     s.commit(); return {"ok": True}
 class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None
 @app.get("/api/admin/settings")

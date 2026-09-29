@@ -11,3 +11,7 @@ The PWA installs only over HTTPS (or localhost), so put the app behind a TLS rev
 
 ## Managing users from the terminal
 `./manage.sh add --name "Name" --email a@b.com [--role admin]` (prompts for the password), `passwd`, `enable`, `disable`, `role`, `list`. Use `VENV=/path/to/venv` if your venv is not `./venv`.
+
+## Admins and passwords
+No account is created automatically. Create or reset the admin (creates it if missing, otherwise resets the password and makes sure it is an active admin):
+`./manage.sh admin --email you@example.com`. Reset any user with `./manage.sh passwd --email x@y.com`, or from the Admin tab in the app (Reset).

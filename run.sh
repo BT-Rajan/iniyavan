@@ -19,6 +19,8 @@ echo "==> Python dependencies"
 echo "==> Frontend build"
 (cd frontend && { npm ci --no-audit --no-fund || npm install --no-audit --no-fund; } && npm run build)
 
+"$VENV/bin/python" backend/manage.py check || echo "!! No admin account yet. Create one: ./manage.sh admin --email you@example.com"
+
 echo "==> pm2"
 pm2 describe "$APP" >/dev/null 2>&1 && pm2 delete "$APP" >/dev/null
 pm2 start backend/run.py --name "$APP" --interpreter "$VENV/bin/python" --cwd "$ROOT"
