@@ -129,9 +129,10 @@ M = {"courses": Course, "subjects": Subject, "topics": Topic}
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
     read = {p.topic_id for p in s.query(Progress).filter_by(user_id=u.id)}
+    own = lambda r: u.role == "admin" or r.owner_id == u.id
     topics = s.query(Topic).all(); subs = s.query(Subject).all()
-    return [{"id": c.id, "name": c.name, "subjects": [{"id": x.id, "name": x.name, "topics": [
-        {"id": t.id, "title": t.title, "read": t.id in read} for t in topics if t.subject_id == x.id]}
+    return [{"id": c.id, "name": c.name, "own": own(c), "subjects": [{"id": x.id, "name": x.name, "own": own(x), "topics": [
+        {"id": t.id, "title": t.title, "read": t.id in read, "own": own(t)} for t in topics if t.subject_id == x.id]}
         for x in subs if x.course_id == c.id]} for c in s.query(Course)]
 def create(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
 @app.post("/api/courses")
@@ -140,6 +141,15 @@ def new_course(b: CourseIn, u: User = Depends(me), s: Session = Depends(db)): re
 def new_subject(b: SubjectIn, u: User = Depends(me), s: Session = Depends(db)): return create(Subject(**b.dict()), u, s)
 @app.post("/api/topics")
 def new_topic(b: TopicIn, u: User = Depends(me), s: Session = Depends(db)): return create(Topic(**b.dict()), u, s)
+def owned(r, u):
+    if not r or (r.owner_id != u.id and u.role != "admin"): raise HTTPException(403, "You can only edit your own items")
+    return r
+@app.put("/api/courses/{rid}")
+def edit_course(rid: int, b: CourseIn, u: User = Depends(me), s: Session = Depends(db)):
+    owned(s.get(Course, rid), u).name = b.name; s.commit(); return {"ok": True}
+@app.put("/api/subjects/{rid}")
+def edit_subject(rid: int, b: SubjectIn, u: User = Depends(me), s: Session = Depends(db)):
+    r = owned(s.get(Subject, rid), u); r.name = b.name; r.course_id = b.course_id; s.commit(); return {"ok": True}
 @app.put("/api/topics/{tid}")
 def edit_topic(tid: int, b: TopicIn, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)

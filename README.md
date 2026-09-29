@@ -1,9 +1,12 @@
 # Eng Tutor
-Multi-user engineering study app. FastAPI + MySQL + React (mobile-first, dark). DeepSeek explains topics and writes sample answers; results are cached centrally so each topic costs tokens once.
+Multi-user engineering study app: FastAPI + MariaDB/MySQL + React PWA. DeepSeek explains topics and writes sample answers; results are cached centrally so each topic costs tokens once.
 
-## Run
-1. `CREATE DATABASE engtutor CHARACTER SET utf8mb4;`
-2. `cp .env.example .env` and edit it (the first admin is created from it).
-3. Backend: `cd backend && pip install -r requirements.txt && uvicorn main:app --port 8000`
-4. Frontend: `cd frontend && npm install && npm run build` (the backend then serves it at :8000). For dev use `npm run dev`.
-5. Sign in as admin, add the DeepSeek key under Admin, then add students.
+## Production first run
+1. DB: `CREATE DATABASE engtutor CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON engtutor.* TO 'app_user'@'localhost'; FLUSH PRIVILEGES;`
+2. `python3 -m venv venv && . venv/bin/activate && pip install -r backend/requirements.txt` (Python 3.10+)
+3. `cp .env.example .env` and fill it in.
+4. `cd frontend && npm ci && npm run build && cd ..`
+5. `python backend/run.py` (serves API and UI on HOST:PORT)
+6. Sign in as the admin, add the DeepSeek key under Admin, then add students.
+
+The PWA installs only over HTTPS (or localhost), so put the app behind a TLS reverse proxy.
