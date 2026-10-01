@@ -81,3 +81,5 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .lbl{overflow:hidden;text-overflow:ellipsis}
 .tabs.scroll{overflow-x:auto;scrollbar-width:none}.tabs.scroll button{flex:none;display:flex;align-items:center;gap:6px;padding:10px 14px;max-width:210px;white-space:nowrap}
 .link{display:flex;align-items:center;gap:2px;background:none;color:var(--mut);font-weight:600;padding:2px 0;margin:0 0 12px}
+
+.chk{display:flex;gap:10px;align-items:center;padding:10px 0;font-size:15px}.chk input{width:20px;height:20px;accent-color:var(--vio)}

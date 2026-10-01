@@ -43,6 +43,12 @@ class Course(Base):
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
     program_id = Column("course_id", Integer, ForeignKey("courses.id", ondelete="CASCADE"))
     semester_id = Column(Integer, ForeignKey("semesters.id", ondelete="CASCADE"), nullable=True)
+class CourseLink(Base):  # a common course shown in other programs' semesters as well; it is edited only at its home
+    __tablename__ = "course_links"
+    id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), index=True)
+    semester_id = Column(Integer, ForeignKey("semesters.id", ondelete="CASCADE"), index=True)
+    __table_args__ = (UniqueConstraint("course_id", "semester_id"),)
 class Unit(Base):
     __tablename__ = "units"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
@@ -170,6 +176,8 @@ def check_topic_access(u, t, s):
     if not scoped(u): return
     co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
     ok = co and co.program_id == u.program_id and (sem is None or sem_visible(u, sem))
+    if not ok and co:  # or the course is shared into one of the student's visible semesters
+        ok = any(sem_visible(u, x) for x in s.query(Semester).join(CourseLink, CourseLink.semester_id == Semester.id).filter(CourseLink.course_id == co.id))
     if not ok: raise HTTPException(403, "This topic is not part of your program or semester")
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
@@ -372,9 +380,32 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
         return d
     tp, un, co, se = g(Topic, "unit_id"), g(Unit, "course_id"), g(Course, "semester_id"), g(Semester, "program_id")
     progs = [p for p in s.query(Program).order_by(Program.id) if not scoped(u) or p.id == u.program_id]
-    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester, "courses": [{"id": c.id, "name": c.name, "units": [
-        {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked} for t in tp[n.id]]} for n in un[c.id]]}
-        for c in co[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
+    pname = {p.id: p.name for p in s.query(Program)}; sname = {x.id: f"{pname.get(x.program_id, '')} › {x.name}" for x in s.query(Semester)}
+    links = defaultdict(list); linked_to = defaultdict(list)
+    for l in s.query(CourseLink): linked_to[l.course_id].append(l.semester_id)
+    cbyid = {c.id: c for c in s.query(Course)}
+    for l in s.query(CourseLink).order_by(CourseLink.id):
+        if l.course_id in cbyid: links[l.semester_id].append(cbyid[l.course_id])
+    def cj(c, sm):
+        shared = c.semester_id != sm.id
+        d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
+             "shared_with": len(linked_to[c.id]), "units": [
+            {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked} for t in tp[n.id]]} for n in un[c.id]]}
+        if u.role == "admin": d["link_ids"] = linked_to[c.id]
+        return d
+    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester,
+        "courses": [cj(c, sm) for c in co[sm.id] + links[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
+class LinksIn(BaseModel): semester_ids: list[int]
+@app.put("/api/courses/{cid}/links")
+def set_links(cid: int, b: LinksIn, _: User = Depends(admin), s: Session = Depends(db)):
+    c = s.get(Course, cid)
+    if not c: raise HTTPException(404, "Course not found")
+    want = {i for i in b.semester_ids if i != c.semester_id}
+    if len(want) != len(s.query(Semester).filter(Semester.id.in_(want)).all()): raise HTTPException(400, "Choose valid semesters")
+    s.query(CourseLink).filter(CourseLink.course_id == cid, ~CourseLink.semester_id.in_(want or [0])).delete(synchronize_session=False)
+    have = {l.semester_id for l in s.query(CourseLink).filter_by(course_id=cid)}
+    for i in want - have: s.add(CourseLink(course_id=cid, semester_id=i))
+    s.commit(); return {"ok": True}
 def save_row(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
 def course_fields(b, s):
     sem = s.get(Semester, b.semester_id)
@@ -424,12 +455,14 @@ def remove(kind: str, rid: int, _: User = Depends(admin), s: Session = Depends(d
     if kind not in M: raise HTTPException(404, "Unknown item")
     r = s.get(M[kind], rid)
     if not r: raise HTTPException(404, "Not found")
-    def drop_course(c): s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
+    def drop_course(c): s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
         for c in s.query(Course).filter_by(program_id=rid).all(): drop_course(c)
+        s.query(CourseLink).filter(CourseLink.semester_id.in_(s.query(Semester.id).filter_by(program_id=rid))).delete(synchronize_session=False)
         s.query(Semester).filter_by(program_id=rid).delete()
         s.query(User).filter_by(program_id=rid).update({"program_id": None})
     if kind == "semesters":
+        s.query(CourseLink).filter_by(semester_id=rid).delete()
         for c in s.query(Course).filter_by(semester_id=rid).all(): drop_course(c)
     if kind == "courses": drop_course(r); r = None
     if kind == "units": s.query(Topic).filter_by(unit_id=rid).delete()
