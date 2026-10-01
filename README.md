@@ -39,3 +39,6 @@ Older databases upgrade automatically: two nullable columns (`users.program_id`,
 
 ## Seed content
 `content/engg_chem_unit1_water_treatment.csv`: B.E Mech > Semester 1 > Engg. Chem > Unit 1 - Water Treatment (31 topics). Load it from Admin > Programs > Bulk upload (check the preview, then confirm). Enrol students in program "B.E Mech", semester 1 to match.
+
+## Passwords
+Everyone can change their own password from the drawer (Change password). Passwords an admin sets or generates (new user, bulk upload, Reset, CLI add/passwd) are temporary: the student must choose their own on first sign-in, and the app blocks everything else until they do. Admins changing their own password are not forced. The `users.must_change` column is added automatically on start; existing users are not forced.

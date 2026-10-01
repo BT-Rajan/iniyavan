@@ -1,7 +1,7 @@
 from collections import defaultdict
 import csv, io, os, re, hashlib, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -23,6 +23,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(100)); email = Column(String(190), unique=True)
     pw = Column(String(200)); role = Column(String(10), default="student"); active = Column(Boolean, default=True)
+    must_change = Column(Boolean, default=False)  # set when an admin chose the password; cleared once the user picks their own
     program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
     semester = Column(Integer, nullable=True)  # current semester, 1 to 8
 class Setting(Base):
@@ -77,11 +78,12 @@ def db():
     s = Session_()
     try: yield s
     finally: s.close()
-def me(authorization: str = Header(""), s: Session = Depends(db)):
+def me(request: Request, authorization: str = Header(""), s: Session = Depends(db)):
     try: uid = jwt.decode(authorization[7:], SECRET, algorithms=["HS256"])["uid"]
     except Exception: raise HTTPException(401, "Please sign in again")
     u = s.get(User, uid)
     if not u or not u.active: raise HTTPException(401, "Account disabled. Ask your admin.")
+    if u.must_change and request.url.path not in ("/api/me", "/api/me/password"): raise HTTPException(403, "Please set a new password first")
     return u
 def admin(u: User = Depends(me)):
     if u.role != "admin": raise HTTPException(403, "Admins only")
@@ -105,7 +107,7 @@ def manifest():
 def upgrade_schema():
     Base.metadata.create_all(engine)
     cols = lambda t: [c["name"] for c in inspect(engine).get_columns(t)]
-    add = [("topics", "unit_id", "INT NULL"), ("subjects", "semester_id", "INT NULL"), ("users", "program_id", "INT NULL"), ("users", "semester", "INT NULL")]
+    add = [("topics", "unit_id", "INT NULL"), ("subjects", "semester_id", "INT NULL"), ("users", "program_id", "INT NULL"), ("users", "semester", "INT NULL"), ("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")]
     with engine.begin() as c:  # upgrade older schemas in place
         for t, col, typ in add:
             if col not in cols(t): c.execute(text(f"ALTER TABLE {t} ADD COLUMN {col} {typ}"))
@@ -131,9 +133,17 @@ def login(b: Login, s: Session = Depends(db)):
     u = s.query(User).filter_by(email=b.email.strip().lower()).first()
     if not u or not vp(b.password, u.pw): raise HTTPException(401, "Wrong email or password")
     if not u.active: raise HTTPException(403, "Account disabled. Ask your admin.")
-    return {"token": jwt.encode({"uid": u.id, "exp": dt.datetime.utcnow() + dt.timedelta(days=14)}, SECRET), "user": {"id": u.id, "name": u.name, "role": u.role}}
+    return {"token": jwt.encode({"uid": u.id, "exp": dt.datetime.utcnow() + dt.timedelta(days=14)}, SECRET), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}}
 @app.get("/api/me")
-def whoami(u: User = Depends(me)): return {"id": u.id, "name": u.name, "role": u.role}
+def whoami(u: User = Depends(me)): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}
+class PwChange(BaseModel): current: str; new_password: str
+@app.post("/api/me/password")
+def change_password(b: PwChange, u: User = Depends(me), s: Session = Depends(db)):
+    if not vp(b.current, u.pw): raise HTTPException(400, "Your current password is wrong")
+    if len(b.new_password) < 8: raise HTTPException(400, "Use at least 8 characters")
+    if b.new_password == b.current: raise HTTPException(400, "Choose a password different from the current one")
+    if b.new_password.strip().lower() == u.email: raise HTTPException(400, "Password can't be your email")
+    u.pw = hp(b.new_password); u.must_change = False; s.commit(); return {"ok": True}
 
 # ---- admin ----
 ROLES = ("student", "admin")
@@ -198,7 +208,7 @@ def user_detail(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
 def reset_password(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
-    pw = gen_pw(); u.pw = hp(pw); s.commit()
+    pw = gen_pw(); u.pw = hp(pw); u.must_change = True; s.commit()
     return {"email": u.email, "password": pw}  # shown once; only the hash is stored
 @app.post("/api/admin/users")
 def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
@@ -208,7 +218,7 @@ def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
     if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
-    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=to_sem(b.semester))); s.commit(); return {"ok": True}
+    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=to_sem(b.semester), must_change=b.role != "admin")); s.commit(); return {"ok": True}
 @app.patch("/api/admin/users/{uid}")
 def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -232,7 +242,7 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
     if "semester" in sent: u.semester = to_sem(b.semester)
     if b.password:
         if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
-        u.pw = hp(b.password)
+        u.pw = hp(b.password); u.must_change = u.id != a.id
     s.commit(); return {"ok": True}
 class UserImportIn(BaseModel): csv: str; dry_run: bool = True
 UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role", "programme": "program", "sem": "semester"}
@@ -270,13 +280,13 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
             if role: u.role = role
             if prog: u.program_id = prog.id  # blank program/semester cells leave the current value alone
             if sem: u.semester = sem
-            if pw and not b.dry_run: u.pw = hp(pw)
+            if pw and not b.dry_run: u.pw = hp(pw); u.must_change = u.id != a.id
             updated += 1
         else:
             created += 1; generated += not pw
             if not b.dry_run:
                 final = pw or gen_pw()
-                s.add(User(name=name, email=e, pw=hp(final), role=role or "student", program_id=prog.id if prog else None, semester=sem))
+                s.add(User(name=name, email=e, pw=hp(final), role=role or "student", program_id=prog.id if prog else None, semester=sem, must_change=(role or "student") != "admin"))
                 if not pw: creds.append({"name": name, "email": e, "password": final})
     s.rollback() if b.dry_run else s.commit()
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,

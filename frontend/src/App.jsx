@@ -1,6 +1,6 @@
 import {useState,useEffect,useCallback,useRef,createContext,useContext} from 'react'
 import Markdown from 'react-markdown'
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,Plus,X,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,Plus,X,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound} from 'lucide-react'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -22,14 +22,15 @@ export default function App(){
   useEffect(()=>{document.body.style.overflow=open?'hidden':''},[open])
   if(!ready)return null
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name}/>
+  if(user.must_change)return <ChangePassword forced toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)}
-  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI config'],['reports',BarChart3,'Reports']]:[]),['about',Info,'About']]
+  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI config'],['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='learn'&&<Learn user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast}/>}
     {page==='add'&&admin&&<Add toast={toast} done={()=>go('learn')}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onAdd={()=>go('add')}/>}
-    {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&admin&&<Reports/>}{page==='about'&&<About user={user}/>}
+    {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&admin&&<Reports/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
         <div className="dhead"><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
@@ -46,6 +47,17 @@ function Login({onIn,toast,msg,appName}){
     <label>Email</label><input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
     <label>Password</label><input type="password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>Sign in</button>{msg&&<div className="toast">{msg}</div>}</div>}
+
+function ChangePassword({forced,toast,msg,done,out}){
+  const [f,setF]=useState({current:'',password:'',again:''}),[b,setB]=useState(false),set=k=>e=>setF({...f,[k]:e.target.value})
+  const go=async()=>{if(f.password.length<8)return toast('Use at least 8 characters');if(f.password!==f.again)return toast("The new passwords don't match")
+    setB(true);try{await api('/me/password',{method:'POST',body:{current:f.current,new_password:f.password}});toast('Password changed');done()}catch(e){toast(e.message)}setB(false)}
+  const form=<><label>{forced?'Password your admin gave you':'Current password'}</label><input type="password" autoComplete="current-password" value={f.current} onChange={set('current')}/>
+    <label>New password (8+ characters)</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
+    <label>Repeat new password</label><input type="password" autoComplete="new-password" value={f.again} onChange={set('again')} onKeyDown={e=>e.key==='Enter'&&go()}/>
+    <button className="btn" disabled={b} onClick={go}>Change password</button></>
+  if(forced)return <div className="login"><h1>Choose your<br/>own password.</h1><p>Your admin set a temporary password. Pick a new one to continue.</p>{form}<button className="btn ghost" onClick={out}>Sign out</button>{msg&&<div className="toast">{msg}</div>}</div>
+  return <><Bar title="Change password"/><div className="main">{form}</div></>}
 
 const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header className="bar">
   {back?<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>:<button className="ic" aria-label="Open menu" onClick={menu}><Menu/></button>}

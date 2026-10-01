@@ -36,7 +36,7 @@ def main():
         elif x.cmd == "add":
             e = x.email.strip().lower()
             if s.query(User).filter_by(email=e).first(): sys.exit(f"{e} already exists. Use passwd to reset the password.")
-            s.add(User(name=x.name, email=e, pw=hp(password(x.password)), role=x.role)); s.commit(); print(f"Created {x.role} {e}")
+            s.add(User(name=x.name, email=e, pw=hp(password(x.password)), role=x.role, must_change=x.role != "admin")); s.commit(); print(f"Created {x.role} {e}")
         elif x.cmd == "admin":
             e = x.email.strip().lower(); u = s.query(User).filter_by(email=e).first()
             if u: u.pw = hp(password(x.password)); u.role = "admin"; u.active = True; print(f"Reset password and set {e} as active admin")
@@ -44,7 +44,7 @@ def main():
             s.commit()
         else:
             u = find(s, x.email)
-            if x.cmd == "passwd": u.pw = hp(password(x.password))
+            if x.cmd == "passwd": u.pw = hp(password(x.password)); u.must_change = u.role != "admin"
             elif x.cmd == "role": u.role = x.role
             else: u.active = x.cmd == "enable"
             s.commit(); print(f"Updated {u.email}")
