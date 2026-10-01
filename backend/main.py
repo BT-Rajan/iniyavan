@@ -146,6 +146,21 @@ def to_sem(v):  # 3, "3", "Semester 3", "S3" -> 3; blank -> None; anything else 
     m = SEM.match(str(v).strip())
     if not m: raise HTTPException(400, "Semester must be a number from 1 to 8")
     return int(m.group(1))
+ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8}
+def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number; None if the name carries no semester number
+    m = re.search(r"(?<![\w])(?:[1-8]|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
+    return None if not m else (int(m.group(0)) if m.group(0).isdigit() else ROMAN[m.group(0).lower()])
+def scoped(u): return u.role != "admin" and u.program_id is not None  # unenrolled students keep the old open view
+def sem_visible(u, sem):  # a student sees their own program, up to and including their current semester
+    if not scoped(u): return True
+    if sem.program_id != u.program_id: return False
+    n = sem_no(sem.name)
+    return u.semester is None or n is None or n <= u.semester
+def check_topic_access(u, t, s):
+    if not scoped(u): return
+    co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
+    ok = co and co.program_id == u.program_id and (sem is None or sem_visible(u, sem))
+    if not ok: raise HTTPException(403, "This topic is not part of your program or semester")
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
@@ -346,9 +361,10 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
         for r in s.query(model).order_by(model.id): d[getattr(r, k)].append(r)
         return d
     tp, un, co, se = g(Topic, "unit_id"), g(Unit, "course_id"), g(Course, "semester_id"), g(Semester, "program_id")
-    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "courses": [{"id": c.id, "name": c.name, "units": [
+    progs = [p for p in s.query(Program).order_by(Program.id) if not scoped(u) or p.id == u.program_id]
+    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester, "courses": [{"id": c.id, "name": c.name, "units": [
         {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked} for t in tp[n.id]]} for n in un[c.id]]}
-        for c in co[sm.id]]} for sm in se[p.id]]} for p in s.query(Program).order_by(Program.id)]
+        for c in co[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
 def save_row(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
 def course_fields(b, s):
     sem = s.get(Semester, b.semester_id)
@@ -479,10 +495,13 @@ def full(t, s):
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
     return {**full(t, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
-    if not s.get(Topic, tid): raise HTTPException(404, "Topic not found")
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
     if not s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first():
         s.add(Bookmark(user_id=u.id, topic_id=tid))
         try: s.commit()
@@ -496,6 +515,7 @@ def remove_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
 def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
     p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
     if p: p.reads += 1; p.last_read = dt.datetime.utcnow()
     else: s.add(Progress(user_id=u.id, topic_id=tid))
@@ -515,6 +535,7 @@ PROMPTS = {
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t or kind not in PROMPTS: raise HTTPException(404, "Not found")
+    check_topic_access(u, t, s)
     f = full(t, s)
     ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or ""]).encode()).hexdigest()
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
