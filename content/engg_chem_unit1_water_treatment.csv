@@ -1,0 +1,206 @@
+﻿program,semester,course,unit,topic,content
+B.E Mech,Semester 1,Engg. Chem,Unit 1 - Water Treatment,1. Water Treatment,"Water is used for survival, as coolant, solvent, for steam generation, air conditioning, fire-fighting and domestic purposes."
+,,,,2. Sources of Water,"**Rainwater**: purest natural form, but dissolves CO₂, SO₂, NO₂. **Sea water**: ~3.5% dissolved salts, ~2.6% NaCl. **River water**: organic matter plus sulfates, bicarbonates, bromides of Na, K, Mg. **Lake water**: purer but rich in organic matter. **Underground water**: little suspended matter, high dissolved minerals."
+,,,,3. Effect of Water on Rocks,"(a) Dissolution of NaCl, gypsum. (b) Hydration:
+
+> CaSO₄ + 2H₂O → CaSO₄·2H₂O (anhydrite → gypsum)
+
+> Mg₂SiO₄ + xH₂O → Mg₂SiO₄·xH₂O (olivine → serpentine)
+
+(c) Oxidation: 2Fe₃O₄ → 2Fe₂O₃ → 2Fe₂O₃·2H₂O (magnetite → haematite → limonite). (d) Action of CO₂:
+
+> CaCO₃ + CO₂ + H₂O → Ca(HCO₃)₂"
+,,,,4. Hardness of Water,"Hardness prevents lather formation with soap, caused by salts of Ca²⁺, Mg²⁺, Fe²⁺.
+
+> 2C₁₇H₃₅COONa + CaCl₂ → (C₁₇H₃₅COO)₂Ca↓ + 2NaCl
+
+**Temporary hardness**: bicarbonates of Ca, Mg; removed by boiling. **Permanent hardness**: chlorides and sulfates; not removed by boiling.
+
+> Ca(HCO₃)₂ →(heat) CaCO₃↓ + H₂O + CO₂"
+,,,,5. Units of Hardness,"Expressed as ppm of CaCO₃ (mol. wt. 100, eq. wt. 50).
+
+> CaCO₃ equivalent = mass of hardness-producing substance × 50 / chemical equivalent of the substance
+
+> 1 ppm = 1 part hardness / 10⁶ parts water
+
+> 1 °Fr = 1 part / 10⁵ parts water
+> 1 °Clark = 1 grain / gallon (70,000 grains)
+> 1 °USA = 1 grain / 58,300 grains
+> 1 °German = 1 grain / 56,000 grains"
+,,,,6. Relation between units,"> 1 ppm = 1 mg/l = 0.1 °Fr = 0.07 °Cl
+> 1 °Cl = 1.43 °Fr = 14.3 ppm
+> 1 °Fr = 10 ppm = 0.7 °Cl"
+,,,,7. Disadvantages of Hard Water,"**Domestic**: wasted soap, sticky precipitates, scum in cooking vessels, fuel wastage, poor tea/coffee taste, risk of calcium oxalate deposits. **Industrial**: textile/dyeing (deposits, iron stains), sugar refining, paper finish, laundry, concrete hydration, pharmaceuticals, boilers (scale, corrosion, priming/foaming, caustic embrittlement)."
+,,,,8. Sludge and Scale Formation in Boilers,"Salts saturate on continuous evaporation and deposit where flow is slow.
+
+**Sludge**: loose, slimy precipitate (MgCO₃, MgSO₄, MgCl₂, CaCl₂), removed by brushing. **Scale**: hard adherent deposit. Causes: CaCO₃ from Ca(HCO₃)₂ (low pressure); CaSO₄ (solubility falls at high temperature); CaSiO₃/MgSiO₃; Mg(OH)₂.
+
+> Ca(HCO₃)₂ → CaCO₃↓ (scale) + H₂O + CO₂
+
+**Disadvantages of scale**: poor heat transfer (fuel use rises from ~50% to 150% as thickness goes 1.25→12 mm), overheating and unsafe operation, possible explosion, clogged valves. **Removal**: wooden/wire brush, blow-down, thermal shocks, 5–10% HCl or EDTA treatment."
+,,,,9. Internal treatment,"(a) Colloidal conditioning (kerosene, tannin, agar-agar). (b) Phosphate conditioning:
+
+> 3CaCl₂ + 2Na₃PO₄ → Ca₃(PO₄)₂ + 6NaCl
+
+(c) Carbonate conditioning:
+
+> CaSO₄ + Na₂CO₃ = CaCO₃ + Na₂SO₄
+
+(d) Calgon conditioning: 2CaSO₄ + [Na₄P₆O₁₈]²− → [Ca₂P₆O₁₈]²− + 2Na₂SO₄. (e) Sodium aluminate. (f) Electrical. (g) Radioactive conditioning."
+,,,,10. Caustic Embrittlement,"Cracking of stressed boiler parts (rivets, bends) by NaOH:
+
+> Na₂CO₃ + H₂O → 2NaOH + CO₂
+
+A concentration cell forms between Fe at rivets (+) in concentrated NaOH and Fe at plane surfaces (−) in dilute NaOH."
+,,,,11. Prevention,Use sodium phosphate instead of Na₂CO₃; add Na₂SO₄ (ratio Na₂SO₄/NaOH > 2.5); add tannin/lignin; use crack-resistant steel.
+,,,,12. Corrosion in Boilers,"(a) Dissolved O₂ (8 ml/l at room temp):
+
+> 2Fe + 2H₂O + O₂ → 2Fe(OH)₂↓
+
+Removed by deaeration, or by hydrazine/sodium sulfite. (b) Dissolved CO₂ causes pitting:
+
+> Fe + CO₂ + H₂O → FeCO₃ + H₂
+
+Removed by mechanical deaeration, lime or NH₃, heating. (c) Mineral acids:
+
+> MgCl₂ + 2H₂O → Mg(OH)₂ + 2HCl; Fe + 2HCl → FeCl₂ + H₂"
+,,,,13. Priming and Foaming,"**Priming**: wet-steam carry-over, caused by dissolved solids, high steam velocity, sudden boiling. **Foaming**: stable bubbles caused by oil; reduced with anti-foaming agents."
+,,,,14. Softening of Water,"Three methods: (1) lime-soda, (2) permutit/zeolite, (3) ion-exchange. **Lime-soda process** removes both hardnesses:
+
+> Ca(HCO₃)₂ + Ca(OH)₂ → 2CaCO₃↓ + 2H₂O
+> MgCO₃ + Ca(OH)₂ → Mg(OH)₂↓ + CaCO₃↓
+
+> CaSO₄ + Na₂CO₃ → CaCO₃↓ + Na₂SO₄"
+,,,,15. Cold Lime-Soda Process,"Chemicals, coagulant and water are stirred in a tank; sludge settles and water is filtered. Residual Ca hardness ≈ 40 ppm.
+
+*Figure: Fig. 17.1 Continuous cold lime-soda softener (motor, stirrer, wood-fibre filter, sludge outlet) (see textbook)*"
+,,,,16. Hot Lime-Soda Process,"Water heated near boiling: faster, near-complete reaction, rapid settling, no coagulant, gases removed, lower residual hardness. Drawbacks: much sludge, unsuitable for high-pressure boilers.
+
+*Figure: Fig. 17.2 Continuous hot lime-soda softener (reaction tank, conical sedimentation tank, sand filter) (see textbook)*"
+,,,,17. Permutit or Zeolite Process,"Zeolite = hydrated sodium aluminosilicate Na₂O·Al₂O₃·xSiO₂·yH₂O (natrolith). Hard water passes through a zeolite bed; Ca²⁺/Mg²⁺ exchange for Na.
+
+> Na₂Ze + Ca(HCO₃)₂ = 2NaHCO₃ + CaZe
+> Na₂Ze + CaCl₂ = 2NaCl + CaZe
+
+**Regeneration** with brine:
+
+> CaZe + 2NaCl = Na₂Ze + CaCl₂
+
+*Figure: Fig. 17.3 Softening by permutit process (see textbook)*
+
+Advantages: hardness down to ~10 ppm, no sludge, easy to regenerate. Disadvantages: turbid or acidic water unsuitable; soft water contains NaHCO₃."
+,,,,18. Ion Exchange or Demineralization,"Cation resins (RH⁺) exchange H⁺; anion resins (ROH−) exchange OH−.
+
+*Figure: Structures of cation exchange resin (–SO₃H) and anion exchange resin (–CH₂NMe₂⁺OH−) (see textbook)*
+
+> 2RH⁺ + Ca²⁺/Mg²⁺ → R₂Ca²⁺/R₂Mg²⁺ + 2H⁺
+> ROH− + Cl− → R⁺Cl− + OH−
+
+H⁺ and OH− combine to give deionized water.
+
+*Figure: Fig. 17.4 Demineralisation of water (cation exchanger, anion exchanger, acid and alkaline regenerators) (see textbook)*
+
+*Figure: Fig. 17.5 Ion exchanges during demineralisation (see textbook)*
+
+**Regeneration**: cation resin with dil. H₂SO₄/HCl, anion resin with dil. NaOH.
+
+> R₂Ca²⁺ + 2H⁺ → 2RH⁺ + Ca²⁺"
+,,,,19. Mixed Bed Deionizer,Single cylinder with cation and strong anion resin; residual hardness ~1 ppm.
+,,,,20. Treatment for Domestic Use,"Drinking water: clear, odourless, no bad taste, suspended matter < 10 ppm, pH ≈ 8, dissolved salts < 500 ppm, free of pathogens. Steps: aeration, settling, sedimentation with coagulants (alum, green vitriol), filtration."
+,,,,21. Sterilization,"(i) Bleaching powder (1 kg per 1000 kilolitres):
+
+> Ca(OCl)Cl + H₂O → Ca(OH)₂ + Cl₂; Cl₂ + H₂O → HCl + HOCl
+
+(ii) Break-point chlorination: chlorine is added until residual free chlorine appears; 0.3–0.5 ppm suffices.
+
+(iii) Chloramine (Cl₂:NH₃ = 2:1 by volume):
+
+> Cl₂ + NH₃ → Cl.NH₂ + HCl
+
+(iv) **Ozonization**: O₃ gives nascent oxygen; no taste or odour; contact 10–15 min at 2–3 ppm; costly. Physical methods: boiling, sunlight, UV."
+,,,,22. Dechlorination,> SO₂ + Cl₂ + 2H₂O = 2HCl + H₂SO₄
+,,,,23. Desalination of Brackish Water,"(a) **Electrodialysis**: direct current drives Na⁺ to the cathode and Cl− to the anode through selective membranes.
+
+*Figure: Fig. 17.6 Line diagram of electrodialysis (see textbook)*
+
+*Figure: Fig. 17.7 Electrodialysis cell (alternate cation/anion selective membranes) (see textbook)*
+
+(b) **Reverse osmosis**: pressure above osmotic pressure pushes solvent across a semipermeable membrane (cellulose acetate, polyamide).
+
+*Figure: Fig. 17.8 Reverse osmosis cell (see textbook)*"
+,,,,24. Chemical Analysis of Water,"1. Free chlorine: Cl₂ + 2KI → 2KCl + I₂; titrate I₂ with N/50 hypo, starch indicator.
+
+> Strength of free chlorine = V × 35.5 × 10⁶ / (2500 × 1000) ppm
+
+2. Alkalinity: OH− + H⁺ → H₂O; CO₃²− + H⁺ → HCO₃−; HCO₃− + H⁺ → H₂O + CO₂.
+
+Titrate 100 ml sample with N/50 H₂SO₄: phenolphthalein end point V₁, then methyl orange, extra V₂.
+
+> P = V₁ × 50 × 10⁶ / (50 × 100 × 1000) ppm
+> M = (V₁ + V₂) × 50 × 10⁶ / (50 × 100 × 1000) ppm"
+,,,,25. Hardness,"> Temporary hardness = (V₁ − V₂) × 10⁶ / (50 × 1000) ppm
+> Permanent hardness = (50 − V) × 10⁶ / (50 × 1000) ppm
+
+(ii) EDTA (disodium salt of ethylenediaminetetraacetic acid) is a complexing agent for Ca²⁺, Mg²⁺.
+
+Erichrome black T indicator, pH 10 (NH₄OH/NH₄Cl buffer); colour changes wine red → blue at end point.
+
+> Permanent hardness = 0.001 × V × f × 10⁶ / 50 ppm"
+,,,,26. Highlights,"Softening: lime-soda, zeolite, ion-exchange. Desalination: electrodialysis, reverse osmosis. Units: ppm, mg/l, °Clark (1 ppm = 0.07 °Cl), °French (1 ppm = 0.1 °Fr).
+
+Hard water forms scum with soap: Ca²⁺ + 2C₁₇H₃₅COO− → Ca(C₁₇H₃₅COO)₂↓. Temporary hardness is removed by boiling; gypsum makes water permanently hard."
+,,,,27. Problems,"**Problem 1.** Mg(HCO₃)₂ = 7.5, Ca(HCO₃)₂ = 16, MgCl₂ = 9, CaSO₄ = 13.6 mg/l.
+
+> Temporary = 7.5×100/146 + 16×100/162
+> Permanent = 9×100/95 + 13.6×100/136
+
+**Problem 2.** FeSO₄ for 200 ppm hardness:
+
+> 136 × 200/100 = 272 mg/l
+
+**Problem 3.** 15.6 ppm CO₃²− → molarity = 15.6×10−⁶/60 = 2.6×10−⁵ M.
+
+**Problem 4.** Ca(HCO₃)₂ 10.5, Mg(HCO₃)₂ 12.5, CaCl₂ 8.2, MgSO₄ 2.6, CaSO₄ 7.5 ppm.
+
+> Temporary = 6.481 + 8.562 = 15.043 ppm
+> Permanent = 7.387 + 2.167 + 5.15 = 15.069 ppm
+> Total = 30.112 ppm; M/100 EDTA = 30.112 × 100/1000 = 3.11 ml
+
+**Problem 5.** Lime and soda for 50,000 l: MgCO₃ 144, CaCO₃ 25, MgCl₂ 95, CaCl₂ 111, Fe₂O₃ 25, Na₂SO₄ 15 ppm. MgCO₃ = 171.4 ppm CaCO₃; MgCl₂ = 100; CaCl₂ = 100.
+
+Lime required = 74/100 [2×MgCO₃ + CaCO₃ + MgCl₂] × volume = 17.31 kg.
+
+**Problem 6.** Ca²⁺ 20, Mg²⁺ 25, CO₂ 30, HCO₃− 150 ppm; 1 million litres.
+
+> Lime = 218.9 kg (87% pure basis as given)
+> Soda = 106/100 [Ca + Mg − HCO₃] × 10⁶ = 33.6 kg
+
+**Problem 7.** 150 l of 150 g/l NaCl = 22,500 g NaCl ≡ 1.932×10⁴ g CaCO₃. For 600 ppm water, volume = 3.129×10⁴ litres.
+
+**Problem 8.** EDTA strength = 0.94 (M/100).
+
+50 ml sample needs 0.019 g CaCO₃ equivalent, so hardness = 377.8 ppm.
+
+**Problem 9.** Same data as Problem 4, in °Fr: temporary = 15.043 ppm = 1.504 °Fr; permanent = 15.069 ppm = 1.5069 °Fr."
+,,,,28. Short Questions and Answers,"**Q1.** Desalination is needed because of population growth and scarce fresh water. **Q2.** Boiler corrosion: dissolved oxygen, electrochemical corrosion.
+
+**Q3.** Scale disadvantages: poor heat conduction, clogged tubes, corrosion. **Q4.** Demineralised water is practically ion-free. **Q5.** Chloramine gives no repulsive odour. **Q8.** Pitting is corrosion by dissolved O₂, CO₂, H₂S. **Q9.** Boiler compounds: flour, kerosene, tannin, agar-agar. **Q10.** Plumbo solvency: Pb dissolves in soft water:
+
+> 2Pb + 2H₂O + O₂ = 2Pb(OH)₂
+
+**Q11.** Sludge is soft and loose; scale is hard and adherent. **Q15.** OH− and HCO₃− react, so they cannot coexist. **Q16.** CaCO₃ is used as the standard because its mol. wt. is 100. **Q17.** Temporary: Ca/Mg bicarbonates; permanent: chlorides and sulphates.
+
+**Q20.** (M/1000) MgSO₄:
+
+> 0.1/1000 × 10⁶ = 100 ppm; in degrees = 0.1/1000 × 10⁵ = 10
+
+**Q21.** CO₂ forms carbonic acid that corrodes pipes. **Q22.** Ca²⁺, Mg²⁺ react with soap to form scum. **Q23.** Calgon forms a soluble complex:
+
+> Na₂[Na₄(PO₃)₆] + CaSO₄ = Na₂[Na₂Ca(PO₃)₆] + Na₂SO₄
+
+**Q25.** Na₂SO₄ blocks hair cracks and prevents caustic entry. **Q26.** Silica forms Ca/Mg silicate scales."
+,,,,29. Exercises,"Ten review questions on purification, desalination, boiler troubles, softening methods and sterilization."
+,,,,30. Objective Type Questions (1–21),"Multiple-choice and descriptive questions on hardness removal, calgon, brackish water purification, boiler chemicals, semipermeable membranes, disinfectants, scale, caustic embrittlement and permutit."
+,,,,31. Problems (Exercises),"1. Hardness of 1,00,000 l after zeolite regeneration. [64.10 ppm] 2. 510 ppm in °Clark and °French. [35.7° Cl; 51° Fr] 3. [62.5 ppm] 4. [6.99 grain of CaCO₃] 5. [120 ppm] 6. [15.07 ppm; 128.75 ppm]
+
+7. [Lime = 3.7 kg; Soda = 5.3 kg] 8. [384.6 ppm] 9. [lime = 1.11 kg, soda = 10.6 kg] 10. [200 ppm] 11. Cost of lime (80% pure, Rs. 200/metric ton) and soda (90% pure, Rs. 12,000/metric ton) for 1 million litres."
