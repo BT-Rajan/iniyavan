@@ -385,9 +385,10 @@ def check_course_access(u, course_id, s):
     if not ok and co:  # or the course is shared into one of the student's visible semesters
         ok = any(sem_visible(u, x) for x in s.query(Semester).join(CourseLink, CourseLink.semester_id == Semester.id).filter(CourseLink.course_id == co.id))
     if not ok: raise HTTPException(403, "This is not part of your program or semester")
-def check_topic_access(u, t, s):
-    if u.role == "student" and t.published is False: raise HTTPException(404, "Topic not found")
-    check_course_access(u, topic_course_id(t, s), s)
+def check_topic_access(u, t, s):  # drafts are for admins and the faculty assigned to the course only
+    cid = topic_course_id(t, s)
+    if t.published is False and not can_edit(u, cid, s): raise HTTPException(404, "Topic not found")
+    check_course_access(u, cid, s)
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
@@ -698,17 +699,17 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     best = dict(s.query(Attempt.quiz_id, func.max(Attempt.percent)).filter(Attempt.user_id == u.id).group_by(Attempt.quiz_id).all())
     qz = defaultdict(list)
     for q in s.query(Quiz).order_by(Quiz.id):
-        if u.role != "student" or (q.published and qcount.get(q.id)):
-            qz[q.unit_id].append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
+        qz[q.unit_id].append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
     cbyid = {c.id: c for c in s.query(Course)}
     mine = {r.course_id for r in s.query(CourseFaculty).filter_by(user_id=u.id)} if u.role == "faculty" else set()
     for l in s.query(CourseLink).order_by(CourseLink.id):
         if l.course_id in cbyid: links[l.semester_id].append(cbyid[l.course_id])
     def cj(c, sm):
-        shared = c.semester_id != sm.id
+        shared = c.semester_id != sm.id; ed = u.role == "admin" or c.id in mine  # drafts show only to those who can edit the course
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
-             "shared_with": len(linked_to[c.id]), "editable": u.role == "admin" or c.id in mine, "units": [
-            {"id": n.id, "name": n.name, "quizzes": qz[n.id], "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or u.role != "student"]} for n in un[c.id]]}
+             "shared_with": len(linked_to[c.id]), "editable": ed, "units": [
+            {"id": n.id, "name": n.name, "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
+             "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]
         return d
     return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester,

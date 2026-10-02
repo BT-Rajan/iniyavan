@@ -57,7 +57,6 @@ def test_authorization_ignores_stale_topic_course_id(env):
     assert edit_topic(env, env.fac, water, i["unit"][chem]) == 200
 
 # C. Faculty draft access
-@pytest.mark.xfail(strict=True, reason="audit: faculty can read drafts in courses they are not assigned to")
 def test_faculty_cannot_read_other_course_drafts(env):
     i = two_faculty(env)
     assert env.c.post("/api/topics", headers=env.fac2, json={"title": "WDraft", "unit_id": i["unit"][i["course"]["Workshop"]], "published": False}).status_code == 200
@@ -68,6 +67,11 @@ def test_faculty_cannot_read_other_course_drafts(env):
         assert call(env.fac2).status_code == 200 and call(env.admin).status_code == 200
     assert "WDraft" not in titles(env, env.fac) and "WDraft" in titles(env, env.fac2) and "WDraft" in titles(env, env.admin)
     assert env.c.get(f"/api/topics/{i['topic']['Tools']}", headers=env.fac).status_code == 200  # published content stays readable
+    q = env.c.post("/api/quizzes", headers=env.fac2, json={"unit_id": i["unit"][i["course"]["Workshop"]], "title": "DraftQuiz"}).json()["id"]
+    env.c.put(f"/api/quizzes/{q}/questions", headers=env.fac2, json={"questions": [{"text": "t", "options": ["a", "b"], "correct": 0}]})
+    quizzes = lambda h: [x["title"] for p in env.c.get("/api/tree", headers=h).json() for sm in p["semesters"] for c in sm["courses"] for n in c["units"] for x in n["quizzes"]]
+    assert "DraftQuiz" not in quizzes(env.fac) and "DraftQuiz" in quizzes(env.fac2) and "DraftQuiz" in quizzes(env.admin)
+    assert env.c.get(f"/api/quizzes/{q}", headers=env.fac).status_code == 404 and env.c.get(f"/api/quizzes/{q}", headers=env.fac2).status_code == 200
 
 # D. Student with no program
 @pytest.mark.xfail(strict=True, reason="audit: a student with no program sees every program")
