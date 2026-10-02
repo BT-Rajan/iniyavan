@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, and_, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -96,6 +97,7 @@ class Topic(Base):
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
     published = Column(Boolean, default=True)  # drafts are visible to admins and the course's owner only
     position = Column(Integer, nullable=True)  # order within the unit, set by the course's owner
+    learning_due_at = Column(DateTime, nullable=True)  # learn-by deadline, a UTC instant like every timestamp here; null = no deadline
 class Quiz(Base):  # a multiple-choice quiz attached to a unit
     __tablename__ = "quizzes"
     id = Column(Integer, primary_key=True); unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), index=True); course_id = Column(Integer, index=True)
@@ -108,10 +110,11 @@ class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
     score = Column(Integer); total = Column(Integer); percent = Column(Integer); at = Column(DateTime, default=dt.datetime.utcnow)
-class Progress(Base):  # what each student has read
+class Progress(Base):  # one row per student and topic, made when they first open it. No row = not started; completed_at null = in progress
     __tablename__ = "progress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id")); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
     reads = Column(Integer, default=1); last_read = Column(DateTime, default=dt.datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)  # set when the student marks the topic completed (UTC); cleared only if they undo it
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
 class Bookmark(Base):  # topics a user has saved to their own list
     __tablename__ = "bookmarks"
@@ -180,7 +183,7 @@ ORIGINS = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if
 if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; "
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
-SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt)$|/ai/")  # student reading activity is already tracked as progress
+SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/")  # student reading activity is already tracked as progress
 def audit_write(uid, method, path, status):
     with Session_() as s: s.add(AuditLog(user_id=uid, method=method, path=path[:200], status=status)); s.commit()
 @app.middleware("http")
@@ -338,13 +341,20 @@ def positions(c):  # units.position and topics.position, filled in today's order
         for pid, mx in c.execute(text(f"SELECT {parent}, MAX(position) FROM {table} GROUP BY {parent}")): top[pid] = mx or 0
         for rid, pid in c.execute(text(f"SELECT id, {parent} FROM {table} WHERE position IS NULL ORDER BY id")).all():
             top[pid] += 1; c.execute(text(f"UPDATE {table} SET position = :p WHERE id = :i"), {"p": top[pid], "i": rid})
+def learning_state_columns(c):  # topics.learning_due_at and progress.completed_at; nobody gets an invented deadline or completion
+    _addcol("topics", "learning_due_at", "DATETIME NULL")(c); _addcol("progress", "completed_at", "DATETIME NULL")(c)
+    ins = inspect(c)  # the (user_id, topic_id) unique key has been there since the first release; make sure, without merging anyone's rows
+    if not any(sorted(x["column_names"]) == ["topic_id", "user_id"] for x in ins.get_unique_constraints("progress") + [i for i in ins.get_indexes("progress") if i.get("unique")]):
+        dups = c.execute(text("SELECT user_id, topic_id FROM progress GROUP BY user_id, topic_id HAVING COUNT(*) > 1")).all()
+        if dups: log.warning("progress has %d duplicated student/topic pairs; the unique key was not added", len(dups))
+        else: c.execute(text("CREATE UNIQUE INDEX uq_progress_user_topic ON progress (user_id, topic_id)"))
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
               ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
               ("0007_repair_parent_copies", repair_parent_copies), ("0008_subjects_faculty_owner_id", add_faculty_owner),
               ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers),
-              ("0011_unit_topic_positions", positions)]
+              ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -470,6 +480,24 @@ def item_name(v, what):
     if not n: raise HTTPException(400, f"Enter a {what} name")
     if len(n) > 150: raise HTTPException(400, f"The {what} name is too long")
     return n
+def utc_iso(d): return d.isoformat() + "Z" if d else None  # stored times are naive UTC
+def due_value(v):  # an aware datetime from the API -> naive UTC for the database; None clears the deadline
+    if v is None: return None
+    if v.tzinfo is None: raise HTTPException(400, "Give the deadline with its time zone, for example 2026-10-05T17:00:00+05:30")
+    v = v.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    if not 2000 <= v.year <= 2100: raise HTTPException(400, "Choose a deadline between the years 2000 and 2100")
+    return v
+def learning_state(due, p, now):  # status comes from the progress row; overdue and late are worked out, never stored
+    status = "completed" if p is not None and p.completed_at else "in_progress" if p is not None else "not_started"
+    return {"status": status, "learning_due_at": utc_iso(due), "completed_at": utc_iso(p.completed_at) if p is not None else None,
+            "overdue": due is not None and status != "completed" and due < now, "late": bool(status == "completed" and due and p.completed_at > due)}
+def progress_row(s, uid, tid):  # the student's row for a topic, made at most once even when two requests race
+    p = s.query(Progress).filter_by(user_id=uid, topic_id=tid).first()
+    if p: return p
+    s.add(Progress(user_id=uid, topic_id=tid, reads=0))
+    try: s.commit()
+    except IntegrityError: s.rollback()  # the other request made it first; the unique key kept it to one row
+    return s.query(Progress).filter_by(user_id=uid, topic_id=tid).one()
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
@@ -778,10 +806,11 @@ class CourseIn(BaseModel): name: str; semester_id: int; faculty_owner_id: int | 
 class UnitIn(BaseModel): name: str; course_id: int
 class TopicIn(BaseModel):
     title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""; published: bool = True
+    learning_due_at: dt.datetime | None = None  # ISO 8601 with a time zone; null removes the deadline; leave out to keep it
 M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Unit, "topics": Topic}
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
-    read = {p.topic_id for p in s.query(Progress).filter_by(user_id=u.id)}
+    mine_p = {p.topic_id: p for p in s.query(Progress).filter_by(user_id=u.id)}; read = set(mine_p); now = dt.datetime.utcnow()
     marked = {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}
     def g(model, k):
         d = defaultdict(list)
@@ -808,7 +837,8 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
              "shared_with": len(linked_to[c.id]), "editable": ed, "mine": c.id in mine,
              "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None, "units": [
             {"id": n.id, "name": n.name, "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
-             "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
+             "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False,
+                         **learning_state(t.learning_due_at, mine_p.get(t.id), now)} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]; d["owner_id"] = c.faculty_owner_id; d["owner_problem"] = owner_problem(owners.get(c.faculty_owner_id))
         return d
     return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "number": sm.semester_no, "current": scoped(u) and u.semester is not None and sm.semester_no == u.semester,
@@ -847,7 +877,9 @@ def topic_fields(b, s):
     if not un: raise HTTPException(400, "Choose a unit for this topic")
     title = (b.title or "").strip()
     if not title or len(title) > 200: raise HTTPException(400, "Give the topic a title (up to 200 characters)")
-    return {**b.dict(exclude_unset=True), "title": title, "course_id": un.course_id}  # fields left out are left alone
+    f = {**b.dict(exclude_unset=True), "title": title, "course_id": un.course_id}  # fields left out are left alone
+    if "learning_due_at" in f: f["learning_due_at"] = due_value(b.learning_due_at)
+    return f
 def update(row, vals, s):
     if not row: raise HTTPException(404, "Not found")
     for k, v in vals.items(): setattr(row, k, v)
@@ -1127,7 +1159,8 @@ def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
-    return {**full(t, s), "can_edit": can_edit(u, topic_course_id(t, s), s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+    p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
+    return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "can_edit": can_edit(u, topic_course_id(t, s), s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
@@ -1147,14 +1180,41 @@ def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
-    p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
-    if p: p.reads += 1; p.last_read = dt.datetime.utcnow()
-    else: s.add(Progress(user_id=u.id, topic_id=tid))
-    s.commit()
+    p = progress_row(s, u.id, tid)  # opening a topic starts it; it never completes it or undoes a completion
+    s.query(Progress).filter_by(id=p.id).update({"reads": Progress.reads + 1, "last_read": dt.datetime.utcnow()}, synchronize_session=False); s.commit(); s.refresh(p)
     known = [x.title for x in s.query(Topic).join(Progress, Progress.topic_id == Topic.id)
              .filter(Progress.user_id == u.id, Topic.course_id == t.course_id, Topic.id != tid).limit(8)]
     n = s.query(Progress).filter_by(user_id=u.id).count()
-    return {"known": known, "topics_read": n}
+    return {"known": known, "topics_read": n, **learning_state(t.learning_due_at, p, dt.datetime.utcnow())}
+@app.put("/api/topics/{tid}/complete")
+def complete_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):  # the student says they have learnt it; repeating it changes nothing
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s); p = progress_row(s, u.id, tid)
+    s.query(Progress).filter(Progress.id == p.id, Progress.completed_at.is_(None)).update({"completed_at": dt.datetime.utcnow()}, synchronize_session=False)
+    s.commit(); s.refresh(p); return learning_state(t.learning_due_at, p, dt.datetime.utcnow())
+@app.delete("/api/topics/{tid}/complete")
+def reopen_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):  # only an explicit undo takes a topic back to in progress
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s); p = progress_row(s, u.id, tid)
+    s.query(Progress).filter_by(id=p.id).update({"completed_at": None}, synchronize_session=False); s.commit(); s.refresh(p)
+    return learning_state(t.learning_due_at, p, dt.datetime.utcnow())
+@app.get("/api/courses/{cid}/progress")
+def course_progress(cid: int, u: User = Depends(staff), s: Session = Depends(db)):  # per topic: how many of the course's students completed it, and how many are overdue
+    c = s.get(Course, cid)
+    if not c: raise HTTPException(404, "Course not found")
+    need_edit(u, cid, s)
+    links = defaultdict(list)
+    for l in s.query(CourseLink).filter_by(course_id=cid): links[cid].append(l.semester_id)
+    aud = {x.id for x in course_audience(c, s.query(User).filter_by(role="student", active=True).all(), {x.id: x for x in s.query(Semester)}, links)}
+    topics = s.query(Topic).join(Unit, Unit.id == Topic.unit_id).filter(Unit.course_id == cid).all()
+    done = defaultdict(int)
+    if aud and topics:
+        for tid, n in s.query(Progress.topic_id, func.count(Progress.id)).filter(Progress.topic_id.in_([x.id for x in topics]), Progress.user_id.in_(aud),
+                                                                               Progress.completed_at.isnot(None)).group_by(Progress.topic_id): done[tid] = n
+    now = dt.datetime.utcnow()
+    return {"students": len(aud), "topics": {x.id: {"completed": done[x.id], "overdue": len(aud) - done[x.id] if x.learning_due_at and x.learning_due_at < now else 0} for x in topics}}
 
 PROMPTS = {
  "explain": ("You are a warm, sharp engineering tutor for a teenage student. Explain the topic clearly with a hook, an everyday analogy, "

@@ -92,3 +92,4 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .qopt{display:flex;gap:8px;align-items:center;margin:6px 0}.qopt input:not([type=radio]),.qopt select{flex:1;min-width:0}.qopt input[type=radio]{width:20px;height:20px;flex:none;accent-color:var(--vio)}
 .tool{padding:8px 14px;border-radius:14px;background:var(--s2);font-size:14px;margin:6px 8px 6px 0}
 .bar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(135deg,var(--vio),var(--pink))}
+.st{color:var(--mut);font-size:14px;min-width:16px;text-align:center}
