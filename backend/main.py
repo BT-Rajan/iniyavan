@@ -776,7 +776,11 @@ def new_topic(b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
 @app.put("/api/programs/{rid}")
 def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), {"name": program_name(b.name, s, rid)}, s)
 @app.put("/api/semesters/{rid}")
-def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Semester, rid), b.dict(), s)
+def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)):
+    x = s.get(Semester, rid)
+    if x and not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
+    if x: s.query(Course).filter_by(semester_id=rid).update({"program_id": b.program_id}, synchronize_session=False)  # keep the copied program id in step
+    return update(x, b.dict(), s)
 @app.put("/api/courses/{rid}")
 def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Course, rid), course_fields(b, s), s)
 @app.put("/api/units/{rid}")

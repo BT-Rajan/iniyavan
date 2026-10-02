@@ -16,7 +16,6 @@ def edit_topic(env, h, tid, unit_id, title="Water"):
     return env.c.put(f"/api/topics/{tid}", headers=h, json={"title": title, "unit_id": unit_id, "content": "edited"}).status_code
 
 # A. Semester re-parenting
-@pytest.mark.xfail(strict=True, reason="audit: moving a semester leaves Course.program_id stale")
 def test_semester_move_keeps_courses_consistent(env):
     env.csv(CSV); i = ids(); mech1, civil = i["sem"][(i["prog"]["Mech"], "Semester 1")], i["prog"]["Civil"]
     assert env.c.put(f"/api/semesters/{mech1}", headers=env.admin, json={"name": "Semester 1", "program_id": civil}).status_code == 200
@@ -25,7 +24,6 @@ def test_semester_move_keeps_courses_consistent(env):
     enrol("stu@x.com", civil, 1); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 200
     enrol("stu@x.com", i["prog"]["Mech"], 1); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 403
 
-@pytest.mark.xfail(strict=True, reason="audit: semester edit accepts a program that does not exist")
 def test_semester_cannot_move_to_missing_program(env):
     env.csv(CSV); i = ids(); mech1 = i["sem"][(i["prog"]["Mech"], "Semester 1")]
     assert env.c.put(f"/api/semesters/{mech1}", headers=env.admin, json={"name": "S", "program_id": 99999}).status_code == 400
