@@ -5,7 +5,7 @@ import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import 'katex/contrib/mhchem'
 const Md=({children})=><Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{children}</Markdown>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,Plus,X,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History} from 'lucide-react'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -34,15 +34,14 @@ export default function App(){
   const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
   const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI & email'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
-    {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
+    {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast}/>}
-    {page==='add'&&(admin||user.role==='faculty')&&<Add role={user.role} toast={toast} done={()=>go('learn')}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
         <div className="dhead"><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
-        {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k||(k==='learn'&&page==='add')?' on':'')} onClick={()=>{if(k==='learn')setStart(null);go(k)}}><I size={20}/>{l}</button>)}
+        {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k?' on':'')} onClick={()=>{if(k==='learn')setStart(null);go(k)}}><I size={20}/>{l}</button>)}
         <button className="dlink out" onClick={()=>{localStorage.removeItem('t');setOpen(false);setPage('learn');setUser(null)}}><LogOut size={20}/>Sign out</button>
       </nav></div>
     {msg&&<div className="toast" role="status">{msg}</div>}
@@ -89,22 +88,23 @@ const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header
   {back?<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>:<button className="ic" aria-label="Open menu" onClick={menu}><Menu/></button>}
   <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</header>}
 
-function Learn({user,toast,onAdd,appName,start}){
+function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
   const [tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet])
   const landed=useRef(false);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
-  if(t)return <Topic id={t} back={()=>setT(null)} toast={toast}/>
+  if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role={user.role}/>
   if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast}/>
   if(qe)return <QuizEditor {...qe} done={()=>setQe(null)} toast={toast}/>
-  if(ed)return <Add role={user.role} toast={toast} edit={ed} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
+  if(ed)return <TopicEditor role={user.role} toast={toast} edit={ed.id?ed:null} unitId={ed.unit_id} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
   const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
   const row=(x,kind,one,sub,extra={})=>({id:x.id,n:x.name,sub,kind,go:()=>setNav([...nav,x.id]),edit:()=>setEd({kind:one,id:x.id,name:x.name,...extra})})
   const drafts=t=>t.filter(x=>x.published===false).length
   const setPub=async(url,published,msg)=>{try{await api(url,{method:'PUT',body:{published}});toast(msg);load()}catch(e){toast(e.message)}}
-  const list=unit?unit.topics.map(x=>({id:x.id,n:x.title,d:x.read,b:x.bookmarked,kind:'topics',sub:x.published===false?'Draft · students cannot see it':'',draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({kind:'topic',id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
-    :co?co.units.map(x=>row(x,'units','unit',x.topics.length+' topics'+(mayEdit&&drafts(x.topics)?' · '+drafts(x.topics)+' draft':''),{course_id:co.id}))
+  const move=async(items,i,d,url)=>{const ids=items.map(x=>x.id),j=i+d;if(j<0||j>=ids.length)return;[ids[i],ids[j]]=[ids[j],ids[i]];try{await api(url,{method:'PUT',body:{ids}});load()}catch(e){toast(e.message)}}
+  const list=unit?unit.topics.map(x=>({id:x.id,n:x.title,d:x.read,b:x.bookmarked,kind:'topics',sub:x.published===false?'Draft · students cannot see it':'',draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
+    :co?co.units.map(x=>({...row(x,'units','unit',x.topics.length+' topics'+(mayEdit&&drafts(x.topics)?' · '+drafts(x.topics)+' draft':'')),edit:()=>setSheet({type:'unit',un:x,cid:co.id})}))
     :sem?sem.courses.map(x=>({...row(x,'courses','course',x.units.length+' units'+(x.shared?' · shared from '+x.home:x.shared_with?' · shared with '+x.shared_with+' more':'')+(staff?' · '+ownerLine(x):'')),edit:()=>setSheet({type:'course',c:x,pid:prog.id,sid:x.semester_id}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
     :prog?prog.semesters.map(x=>({...row(x,'semesters','semester',(isAdmin?(x.number?'Semester no. '+x.number:'No semester number set')+' · ':'')+x.courses.length+' courses'),edit:()=>setSheet({type:'semester',sem:x,pid:prog.id})}))
     :tree.map(x=>({...row(x,'programs','program',x.semesters.length+' semesters'),edit:()=>setSheet({type:'program',p:x})}))
@@ -121,13 +121,15 @@ function Learn({user,toast,onAdd,appName,start}){
        {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
      {!nav.length&&user.role==='faculty'&&<><h3 style={{margin:'0 0 8px'}}>My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}</b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
        :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 style={{margin:'20px 0 8px'}}>All programs</h3></>}
+    {mayEdit&&co&&!unit&&!co.shared&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'unit',un:{},cid:co.id})}>Add unit</button>}
+    {mayEdit&&unit&&!co.shared&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setEd({unit_id:unit.id})}>Add topic to {unit.name}</button>}
     {list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}</b>{x.sub&&<span>{x.sub}</span>}</div>{(x.d||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.d&&<Check className="done"/>}</span>}</button>
-      {mayEdit&&<>{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
+      {mayEdit&&<>{(x.kind==='units'||x.kind==='topics')&&list.length>1&&[[-1,ArrowUp,'up'],[1,ArrowDown,'down']].map(([d,I,w])=><button key={w} className="ic sm" aria-label={`Move ${x.n} ${w}`} disabled={i+d<0||i+d>=list.length} onClick={()=>move(list,i,d,x.kind==='units'?`/courses/${co.id}/units/order`:`/units/${unit.id}/topics/order`)}><I size={16}/></button>)}{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
     {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 style={{margin:'28px 0 8px'}}>Quizzes</h3>
       {unit.quizzes.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+3)%5]}}>?</span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
         {mayEdit&&<button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id})}><Pencil size={16}/></button>}</div>)}
       {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id})}>Add quiz</button>}</>}
-    {!list.length&&<p className="known">{mayEdit?'Nothing here yet. Tap Add to create it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
+    {!list.length&&<p className="known">{(mayEdit&&co)||isAdmin?'Nothing here yet. Use the button above to add it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this semester':''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
      <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Keep it</button></div></div>}
@@ -137,8 +139,9 @@ function Learn({user,toast,onAdd,appName,start}){
    {sheet?.type==='program'&&<ProgramSheet p={sheet.p} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='semester'&&<SemesterSheet sem={sheet.sem} pid={sheet.pid} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='course'&&<CourseSheet c={sheet.c} pid={sheet.pid} sid={sheet.sid} sems={tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
+   {sheet?.type==='unit'&&<UnitSheet un={sheet.un} cid={sheet.cid} courses={isAdmin?tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>!c.shared).map(c=>({id:c.id,label:`${p.name} › ${s.name} › ${c.name}`})))):null} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='owner'&&<OwnerSheet c={sheet.c} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
-   {mayEdit&&co&&<button className="fab" aria-label="Add content" onClick={onAdd}><Plus/></button>}</>}
+</>}
 const DELETES={programs:"This deletes its semesters and courses with their units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. Enrolled students keep their accounts but lose their program.",
   semesters:"This deletes its courses with their units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. Courses shared into it from elsewhere are only unlinked.",
   courses:"This deletes its units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. The owner keeps their account.",
@@ -207,52 +210,57 @@ function QuizEditor({id,unit_id,done,toast}){
     <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
     {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
 
-function Topic({id,back,toast}){
-  const [t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
-  useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)}).catch(e=>toast(e.message));api(`/topics/${id}/read`,{method:'POST'}).then(r=>setKnown(r.known)).catch(()=>{})},[id])
+function Topic({id,back,toast,role}){
+  const [editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
+  useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)}).catch(e=>toast(e.message))},[id,v])
+  useEffect(()=>{api(`/topics/${id}/read`,{method:'POST'}).then(r=>setKnown(r.known)).catch(()=>{})},[id])
   useEffect(()=>{api('/ai/status').then(r=>setAiOk(r.available)).catch(()=>{})},[id])
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
+  if(editing)return <TopicEditor role={role} toast={toast} edit={{id}} done={()=>{setEditing(false);setV(v+1)}} cancel={()=>setEditing(false)}/>
   if(!t)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const flip=async()=>{const on=!bm;setBm(on);try{await api(`/topics/${id}/bookmark`,{method:on?'PUT':'DELETE'});toast(on?'Bookmarked':'Bookmark removed')}catch(e){setBm(!on);toast(e.message)}}
   const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai[k].text}</Md></div>
     :aiOk===false?<p className="known">AI unavailable. Try again later.</p>
     :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?'Thinking…':k==='explain'?'Explain it to me':'Show a sample answer'}</button>{aiMsg&&<p className="known">{aiMsg}</p>}</>
   return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={<button className={'ic'+(bm?' on':'')} aria-label={bm?'Remove bookmark':'Bookmark this topic'} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
+    {t.can_edit&&<div className="two" style={{marginBottom:12}}><button className="btn ghost" style={{marginTop:0}} onClick={()=>setEditing(true)}><Pencil size={16}/> Edit topic</button>
+      <button className="btn ghost" style={{marginTop:0}} onClick={async()=>{try{await api(`/topics/${id}/publish`,{method:'PUT',body:{published:!t.published}});toast(t.published?'Moved to drafts':'Published');setV(v+1)}catch(e){toast(e.message)}}}>{t.published?<><EyeOff size={16}/> Unpublish</>:<><Eye size={16}/> Publish</>}</button></div>}
+    {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
     <div className="tabs">{[['notes','Notes'],['explain','Explain'],['answer','Sample answer']].map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
     {tab==='notes'&&<div className="prose"><Md>{t.content||'No notes yet.'}</Md>{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}</div></>}
 
-function Add({role,toast,done,edit,cancel}){
-  const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null)
-  const blank={name:'',title:'',program_id:'',semester_id:'',course_id:'',unit_id:'',owner:'',content:'',sample_content:'',question_pattern:'',guideline:'',published:true}
-  const [kind,setKind]=useState(edit?.kind||'topic'),[tree,setTree]=useState([]),[f,setF]=useState(edit?{...blank,name:edit.name||'',program_id:edit.program_id||'',semester_id:edit.semester_id||'',course_id:edit.course_id||''}:{...blank,published:!fac})
-  useEffect(()=>{api('/tree').then(setTree);if(edit?.kind==='topic')api('/topics/'+edit.id).then(t=>setF({...blank,title:t.title,unit_id:t.unit_id||'',content:t.content||'',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false})).catch(e=>toast(e.message))},[])
+function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a topic, or null for a new one in unitId
+  const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null),[busy,setBusy]=useState(false)
+  const [tree,setTree]=useState([]),[f,setF]=useState({title:'',unit_id:unitId||'',content:'',sample_content:'',question_pattern:'',guideline:'',published:!fac}),[cid,setCid]=useState(null)
+  useEffect(()=>{api('/tree').then(setTree).catch(()=>{});if(edit)api('/topics/'+edit.id).then(t=>{setCid(t.course_id);setF({title:t.title,unit_id:t.unit_id||'',content:t.content||'',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false})}).catch(e=>toast(e.message))},[])
   const set=k=>e=>setF({...f,[k]:e.target.value})
   const pickImg=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;if(file.size>3*1024*1024)return toast('Image is too large. Keep it under 3 MB.')
     setUp(true);try{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:file});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Upload failed')
       const pos=taRef.current?.selectionStart??f.content.length;setF({...f,content:f.content.slice(0,pos)+`\n\n![Describe the image](${d.url})\n\n`+f.content.slice(pos)});toast('Image added')}catch(er){toast(er.message)}setUp(false)}
-  const ok=c=>!c.shared&&(!fac||c.editable)
-  const courses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(ok).map(c=>({...c,label:`${p.name} › ${s.name} › ${c.name}`}))))
-  const units=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(ok).flatMap(c=>c.units.map(n=>({...n,label:`${p.name} › ${s.name} › ${c.name} › ${n.name}`})))))
-  const save=async()=>{try{
-    const path='/'+kind+'s'+(edit?'/'+edit.id:''),method=edit?'PUT':'POST'
-    const body={unit:{name:f.name,course_id:+f.course_id},
-      topic:{title:f.title,unit_id:+f.unit_id,published:f.published!==false,content:f.content,sample_content:f.sample_content,question_pattern:f.question_pattern,guideline:f.guideline}}[kind]
-    await api(path,{method,body});toast(edit?'Changes saved':'Saved');done()}catch(e){toast(e.message)}}
+  const all=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>!c.shared&&c.editable).flatMap(c=>c.units.map(n=>({...n,course_id:c.id,label:`${c.name} › ${n.name}`})))))
+  const units=role==='admin'?all:all.filter(n=>n.course_id===cid)  // faculty move a topic only between units of its own course
+  const here=all.find(n=>n.id===+f.unit_id)
+  const save=async()=>{setBusy(true);try{await api(edit?'/topics/'+edit.id:'/topics',{method:edit?'PUT':'POST',body:{...f,unit_id:+f.unit_id,published:f.published!==false}});toast(edit?'Changes saved':'Topic added');done()}catch(e){toast(e.message)}setBusy(false)}
   const T=(k,l,ph)=><><label>{l}</label><textarea placeholder={ph} value={f[k]} onChange={set(k)}/></>
-  const pick=(l,k,opts)=><><label>{l}</label><select value={f[k]} onChange={set(k)}><option value="">Choose…</option>{opts.map(o=><option key={o.id} value={o.id}>{o.label||o.name}</option>)}</select></>
-  return <><Bar title={edit?'Edit '+kind:'Add content'} back={edit&&cancel}/><div className="main">{!edit&&<div className="tabs">{['unit','topic'].map(k=><button key={k} className={kind===k?'on':''} onClick={()=>setKind(k)}>{k[0].toUpperCase()+k.slice(1)}</button>)}</div>}
-    {kind==='unit'&&pick('Course','course_id',courses)}{kind==='topic'&&pick('Unit','unit_id',units)}
-    {kind!=='topic'&&<><label>Name</label><input value={f.name} onChange={set('name')} placeholder="Unit 1: Basic concepts"/></>}
-    {kind==='topic'&&<><label>Topic title</label><input value={f.title} onChange={set('title')} placeholder="First law of thermodynamics"/>
-      <label>Topic content</label><div className="tools"><button type="button" disabled={up} onClick={()=>fileRef.current.click()}>{up?'Uploading…':'Add image'}</button><button type="button" onClick={()=>setPrev(!prev)}>{prev?'Back to editing':'Preview'}</button></div>
-      <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={pickImg}/>
-      {prev?<div className="prose"><Md>{f.content||'Nothing to preview yet.'}</Md></div>:<textarea ref={taRef} placeholder="Paste notes or syllabus text" value={f.content} onChange={set('content')}/>}
-      <p className="known">{'Equations: $x^2$ inline. For a centred block, put $$ on its own line above and below the equation. Chemistry: $\\ce{CaCO3 + CO2 + H2O -> Ca(HCO3)2}$'}</p>{T('question_pattern','Question pattern','e.g. 2 marks: define · 13 marks: derive + numerical')}
-      <label className="chk"><input type="checkbox" checked={f.published!==false} onChange={e=>setF({...f,published:e.target.checked})}/> Published (students can see this topic)</label>
-      {T('sample_content','Sample content','A sample question and answer')}{T('guideline','How an answer should be','Intro, labelled diagram, steps, units, conclusion')}</>}
-    <button className="btn" onClick={save}>{edit?'Save changes':'Save '+kind}</button></div></>}
+  return <><Bar title={edit?'Edit topic':'New topic'} sub={here?.label} back={cancel}/><div className="main">
+    {edit&&units.length>1&&<><label>Unit</label><select value={f.unit_id} onChange={set('unit_id')}>{units.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}</select></>}
+    <label>Topic title</label><input value={f.title} onChange={set('title')} placeholder="First law of thermodynamics"/>
+    <label>Topic content</label><div className="tools"><button type="button" disabled={up} onClick={()=>fileRef.current.click()}>{up?'Uploading…':'Add image'}</button><button type="button" onClick={()=>setPrev(!prev)}>{prev?'Back to editing':'Preview'}</button></div>
+    <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={pickImg}/>
+    {prev?<div className="prose"><Md>{f.content||'Nothing to preview yet.'}</Md></div>:<textarea ref={taRef} placeholder="Paste notes or syllabus text" value={f.content} onChange={set('content')}/>}
+    <p className="known">{'Equations: $x^2$ inline. For a centred block, put $$ on its own line above and below the equation. Chemistry: $\\ce{CaCO3 + CO2 + H2O -> Ca(HCO3)2}$'}</p>{T('question_pattern','Question pattern','e.g. 2 marks: define · 13 marks: derive + numerical')}
+    <label className="chk"><input type="checkbox" checked={f.published!==false} onChange={e=>setF({...f,published:e.target.checked})}/> Published (students can see this topic)</label>
+    {T('sample_content','Sample content','A sample question and answer')}{T('guideline','How an answer should be','Intro, labelled diagram, steps, units, conclusion')}
+    <button className="btn" disabled={busy||!f.title.trim()} onClick={save}>{edit?'Save changes':'Save topic'}</button></div></>}
+function UnitSheet({un,cid,courses,close,done,toast}){  // courses is given to admins only: moving a unit to another course is theirs to do
+  const isNew=!un.id,[f,setF]=useState({name:un.name||'',course:cid}),[busy,setBusy]=useState(false)
+  const save=async()=>{setBusy(true);try{await api(isNew?'/units':'/units/'+un.id,{method:isNew?'POST':'PUT',body:{name:f.name,course_id:+f.course}});toast(isNew?'Unit added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New unit':'Edit unit'}</h3>
+    <label>Name</label><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} onKeyDown={e=>e.key==='Enter'&&f.name.trim()&&save()} placeholder="Unit 1: Basic concepts" autoFocus/>
+    {!isNew&&courses&&<><label>Course</label><select value={f.course} onChange={e=>setF({...f,course:+e.target.value})}>{courses.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}</select></>}
+    <button className="btn" disabled={busy||!f.name.trim()} onClick={save}>{isNew?'Add unit':'Save changes'}</button></Sheet>}
 
 const unmarked=(tree,id)=>tree.map(p=>({...p,semesters:p.semesters.map(s=>({...s,courses:s.courses.map(c=>({...c,units:c.units.map(u=>({...u,topics:u.topics.map(x=>x.id===id?{...x,bookmarked:false}:x)}))}))}))}))
 const tabTo=e=>e.currentTarget.scrollIntoView?.({inline:'center',block:'nearest'})

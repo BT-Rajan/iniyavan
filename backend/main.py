@@ -87,13 +87,15 @@ class Unit(Base):
     __tablename__ = "units"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
+    position = Column(Integer, nullable=True)  # order within the course, set by its owner
 class Topic(Base):
     __tablename__ = "topics"
     id = Column(Integer, primary_key=True); title = Column(String(200)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
     unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
-    published = Column(Boolean, default=True)  # drafts are visible to admins and faculty only
+    published = Column(Boolean, default=True)  # drafts are visible to admins and the course's owner only
+    position = Column(Integer, nullable=True)  # order within the unit, set by the course's owner
 class Quiz(Base):  # a multiple-choice quiz attached to a unit
     __tablename__ = "quizzes"
     id = Column(Integer, primary_key=True); unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), index=True); course_id = Column(Integer, index=True)
@@ -329,12 +331,20 @@ def semester_numbers(c):  # semesters.semester_no, filled once from the names wh
         c.execute(text("CREATE UNIQUE INDEX uq_semesters_program_no ON semesters (program_id, semester_no)"))
     log.warning("Semester numbers: %d set from their names; %d left without a number (ids %s). Set them under Programs.", made, len(left), sorted(left)[:50])
     return made
+def positions(c):  # units.position and topics.position, filled in today's order (by id) wherever missing
+    for table, parent in (("units", "subject_id"), ("topics", "unit_id")):
+        _addcol(table, "position", "INT NULL")(c)
+        top = defaultdict(int)
+        for pid, mx in c.execute(text(f"SELECT {parent}, MAX(position) FROM {table} GROUP BY {parent}")): top[pid] = mx or 0
+        for rid, pid in c.execute(text(f"SELECT id, {parent} FROM {table} WHERE position IS NULL ORDER BY id")).all():
+            top[pid] += 1; c.execute(text(f"UPDATE {table} SET position = :p WHERE id = :i"), {"p": top[pid], "i": rid})
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
               ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
               ("0007_repair_parent_copies", repair_parent_copies), ("0008_subjects_faculty_owner_id", add_faculty_owner),
-              ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers)]
+              ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers),
+              ("0011_unit_topic_positions", positions)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -354,7 +364,7 @@ def boot():
         for co in s.query(Course).all():  # topics without a unit go into "General"
             orphans = s.query(Topic).filter(Topic.course_id == co.id, Topic.unit_id.is_(None)).all()
             if orphans:
-                un = Unit(name="General", course_id=co.id, created_by=co.created_by); s.add(un); s.flush()
+                un = Unit(name="General", course_id=co.id, created_by=co.created_by, position=next_pos(s, Unit, course_id=co.id)); s.add(un); s.flush()
                 for t in orphans: t.unit_id = un.id
         for p in s.query(Program).all():  # courses without a semester go into "Semester 1"
             orphans = s.query(Course).filter(Course.program_id == p.id, Course.semester_id.is_(None)).all()
@@ -604,6 +614,8 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
             "error_count": len(errors), "errors": errors[:20], "credentials": creds}
 PSORT = {"name": lambda stu: (func.lower(Program.name),), "newest": lambda stu: (Program.id.desc(),), "students": lambda stu: (stu.desc(), func.lower(Program.name))}
 SEM_ORDER = (Semester.semester_no.is_(None), Semester.semester_no, Semester.id)  # by number; semesters without one last
+ORDER = {Unit: (Unit.position.is_(None), Unit.position, Unit.id), Topic: (Topic.position.is_(None), Topic.position, Topic.id), Semester: SEM_ORDER}
+def next_pos(s, model, **parent): return (s.query(func.max(model.position)).filter_by(**parent).scalar() or 0) + 1
 def counts(s, ids):
     """Per program: semesters, courses, units, topics, students."""
     c = {i: dict(semesters=0, courses=0, units=0, topics=0, students=0) for i in ids}
@@ -773,7 +785,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     marked = {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}
     def g(model, k):
         d = defaultdict(list)
-        for r in s.query(model).order_by(*(SEM_ORDER if model is Semester else (model.id,))): d[getattr(r, k)].append(r)
+        for r in s.query(model).order_by(*ORDER.get(model, (model.id,))): d[getattr(r, k)].append(r)
         return d
     tp, un, co, se = g(Topic, "unit_id"), g(Unit, "course_id"), g(Course, "semester_id"), g(Semester, "program_id")
     progs = [p for p in s.query(Program).order_by(Program.id) if not scoped(u) or p.id == u.program_id]
@@ -833,7 +845,9 @@ def course_fields(b, s):
 def topic_fields(b, s):
     un = s.get(Unit, b.unit_id)
     if not un: raise HTTPException(400, "Choose a unit for this topic")
-    return {**b.dict(), "course_id": un.course_id}
+    title = (b.title or "").strip()
+    if not title or len(title) > 200: raise HTTPException(400, "Give the topic a title (up to 200 characters)")
+    return {**b.dict(exclude_unset=True), "title": title, "course_id": un.course_id}  # fields left out are left alone
 def update(row, vals, s):
     if not row: raise HTTPException(404, "Not found")
     for k, v in vals.items(): setattr(row, k, v)
@@ -870,10 +884,11 @@ def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)):
 def new_unit(b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     if not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
     need_edit(u, b.course_id, s)
-    return save_row(Unit(**b.dict()), u, s)
+    return save_row(Unit(name=item_name(b.name, "unit"), course_id=b.course_id, position=next_pos(s, Unit, course_id=b.course_id)), u, s)
 @app.post("/api/topics")
 def new_topic(b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
-    f = topic_fields(b, s); need_edit(u, f["course_id"], s); return save_row(Topic(**f), u, s)
+    f = topic_fields(b, s); need_edit(u, f["course_id"], s)
+    return save_row(Topic(**{**f, "published": b.published, "position": next_pos(s, Topic, unit_id=b.unit_id)}), u, s)
 @app.put("/api/programs/{rid}")
 def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), {"name": program_name(b.name, s, rid)}, s)
 @app.put("/api/semesters/{rid}")
@@ -896,17 +911,37 @@ def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = De
 @app.put("/api/units/{rid}")
 def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Unit, rid)
-    if x: need_edit(u, x.course_id, s)
-    if x and not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
-    need_edit(u, b.course_id, s)
-    if x:  # the copied course ids of the unit's topics and quizzes follow it
-        for m in (Topic, Quiz): s.query(m).filter_by(unit_id=rid).update({"course_id": b.course_id}, synchronize_session=False)
-    return update(x, b.dict(), s)
+    if not x: raise HTTPException(404, "Not found")
+    need_edit(u, x.course_id, s); vals = {"name": item_name(b.name, "unit")}
+    if b.course_id != x.course_id:  # moving a unit changes which course it belongs to, which is the admin's call
+        if u.role != "admin": raise HTTPException(403, "Only an admin can move a unit to another course")
+        if not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
+        for m in (Topic, Quiz): s.query(m).filter_by(unit_id=rid).update({"course_id": b.course_id}, synchronize_session=False)  # copies follow
+        vals.update(course_id=b.course_id, position=next_pos(s, Unit, course_id=b.course_id))
+    return update(x, vals, s)
 @app.put("/api/topics/{rid}")
 def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Topic, rid)
-    if x: need_edit(u, topic_course_id(x, s), s)
-    f = topic_fields(b, s); need_edit(u, f["course_id"], s); return update(x, f, s)
+    if not x: raise HTTPException(404, "Not found")
+    old = topic_course_id(x, s); need_edit(u, old, s)
+    f = topic_fields(b, s); need_edit(u, f["course_id"], s)
+    if f["course_id"] != old and u.role != "admin": raise HTTPException(403, "A topic can only move to another unit of the same course")
+    if f["unit_id"] != x.unit_id: f["position"] = next_pos(s, Topic, unit_id=f["unit_id"])
+    return update(x, f, s)  # published only changes when it is sent: saving content never publishes a draft
+class OrderIn(BaseModel): ids: list[int]
+def reorder(rows, ids):
+    if len(ids) != len(set(ids)) or set(ids) != {r.id for r in rows}: raise HTTPException(400, "Send every item exactly once, in the new order")
+    pos = {i: n for n, i in enumerate(ids, 1)}
+    for r in rows: r.position = pos[r.id]
+@app.put("/api/courses/{cid}/units/order")
+def order_units(cid: int, b: OrderIn, u: User = Depends(staff), s: Session = Depends(db)):
+    if not s.get(Course, cid): raise HTTPException(404, "Course not found")
+    need_edit(u, cid, s); reorder(s.query(Unit).filter_by(course_id=cid).all(), b.ids); s.commit(); return {"ok": True}
+@app.put("/api/units/{uid}/topics/order")
+def order_topics(uid: int, b: OrderIn, u: User = Depends(staff), s: Session = Depends(db)):
+    un = s.get(Unit, uid)
+    if not un: raise HTTPException(404, "Unit not found")
+    need_edit(u, un.course_id, s); reorder(s.query(Topic).filter_by(unit_id=uid).all(), b.ids); s.commit(); return {"ok": True}
 # ---- quizzes: staff write them, students take them and are graded on the server ----
 class QuizIn(BaseModel): unit_id: int = 0; title: str; pass_percent: int = 50; published: bool = False
 class QuestionIn(BaseModel): text: str; options: list[str]; correct: int; explanation: str = ""
@@ -971,6 +1006,11 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     s.add(Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct)); s.commit()
     return {"score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "results": results}
 
+def drop_topics(s, cond):  # topics with their reading progress, bookmarks and saved AI answers (SQLite would not cascade them)
+    ids = [i for (i,) in s.query(Topic.id).filter(cond)]
+    if ids:
+        for m in (Progress, Bookmark, AICache): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
+        s.query(Topic).filter(Topic.id.in_(ids)).delete(synchronize_session=False)
 def drop_quizzes(s, cond):
     ids = [q.id for q in s.query(Quiz).filter(cond)]
     if ids:
@@ -989,7 +1029,7 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
     def drop_course(c):  # children are found through their real parents, never through the copied course/program ids
         uids = [i for (i,) in s.query(Unit.id).filter_by(course_id=c.id)] or [0]
         drop_quizzes(s, Quiz.unit_id.in_(uids)); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete()
-        s.query(Topic).filter(or_(Topic.unit_id.in_(uids), and_(Topic.unit_id.is_(None), Topic.course_id == c.id))).delete(synchronize_session=False)
+        drop_topics(s, or_(Topic.unit_id.in_(uids), and_(Topic.unit_id.is_(None), Topic.course_id == c.id)))
         s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
         sids = [i for (i,) in s.query(Semester.id).filter_by(program_id=rid)] or [0]
@@ -1001,7 +1041,8 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
         s.query(CourseLink).filter_by(semester_id=rid).delete()
         for c in s.query(Course).filter_by(semester_id=rid).all(): drop_course(c)
     if kind == "courses": drop_course(r); r = None
-    if kind == "units": drop_quizzes(s, Quiz.unit_id == rid); s.query(Topic).filter_by(unit_id=rid).delete()
+    if kind == "units": drop_quizzes(s, Quiz.unit_id == rid); drop_topics(s, Topic.unit_id == rid)
+    if kind == "topics": drop_topics(s, Topic.id == rid); r = None
     if r is not None: s.delete(r)
     s.commit(); return {"ok": True}
 
@@ -1060,14 +1101,14 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
                 if no is not None: used[p.id].add(no)
             sm = get("semester", (p.id, v["semester"].lower()), lambda: Semester(name=v["semester"], program_id=p.id, semester_no=no))
             co = get("course", (sm.id, v["course"].lower()), lambda: Course(name=v["course"], semester_id=sm.id, program_id=p.id))
-            un = get("unit", (co.id, v["unit"].lower()), lambda: Unit(name=v["unit"], course_id=co.id))
+            un = get("unit", (co.id, v["unit"].lower()), lambda: Unit(name=v["unit"], course_id=co.id, position=next_pos(s, Unit, course_id=co.id)))
             vals = {k: v[k] for k in TEXT_COLS if v.get(k)}
             t = cache["topic"].get((un.id, v["topic"].lower()))
             if t:
                 for k, val in vals.items(): setattr(t, k, val)
                 updated += bool(vals)
             else:
-                get("topic", (un.id, v["topic"].lower()), lambda: Topic(title=v["topic"], unit_id=un.id, course_id=co.id, **vals))
+                get("topic", (un.id, v["topic"].lower()), lambda: Topic(title=v["topic"], unit_id=un.id, course_id=co.id, position=next_pos(s, Topic, unit_id=un.id), **vals))
             valid += 1
         s.rollback() if b.dry_run else s.commit()
     except Exception:
@@ -1086,7 +1127,7 @@ def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
-    return {**full(t, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+    return {**full(t, s), "can_edit": can_edit(u, topic_course_id(t, s), s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
