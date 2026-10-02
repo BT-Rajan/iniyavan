@@ -28,7 +28,7 @@ export default function App(){
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='learn'&&<Learn user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast}/>}
-    {page==='add'&&admin&&<Add toast={toast} done={()=>go('learn')}/>}
+    {page==='add'&&(admin||user.role==='faculty')&&<Add role={user.role} toast={toast} done={()=>go('learn')}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onAdd={()=>go('add')}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&admin&&<Reports/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
@@ -69,8 +69,9 @@ function Learn({user,toast,onAdd,appName}){
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed])
   const landed=useRef(false);useEffect(()=>{if(landed.current||isAdmin||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast}/>
-  if(ed)return <Add toast={toast} edit={ed} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
+  if(ed)return <Add role={user.role} toast={toast} edit={ed} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
+  const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
   const row=(x,kind,one,sub,extra={})=>({id:x.id,n:x.name,sub,kind,go:()=>setNav([...nav,x.id]),edit:()=>setEd({kind:one,id:x.id,name:x.name,...extra})})
   const list=unit?unit.topics.map(x=>({id:x.id,n:x.title,d:x.read,b:x.bookmarked,kind:'topics',go:()=>setT(x.id),edit:()=>setEd({kind:'topic',id:x.id})}))
     :co?co.units.map(x=>row(x,'units','unit',x.topics.length+' topics',{course_id:co.id}))
@@ -84,15 +85,15 @@ function Learn({user,toast,onAdd,appName}){
   return <><Bar title={cur?.name||appName} sub={nav.length?crumbs:'Hi '+user.name} back={nav.length>0&&(()=>setNav(nav.slice(0,-1)))}/>
    <div className="main">{!nav.length&&<div className="hero"><h2>Pick a program.<br/>We’ll remember where you stopped.</h2></div>}
     {list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}</b>{x.sub&&<span>{x.sub}</span>}</div>{(x.d||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.d&&<Check className="done"/>}</span>}</button>
-      {isAdmin&&<>{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
-    {!list.length&&<p className="known">{isAdmin?'Nothing here yet. Tap Add to create it.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
+      {mayEdit&&<>{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
+    {!list.length&&<p className="known">{mayEdit?'Nothing here yet. Tap Add to create it.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this semester':''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':del.kind==='topics'?'This removes the topic and its saved AI answers.':'This also removes everything inside it.'}</p>
      <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Keep it</button></div></div>}
    {sh&&<div className="scrim" onClick={()=>setSh(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Share “{sh.name}”</h3><p className="known">Tick every semester that should also show this course. You still edit it in one place.</p>
      {allSems.filter(x=>x.id!==sh.home).map(x=><label key={x.id} className="chk"><input type="checkbox" checked={sh.sel.includes(x.id)} onChange={e=>setSh({...sh,sel:e.target.checked?[...sh.sel,x.id]:sh.sel.filter(i=>i!==x.id)})}/> {x.label}</label>)}
      <button className="btn" onClick={saveShare}>Save</button><button className="btn ghost" onClick={()=>setSh(null)}>Cancel</button></div></div>}
-   {isAdmin&&<button className="fab" aria-label="Add content" onClick={onAdd}><Plus/></button>}</>}
+   {mayEdit&&<button className="fab" aria-label="Add content" onClick={onAdd}><Plus/></button>}</>}
 
 function Topic({id,back,toast}){
   const [t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
@@ -108,14 +109,16 @@ function Topic({id,back,toast}){
     {tab==='notes'&&<div className="prose"><Markdown>{t.content||'No notes yet.'}</Markdown>{t.question_pattern&&<><h3>Question pattern</h3><Markdown>{t.question_pattern}</Markdown></>}{t.guideline&&<><h3>Answer guideline</h3><Markdown>{t.guideline}</Markdown></>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}</div></>}
 
-function Add({toast,done,edit,cancel}){
+function Add({role,toast,done,edit,cancel}){
+  const fac=role==='faculty'
   const blank={name:'',title:'',program_id:'',semester_id:'',course_id:'',unit_id:'',content:'',sample_content:'',question_pattern:'',guideline:''}
   const [kind,setKind]=useState(edit?.kind||'topic'),[tree,setTree]=useState([]),[f,setF]=useState(edit?{...blank,name:edit.name||'',program_id:edit.program_id||'',semester_id:edit.semester_id||'',course_id:edit.course_id||''}:blank)
   useEffect(()=>{api('/tree').then(setTree);if(edit?.kind==='topic')api('/topics/'+edit.id).then(t=>setF({...blank,title:t.title,unit_id:t.unit_id||'',content:t.content||'',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||''})).catch(e=>toast(e.message))},[])
   const set=k=>e=>setF({...f,[k]:e.target.value})
   const sems=tree.flatMap(p=>p.semesters.map(s=>({...s,label:`${p.name} › ${s.name}`})))
-  const courses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.map(c=>({...c,label:`${p.name} › ${s.name} › ${c.name}`}))))
-  const units=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.flatMap(c=>c.units.map(n=>({...n,label:`${p.name} › ${s.name} › ${c.name} › ${n.name}`})))))
+  const ok=c=>!c.shared&&(!fac||c.editable)
+  const courses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(ok).map(c=>({...c,label:`${p.name} › ${s.name} › ${c.name}`}))))
+  const units=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(ok).flatMap(c=>c.units.map(n=>({...n,label:`${p.name} › ${s.name} › ${c.name} › ${n.name}`})))))
   const save=async()=>{try{
     const path='/'+kind+'s'+(edit?'/'+edit.id:''),method=edit?'PUT':'POST'
     const body={program:{name:f.name},semester:{name:f.name,program_id:+f.program_id},course:{name:f.name,semester_id:+f.semester_id},unit:{name:f.name,course_id:+f.course_id},
@@ -123,7 +126,7 @@ function Add({toast,done,edit,cancel}){
     await api(path,{method,body});toast(edit?'Changes saved':'Saved');done()}catch(e){toast(e.message)}}
   const T=(k,l,ph)=><><label>{l}</label><textarea placeholder={ph} value={f[k]} onChange={set(k)}/></>
   const pick=(l,k,opts)=><><label>{l}</label><select value={f[k]} onChange={set(k)}><option value="">Choose…</option>{opts.map(o=><option key={o.id} value={o.id}>{o.label||o.name}</option>)}</select></>
-  return <><Bar title={edit?'Edit '+kind:'Add content'} back={edit&&cancel}/><div className="main">{!edit&&<div className="tabs">{['program','semester','course','unit','topic'].map(k=><button key={k} className={kind===k?'on':''} onClick={()=>setKind(k)}>{k[0].toUpperCase()+k.slice(1)}</button>)}</div>}
+  return <><Bar title={edit?'Edit '+kind:'Add content'} back={edit&&cancel}/><div className="main">{!edit&&<div className="tabs">{(fac?['unit','topic']:['program','semester','course','unit','topic']).map(k=><button key={k} className={kind===k?'on':''} onClick={()=>setKind(k)}>{k[0].toUpperCase()+k.slice(1)}</button>)}</div>}
     {kind==='semester'&&pick('Program','program_id',tree)}{kind==='course'&&pick('Semester','semester_id',sems)}{kind==='unit'&&pick('Course','course_id',courses)}{kind==='topic'&&pick('Unit','unit_id',units)}
     {kind!=='topic'&&<><label>Name</label><input value={f.name} onChange={set('name')} placeholder={{program:'B.E. Mechanical Engineering',semester:'Semester 3',course:'Thermodynamics',unit:'Unit 1: Basic concepts'}[kind]}/></>}
     {kind==='topic'&&<><label>Topic title</label><input value={f.title} onChange={set('title')} placeholder="First law of thermodynamics"/>
@@ -195,11 +198,12 @@ function Users({toast,me}){
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead" aria-hidden="true"><span>Name</span><span>Program</span><span>Sem</span></div>}
     {items.map(u=><button key={u.id} className="utr" onClick={()=>setView(u.id)} aria-label={'Open '+u.name}>
-      <span className="nm"><span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role==='admin'||!u.active)&&<span className="tags">{u.role==='admin'&&<span className="pill">Admin</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
+      <span className="nm"><span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?'Admin':'Faculty'}</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
       <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
     {!items.length&&<p className="known">{filtered?'No one matches that search.':'No users yet.'}</p>}
     {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
     <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
+    {asg&&<Sheet close={()=>setAsg(null)}><h3>Courses {u.name} can edit</h3><p className="known">Faculty can add and edit units and topics in these courses only.</p>{allCourses.map(c=><label key={c.id} className="chk"><input type="checkbox" checked={asg.includes(c.id)} onChange={e=>setAsg(e.target.checked?[...asg,c.id]:asg.filter(i=>i!==c.id))}/> {c.label}</label>)}<button className="btn" onClick={saveAsg}>Save</button><button className="btn ghost" onClick={()=>setAsg(null)}>Cancel</button></Sheet>}
     {ed&&<UserSheet u={ed} me={me} progs={progs} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
     {bulk&&<Sheet close={()=>setBulk(null)}>
       {bulk.stage==='pick'&&<><h3>Bulk upload users</h3><p className="known">One row per person with the columns name, email, password, role, program and semester. Leave the password blank to generate one. Role is student or admin and defaults to student. Program must match a name on the Programs tab, and semester is a number from 1 to 8. Emails that already exist are updated, and blank program or semester cells leave the current value alone.</p>
@@ -213,17 +217,20 @@ function Users({toast,me}){
     </Sheet>}</>}
 
 function UserDetail({id,me,progs,back,toast}){
-  const [u,setU]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[pw,setPw]=useState(null),[busy,setBusy]=useState(false)
+  const [u,setU]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[pw,setPw]=useState(null),[busy,setBusy]=useState(false),[asg,setAsg]=useState(null),[ctree,setCtree]=useState([])
   const load=()=>api('/admin/users/'+id).then(setU).catch(e=>{toast(e.message);back()})
-  useEffect(()=>{load()},[id])
+  useEffect(()=>{load()},[id]);useEffect(()=>{if(u?.role==='faculty')api('/tree').then(setCtree)},[u?.role])
   if(!u)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const reset=async()=>{setBusy(true);try{const r=await api(`/admin/users/${u.id}/reset-password`,{method:'POST'});setAsk(false);setPw(r.password)}catch(e){toast(e.message)}setBusy(false)}
   const copy=async()=>{try{await navigator.clipboard.writeText(pw);toast('Copied')}catch{toast('Press and hold the password to copy it')}}
   const row=(v,l)=><div className="row"><div>{v}<small>{l}</small></div></div>
+  const allCourses=ctree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>!c.shared).map(c=>({id:c.id,label:`${p.name} › ${s.name} › ${c.name}`}))))
+  const saveAsg=async()=>{try{await api(`/admin/users/${u.id}/courses`,{method:'PUT',body:{course_ids:asg}});toast('Courses updated');setAsg(null);load()}catch(e){toast(e.message)}}
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>Topics read</div><div className="stat"><b>{u.reads}</b>Total reads</div></div>
     <h3 style={{margin:'24px 0 4px'}}>Profile</h3>
-    {row(u.role==='admin'?'Admin':'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set','Semester')}{row(day(u.last_active),'Last active')}
+    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set','Semester')}{row(day(u.last_active),'Last active')}
+    {u.role==='faculty'&&<><h3 style={{margin:'28px 0 4px'}}>Courses they can edit</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">None yet. They can read everything but edit nothing until you assign courses.</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>Assign courses</button></>}
     <h3 style={{margin:'28px 0 4px'}}>Recently read</h3>
     {u.recent.length?u.recent.map((x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads} reads, last {day(x.last_read)}</small></div></div>):<p className="known">No reading activity yet.</p>}
     <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Edit</button><button className="btn" onClick={()=>setAsk(true)}>Reset password</button></div></div>
@@ -245,7 +252,7 @@ function UserSheet({u,me,progs,close,done,toast}){
     <label>Name</label><input value={f.name} onChange={set('name')}/><label>Email</label><input type="email" value={f.email} onChange={set('email')}/>
     <label>Program</label><select value={f.program_id} onChange={set('program_id')}><option value="">Not set</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
     <label>Semester</label><select value={f.semester} onChange={set('semester')}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
-    <label>Role</label><select disabled={self} value={f.role} onChange={set('role')}><option value="student">Student</option><option value="admin">Admin</option></select>
+    <label>Role</label><select disabled={self} value={f.role} onChange={set('role')}><option value="student">Student</option><option value="faculty">Faculty</option><option value="admin">Admin</option></select>
     <label>Status</label><select disabled={self} value={f.active?'1':'0'} onChange={e=>setF({...f,active:e.target.value==='1'})}><option value="1">Active</option><option value="0">Disabled</option></select>
     {isNew?<><label>Password (8+ characters)</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/></>
       :<p className="known" style={{marginTop:14}}>To give this person a new password, use Reset password on their page.</p>}

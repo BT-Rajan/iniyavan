@@ -23,10 +23,10 @@ def main():
     ad = sub.add_parser("admin", help="create the admin, or reset its password and re-enable it")
     ad.add_argument("--email", required=True); ad.add_argument("--name", default="Admin"); ad.add_argument("--password")
     a = sub.add_parser("add", help="create a user"); a.add_argument("--name", required=True); a.add_argument("--email", required=True)
-    a.add_argument("--role", choices=["student", "admin"], default="student"); a.add_argument("--password")
+    a.add_argument("--role", choices=["student", "faculty", "admin"], default="student"); a.add_argument("--password")
     p = sub.add_parser("passwd", help="reset the password of any user"); p.add_argument("--email", required=True); p.add_argument("--password")
     for c in ("enable", "disable"): sub.add_parser(c, help=c + " a user").add_argument("--email", required=True)
-    r = sub.add_parser("role", help="change a user's role"); r.add_argument("--email", required=True); r.add_argument("--role", choices=["student", "admin"], required=True)
+    r = sub.add_parser("role", help="change a user's role"); r.add_argument("--email", required=True); r.add_argument("--role", choices=["student", "faculty", "admin"], required=True)
     sub.add_parser("list", help="list users"); sub.add_parser("check", help="exit 1 if there is no active admin")
     x = ap.parse_args(); upgrade_schema()
     with Session_() as s:

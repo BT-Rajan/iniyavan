@@ -26,6 +26,12 @@ class User(Base):
     must_change = Column(Boolean, default=False)  # set when an admin chose the password; cleared once the user picks their own
     program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
     semester = Column(Integer, nullable=True)  # current semester, 1 to 8
+class CourseFaculty(Base):  # which courses a faculty member may edit (units and topics only)
+    __tablename__ = "course_faculty"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), index=True)
+    __table_args__ = (UniqueConstraint("user_id", "course_id"),)
 class Setting(Base):
     __tablename__ = "settings"
     k = Column(String(50), primary_key=True); v = Column(Text)
@@ -94,6 +100,14 @@ def me(request: Request, authorization: str = Header(""), s: Session = Depends(d
 def admin(u: User = Depends(me)):
     if u.role != "admin": raise HTTPException(403, "Admins only")
     return u
+def staff(u: User = Depends(me)):
+    if u.role not in ("admin", "faculty"): raise HTTPException(403, "Admins and faculty only")
+    return u
+def can_edit(u, course_id, s):  # admins edit everything; faculty only their assigned courses
+    if u.role == "admin": return True
+    return u.role == "faculty" and s.query(CourseFaculty).filter_by(user_id=u.id, course_id=course_id).first() is not None
+def need_edit(u, course_id, s):
+    if not can_edit(u, course_id, s): raise HTTPException(403, "You are not assigned to this course")
 def setting(s, k, d=""):
     r = s.get(Setting, k); return r.v if r else d
 
@@ -152,7 +166,7 @@ def change_password(b: PwChange, u: User = Depends(me), s: Session = Depends(db)
     u.pw = hp(b.new_password); u.must_change = False; s.commit(); return {"ok": True}
 
 # ---- admin ----
-ROLES = ("student", "admin")
+ROLES = ("student", "faculty", "admin")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PWCHARS = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
 SEM = re.compile(r"^(?:s|sem|semester)?\s*([1-8])$", re.I)
@@ -166,7 +180,7 @@ ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 
 def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number; None if the name carries no semester number
     m = re.search(r"(?<![\w])(?:[1-8]|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
     return None if not m else (int(m.group(0)) if m.group(0).isdigit() else ROMAN[m.group(0).lower()])
-def scoped(u): return u.role != "admin" and u.program_id is not None  # unenrolled students keep the old open view
+def scoped(u): return u.role == "student" and u.program_id is not None  # unenrolled students keep the old open view
 def sem_visible(u, sem):  # a student sees their own program, up to and including their current semester
     if not scoped(u): return True
     if sem.program_id != u.program_id: return False
@@ -211,7 +225,20 @@ def user_detail(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
     n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid).one()
     recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid).order_by(Progress.last_read.desc()).limit(10).all()
     return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
-            "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent]}
+            "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
+            "course_ids": [r.course_id for r in s.query(CourseFaculty).filter_by(user_id=uid)]}
+class CoursesIn(BaseModel): course_ids: list[int]
+@app.put("/api/admin/users/{uid}/courses")
+def assign_courses(uid: int, b: CoursesIn, _: User = Depends(admin), s: Session = Depends(db)):
+    u = s.get(User, uid)
+    if not u: raise HTTPException(404, "No such user")
+    if u.role != "faculty": raise HTTPException(400, "Only faculty can be assigned courses")
+    want = set(b.course_ids)
+    if len(want) != s.query(Course).filter(Course.id.in_(want)).count(): raise HTTPException(400, "Choose valid courses")
+    s.query(CourseFaculty).filter(CourseFaculty.user_id == uid, ~CourseFaculty.course_id.in_(want or [0])).delete(synchronize_session=False)
+    have = {r.course_id for r in s.query(CourseFaculty).filter_by(user_id=uid)}
+    for i in want - have: s.add(CourseFaculty(user_id=uid, course_id=i))
+    s.commit(); return {"ok": True}
 @app.post("/api/admin/users/{uid}/reset-password")
 def reset_password(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -223,7 +250,7 @@ def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
     e, name = b.email.strip().lower(), b.name.strip()
     if not name: raise HTTPException(400, "Enter a name")
     if not EMAIL.match(e): raise HTTPException(400, "Enter a valid email")
-    if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
+    if b.role not in ROLES: raise HTTPException(400, "Role must be student, faculty or admin")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
     s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=to_sem(b.semester), must_change=b.role != "admin")); s.commit(); return {"ok": True}
@@ -242,7 +269,7 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
         if e != u.email and s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
         u.email = e
     if b.role:
-        if b.role not in ROLES: raise HTTPException(400, "Role must be student or admin")
+        if b.role not in ROLES: raise HTTPException(400, "Role must be student, faculty or admin")
         u.role = b.role
     if b.active is not None: u.active = b.active
     sent = b.dict(exclude_unset=True)
@@ -273,7 +300,7 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
         def bad(msg): errors.append({"row": n, "error": msg})
         if not EMAIL.match(e): bad("Invalid email"); continue
         if e in seen: bad("Duplicate email in this file"); continue
-        if role and role not in ROLES: bad("Role must be student or admin"); continue
+        if role and role not in ROLES: bad("Role must be student, faculty or admin"); continue
         if pw and len(pw) < 8: bad("Password needs 8+ characters"); continue
         name = v.get("name") or e.split("@")[0]
         if len(name) > 100 or len(e) > 190: bad("Name or email is too long"); continue
@@ -384,12 +411,13 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     links = defaultdict(list); linked_to = defaultdict(list)
     for l in s.query(CourseLink): linked_to[l.course_id].append(l.semester_id)
     cbyid = {c.id: c for c in s.query(Course)}
+    mine = {r.course_id for r in s.query(CourseFaculty).filter_by(user_id=u.id)} if u.role == "faculty" else set()
     for l in s.query(CourseLink).order_by(CourseLink.id):
         if l.course_id in cbyid: links[l.semester_id].append(cbyid[l.course_id])
     def cj(c, sm):
         shared = c.semester_id != sm.id
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
-             "shared_with": len(linked_to[c.id]), "units": [
+             "shared_with": len(linked_to[c.id]), "editable": u.role == "admin" or c.id in mine, "units": [
             {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked} for t in tp[n.id]]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]
         return d
@@ -435,11 +463,13 @@ def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(d
 @app.post("/api/courses")
 def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Course(**course_fields(b, s)), u, s)
 @app.post("/api/units")
-def new_unit(b: UnitIn, u: User = Depends(admin), s: Session = Depends(db)):
+def new_unit(b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     if not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
+    need_edit(u, b.course_id, s)
     return save_row(Unit(**b.dict()), u, s)
 @app.post("/api/topics")
-def new_topic(b: TopicIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Topic(**topic_fields(b, s)), u, s)
+def new_topic(b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
+    f = topic_fields(b, s); need_edit(u, f["course_id"], s); return save_row(Topic(**f), u, s)
 @app.put("/api/programs/{rid}")
 def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), {"name": program_name(b.name, s, rid)}, s)
 @app.put("/api/semesters/{rid}")
@@ -447,15 +477,24 @@ def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session 
 @app.put("/api/courses/{rid}")
 def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Course, rid), course_fields(b, s), s)
 @app.put("/api/units/{rid}")
-def edit_unit(rid: int, b: UnitIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Unit, rid), b.dict(), s)
+def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
+    x = s.get(Unit, rid)
+    if x: need_edit(u, x.course_id, s)
+    need_edit(u, b.course_id, s); return update(x, b.dict(), s)
 @app.put("/api/topics/{rid}")
-def edit_topic(rid: int, b: TopicIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Topic, rid), topic_fields(b, s), s)
+def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
+    x = s.get(Topic, rid)
+    if x: need_edit(u, x.course_id, s)
+    f = topic_fields(b, s); need_edit(u, f["course_id"], s); return update(x, f, s)
 @app.delete("/api/{kind}/{rid}")
-def remove(kind: str, rid: int, _: User = Depends(admin), s: Session = Depends(db)):
+def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(db)):
     if kind not in M: raise HTTPException(404, "Unknown item")
     r = s.get(M[kind], rid)
     if not r: raise HTTPException(404, "Not found")
-    def drop_course(c): s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
+    if kind not in ("units", "topics"): 
+        if u.role != "admin": raise HTTPException(403, "Admins only")
+    else: need_edit(u, r.course_id, s)
+    def drop_course(c): s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete(); s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
         for c in s.query(Course).filter_by(program_id=rid).all(): drop_course(c)
         s.query(CourseLink).filter(CourseLink.semester_id.in_(s.query(Semester.id).filter_by(program_id=rid))).delete(synchronize_session=False)

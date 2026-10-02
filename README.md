@@ -45,3 +45,6 @@ Everyone can change their own password from the drawer (Change password). Passwo
 
 ## Common courses
 A course lives in one home semester, but can also be shown in other programs' semesters (for example first-year Engg. Chem for every branch). As admin, open a semester and tap the link icon on a course, then tick the semesters that should also show it. You edit it only at its home; the other semesters show it marked "shared from ...". Removing a shared card (trash icon) only unlinks it there. Students see a shared course like any other and are scoped by their own program and semester. Deleting the home course or a linked semester cleans up the links.
+
+## Faculty role
+Roles are student, faculty and admin. Faculty can read everything and add, edit and delete **units and topics** in the courses an admin has assigned to them (Users > open the person > Assign courses). They cannot create or delete programs, semesters or courses, share courses, manage users, upload CSVs, or change settings, and the server enforces that. Create faculty from Users (role Faculty), the bulk user CSV (`role` column) or `manage.py add --role faculty`. Like students, faculty must set their own password on first sign-in. A new `course_faculty` table is created automatically.
