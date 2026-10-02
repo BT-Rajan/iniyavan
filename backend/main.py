@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -66,6 +67,13 @@ class LoginFail(Base):  # failed sign-in attempts, used for lockout
     __tablename__ = "login_fails"
     id = Column(Integer, primary_key=True); email = Column(String(190), index=True); ip = Column(String(64), index=True)
     at = Column(DateTime, default=dt.datetime.utcnow, index=True)
+class SchemaMigration(Base):  # which numbered migrations this database has already had
+    __tablename__ = "schema_migrations"
+    id = Column(String(80), primary_key=True); applied_at = Column(DateTime, default=dt.datetime.utcnow)
+class AuditLog(Base):  # who changed what (staff actions and password changes; never request bodies or secrets)
+    __tablename__ = "audit_log"
+    id = Column(Integer, primary_key=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
+    user_id = Column(Integer, index=True); method = Column(String(8)); path = Column(String(200)); status = Column(Integer)
 class Unit(Base):
     __tablename__ = "units"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
@@ -139,6 +147,18 @@ ORIGINS = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if
 if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; "
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+SKIP_AUDIT = re.compile(r"/(read|bookmark)$|/ai/")  # student reading activity is already tracked as progress
+def audit_write(uid, method, path, status):
+    with Session_() as s: s.add(AuditLog(user_id=uid, method=method, path=path[:200], status=status)); s.commit()
+@app.middleware("http")
+async def audit(request: Request, call_next):
+    r = await call_next(request)
+    try:
+        p = request.url.path; tok = request.headers.get("authorization", "")[7:]
+        if tok and request.method in ("POST", "PUT", "PATCH", "DELETE") and p.startswith("/api/") and not SKIP_AUDIT.search(p):
+            await run_in_threadpool(audit_write, jwt.decode(tok, SECRET, algorithms=["HS256"])["uid"], request.method, p, r.status_code)
+    except Exception: pass  # logging must never break a request
+    return r
 @app.middleware("http")
 async def secure_headers(request: Request, call_next):
     r = await call_next(request)
@@ -157,17 +177,28 @@ def manifest():
     return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
                          "background_color": "#0e0a1f", "theme_color": "#0e0a1f", "icons": icons})
 
-def upgrade_schema():
+def _addcol(table, col, typ):
+    def go(c):
+        if col not in [x["name"] for x in inspect(c).get_columns(table)]: c.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+    return go
+# Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
+MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
+              ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
+              ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1"))]
+def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
-    cols = lambda t: [c["name"] for c in inspect(engine).get_columns(t)]
-    add = [("topics", "unit_id", "INT NULL"), ("subjects", "semester_id", "INT NULL"), ("users", "program_id", "INT NULL"), ("users", "semester", "INT NULL"), ("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0"), ("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")]
-    with engine.begin() as c:  # upgrade older schemas in place
-        for t, col, typ in add:
-            if col not in cols(t): c.execute(text(f"ALTER TABLE {t} ADD COLUMN {col} {typ}"))
+    with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
+    for mid, fn in MIGRATIONS:
+        if mid in done: continue
+        with engine.begin() as c:
+            fn(c); c.execute(text("INSERT INTO schema_migrations (id, applied_at) VALUES (:i, :t)"), {"i": mid, "t": dt.datetime.utcnow()})
+def applied_migrations():
+    with engine.connect() as c: return [r[0] for r in c.execute(text("SELECT id FROM schema_migrations ORDER BY id"))]
 @app.on_event("startup")
 def boot():
     require_secret()
     upgrade_schema()
+    with Session_() as s: s.query(AuditLog).filter(AuditLog.at < dt.datetime.utcnow() - dt.timedelta(days=400)).delete(); s.commit()
     with Session_() as s:
         for co in s.query(Course).all():  # topics without a unit go into "General"
             orphans = s.query(Topic).filter(Topic.course_id == co.id, Topic.unit_id.is_(None)).all()
@@ -202,6 +233,14 @@ def login(b: Login, request: Request, s: Session = Depends(db)):
     clear_fails(s, email, ip)
     if stale(u.pw) and not u.must_change: u.pw = hp(b.password); s.commit()  # quietly upgrade old hashes
     return {"token": make_token(u), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}}
+@app.get("/api/admin/audit")
+def audit_list(q: str = "", limit: int = 100, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
+    qy = s.query(AuditLog, User).outerjoin(User, User.id == AuditLog.user_id)
+    if q.strip():
+        k = f"%{q.strip()}%"; qy = qy.filter(or_(User.email.ilike(k), User.name.ilike(k), AuditLog.path.ilike(k)))
+    total = qy.count(); rows = qy.order_by(AuditLog.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 200)).all()
+    return {"total": total, "items": [{"id": a.id, "at": a.at.isoformat() + "Z", "user": u.name if u else "Deleted user", "email": u.email if u else "", "role": u.role if u else "",
+                                       "method": a.method, "path": a.path, "status": a.status} for a, u in rows]}
 @app.get("/api/health")
 def health():
     try:

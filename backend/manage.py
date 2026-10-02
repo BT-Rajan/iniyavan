@@ -4,7 +4,7 @@ import argparse, getpass, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
-from main import Base, engine, Session_, User, hp, upgrade_schema
+from main import Base, engine, Session_, User, hp, upgrade_schema, applied_migrations, DB, UPLOADS
 
 def password(given):
     while True:
@@ -27,9 +27,17 @@ def main():
     p = sub.add_parser("passwd", help="reset the password of any user"); p.add_argument("--email", required=True); p.add_argument("--password")
     for c in ("enable", "disable"): sub.add_parser(c, help=c + " a user").add_argument("--email", required=True)
     r = sub.add_parser("role", help="change a user's role"); r.add_argument("--email", required=True); r.add_argument("--role", choices=["student", "faculty", "admin"], required=True)
+    b = sub.add_parser("backup", help="dump the database and uploaded images into a folder"); b.add_argument("--dir", default=os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backups")); b.add_argument("--keep-days", type=int, default=14)
+    sub.add_parser("migrate", help="apply pending database migrations and list what is applied")
     sub.add_parser("list", help="list users"); sub.add_parser("check", help="exit 1 if there is no active admin")
     x = ap.parse_args(); upgrade_schema()
     with Session_() as s:
+        if x.cmd == "migrate":
+            print("Applied migrations:"); [print("  " + m) for m in applied_migrations()]; return
+        if x.cmd == "backup":
+            from backup import run_backup
+            for f in run_backup(DB, UPLOADS, os.path.abspath(x.dir), x.keep_days): print("Wrote " + f)
+            return
         if x.cmd == "check": sys.exit(0 if s.query(User).filter_by(role="admin", active=True).first() else 1)
         if x.cmd == "list":
             for u in s.query(User).order_by(User.id): print(f"{u.id:>3}  {u.role:<8} {'active' if u.active else 'disabled':<9} {u.email}  ({u.name})")
