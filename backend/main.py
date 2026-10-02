@@ -243,10 +243,37 @@ def _addcol(table, col, typ):
     def go(c):
         if col not in [x["name"] for x in inspect(c).get_columns(table)]: c.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
     return go
+# Copied parent ids (subjects.course_id = program, topics.subject_id / quizzes.course_id = course) are re-derived from the real parent,
+# but only where that parent exists; rows with a missing parent are left alone and reported. Plain SQL that MariaDB and SQLite both accept.
+REPAIRS = [
+    ("subjects", "course_id", "SELECT sm.program_id FROM semesters sm JOIN courses p ON p.id = sm.program_id WHERE sm.id = subjects.semester_id"),
+    ("topics", "subject_id", "SELECT un.subject_id FROM units un JOIN subjects co ON co.id = un.subject_id WHERE un.id = topics.unit_id"),
+    ("quizzes", "course_id", "SELECT un.subject_id FROM units un JOIN subjects co ON co.id = un.subject_id WHERE un.id = quizzes.unit_id")]
+ORPHANS = {  # name -> query for the ids of rows whose parent is missing
+    "semesters without a program": "SELECT sm.id FROM semesters sm LEFT JOIN courses p ON p.id = sm.program_id WHERE p.id IS NULL",
+    "courses without a semester": "SELECT co.id FROM subjects co LEFT JOIN semesters sm ON sm.id = co.semester_id WHERE sm.id IS NULL",
+    "units without a course": "SELECT un.id FROM units un LEFT JOIN subjects co ON co.id = un.subject_id WHERE co.id IS NULL",
+    "topics without a unit": "SELECT t.id FROM topics t LEFT JOIN units un ON un.id = t.unit_id WHERE un.id IS NULL",
+    "quizzes without a unit": "SELECT q.id FROM quizzes q LEFT JOIN units un ON un.id = q.unit_id WHERE un.id IS NULL"}
+def integrity_report(c):  # {problem: [ids]} for every hierarchy row whose parent is missing; nothing is changed
+    return {k: [r[0] for r in c.execute(text(q))] for k, q in ORPHANS.items()}
+def resync_parent_copies(c):  # returns rows changed per copied column
+    fixed = {}
+    for table, col, parent in REPAIRS:
+        if col not in [x["name"] for x in inspect(c).get_columns(table)]: continue
+        fixed[f"{table}.{col}"] = c.execute(text(f"UPDATE {table} SET {col} = ({parent}) WHERE EXISTS ({parent}) AND ({col} IS NULL OR {col} <> ({parent}))")).rowcount
+    return fixed
+def repair_parent_copies(c):
+    fixed = resync_parent_copies(c)
+    log.warning("Repaired copied parent ids: %s", fixed)
+    for k, v in integrity_report(c).items():
+        if v: log.warning("Left alone, %s: %d (ids %s). Fix or delete these by hand.", k, len(v), v[:50])
+    return fixed
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
-              ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1"))]
+              ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
+              ("0007_repair_parent_copies", repair_parent_copies)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -840,6 +867,8 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
     if kind not in ("units", "topics"): 
         if u.role != "admin": raise HTTPException(403, "Admins only")
     else: need_edit(u, r.course_id if kind == "units" else topic_course_id(r, s), s)
+    # MariaDB cascades deletes along topics.subject_id and subjects.course_id too, so a stale copy would take rows that now live elsewhere
+    if kind in ("programs", "semesters", "courses"): resync_parent_copies(s.connection())
     def drop_course(c):  # children are found through their real parents, never through the copied course/program ids
         uids = [i for (i,) in s.query(Unit.id).filter_by(course_id=c.id)] or [0]
         drop_quizzes(s, Quiz.unit_id.in_(uids)); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete()

@@ -101,3 +101,26 @@ def test_delete_follows_real_parents_not_stale_copies(env):
     with Session_() as s: assert s.get(Topic, i["topic"]["Water"]) is not None and s.get(Topic, i["topic"]["Tools"]) is None
     assert env.c.delete(f"/api/programs/{i['prog']['Mech']}", headers=env.admin).status_code == 200
     with Session_() as s: assert s.get(Course, i["course"]["Maths"]) is not None and s.get(Course, chem) is None and s.get(Topic, i["topic"]["Water"]) is None
+
+def test_repair_migration_fixes_drift_and_reports_orphans_without_deleting(env):
+    import main
+    from main import Unit, Quiz
+    env.csv(CSV); i = ids(); chem, work, civil = i["course"]["Chem"], i["course"]["Workshop"], i["prog"]["Civil"]
+    with Session_() as s:
+        s.get(Topic, i["topic"]["Water"]).course_id = work; s.get(Course, chem).program_id = civil  # drift
+        s.add(Quiz(unit_id=i["unit"][chem], course_id=work, title="Q"))
+        lost_unit = Unit(name="Lost", course_id=99999); s.add(lost_unit); s.flush()  # orphans: SQLite does not enforce the foreign keys
+        lost_topic = Topic(title="LostT", unit_id=lost_unit.id, course_id=work); bad_sem = Semester(name="Gone", program_id=99999)
+        no_unit = Topic(title="NoUnit", unit_id=99999, course_id=chem); s.add_all([lost_topic, bad_sem, no_unit]); s.flush(); bad_course = Course(name="Stray", semester_id=bad_sem.id, program_id=civil); s.add(bad_course); s.commit()
+        ids_ = dict(unit=lost_unit.id, topic=lost_topic.id, sem=bad_sem.id, course=bad_course.id, no_unit=no_unit.id)
+    with main.engine.begin() as c: fixed = main.repair_parent_copies(c)
+    assert fixed == {"subjects.course_id": 1, "topics.subject_id": 1, "quizzes.course_id": 1}
+    with Session_() as s:
+        assert s.get(Topic, i["topic"]["Water"]).course_id == chem and s.get(Course, chem).program_id == i["prog"]["Mech"]
+        assert s.query(Quiz).filter_by(title="Q").one().course_id == chem
+        assert s.get(Topic, ids_["topic"]).course_id == work and s.get(Course, ids_["course"]).program_id == civil  # parents missing: left alone
+        assert all(s.get(m, ids_[k]) for m, k in ((Unit, "unit"), (Topic, "topic"), (Semester, "sem"), (Course, "course")))  # nothing deleted
+    with main.engine.connect() as c: rep = main.integrity_report(c)
+    assert rep["units without a course"] == [ids_["unit"]] and rep["topics without a unit"] == [ids_["no_unit"]] and rep["semesters without a program"] == [ids_["sem"]]
+    with main.engine.begin() as c: assert set(main.repair_parent_copies(c).values()) == {0}  # running again changes nothing
+    assert "0007_repair_parent_copies" in main.applied_migrations()

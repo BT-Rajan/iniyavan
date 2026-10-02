@@ -4,7 +4,7 @@ import argparse, getpass, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
-from main import Base, engine, Session_, User, hp, upgrade_schema, applied_migrations, DB, UPLOADS
+from main import Base, engine, Session_, User, hp, upgrade_schema, applied_migrations, integrity_report, DB, UPLOADS
 
 def password(given):
     while True:
@@ -29,11 +29,16 @@ def main():
     r = sub.add_parser("role", help="change a user's role"); r.add_argument("--email", required=True); r.add_argument("--role", choices=["student", "faculty", "admin"], required=True)
     b = sub.add_parser("backup", help="dump the database and uploaded images into a folder"); b.add_argument("--dir", default=os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backups")); b.add_argument("--keep-days", type=int, default=14)
     sub.add_parser("migrate", help="apply pending database migrations and list what is applied")
+    sub.add_parser("integrity", help="list programs, semesters, courses, units, topics and quizzes whose parent is missing (changes nothing)")
     sub.add_parser("list", help="list users"); sub.add_parser("check", help="exit 1 if there is no active admin")
     x = ap.parse_args(); upgrade_schema()
     with Session_() as s:
         if x.cmd == "migrate":
             print("Applied migrations:"); [print("  " + m) for m in applied_migrations()]; return
+        if x.cmd == "integrity":
+            with engine.connect() as c: rep = integrity_report(c)
+            for k, v in rep.items(): print(f"{k}: {len(v)}" + (f"  ids: {', '.join(map(str, v[:50]))}" + (" …" if len(v) > 50 else "") if v else ""))
+            sys.exit(1 if any(rep.values()) else 0)
         if x.cmd == "backup":
             from backup import run_backup
             for f in run_backup(DB, UPLOADS, os.path.abspath(x.dir), x.keep_days): print("Wrote " + f)
