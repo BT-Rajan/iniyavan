@@ -20,16 +20,17 @@ const COL=['#8b5cf6','#ff4d9d','#ffb547','#3ee6b0','#4cc9ff']
 const Ctx=createContext({})
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[page,setPage]=useState('learn'),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor')
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[page,setPage]=useState('learn'),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null)
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
-  useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
+  useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setCanReset(!!c.email_reset);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
   useEffect(()=>{const k=e=>e.key==='Escape'&&setOpen(false);addEventListener('keydown',k);return()=>removeEventListener('keydown',k)},[])
   useEffect(()=>{document.body.style.overflow=open?'hidden':''},[open])
   if(!ready)return null
-  if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name}/>
+  if(resetTok)return <ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/>
+  if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} canReset={canReset}/>
   if(user.must_change)return <ChangePassword forced toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)}
-  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI config'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI & email'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='learn'&&<Learn user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast}/>}
@@ -45,13 +46,31 @@ export default function App(){
     {msg&&<div className="toast" role="status">{msg}</div>}
   </Ctx.Provider>}
 
-function Login({onIn,toast,msg,appName}){
-  const [f,setF]=useState({email:'',password:''}),[b,setB]=useState(false)
+function Login({onIn,toast,msg,appName,canReset}){
+  const [f,setF]=useState({email:'',password:''}),[b,setB]=useState(false),[mode,setMode]=useState('in'),[sent,setSent]=useState('')
   const go=async()=>{setB(true);try{const r=await api('/login',{method:'POST',body:f});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
+  const forgot=async()=>{setB(true);try{setSent((await api('/forgot',{method:'POST',body:{email:f.email}})).message)}catch(e){toast(e.message)}setB(false)}
+  if(mode==='forgot')return <div className="login"><p className="brand">{appName}</p><h1>Forgot your<br/>password?</h1>{sent?<p>{sent}</p>:<><p>Enter your account email and we will send a link to choose a new one.</p>
+    <label>Email</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
+    <button className="btn" disabled={b||!f.email} onClick={forgot}>Send reset link</button></>}
+    <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>Back to sign in</button>{msg&&<div className="toast">{msg}</div>}</div>
   return <div className="login"><p className="brand">{appName}</p><h1>Engineering,<br/>finally clear.</h1><p>Sign in with the account your admin created.</p>
-    <label>Email</label><input type="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
-    <label>Password</label><input type="password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
-    <button className="btn" disabled={b} onClick={go}>Sign in</button>{msg&&<div className="toast">{msg}</div>}</div>}
+    <label>Email</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
+    <label>Password</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
+    <button className="btn" disabled={b} onClick={go}>Sign in</button>
+    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>Forgot password?</button>:<p className="known">Forgot your password? Ask your admin to reset it.</p>}{msg&&<div className="toast">{msg}</div>}</div>}
+
+function ResetPassword({token,toast,msg,done,leave,canReset}){
+  const [ok,setOk]=useState(null),[f,setF]=useState({password:'',again:''}),[b,setB]=useState(false)
+  useEffect(()=>{api('/reset/check',{method:'POST',body:{token}}).then(r=>setOk(r.valid)).catch(()=>setOk(false))},[token])
+  const go=async()=>{if(f.password.length<8)return toast('Use at least 8 characters');if(f.password!==f.again)return toast("The passwords don't match")
+    setB(true);try{const r=await api('/reset',{method:'POST',body:{token,new_password:f.password}});localStorage.t=r.token;done(r.user)}catch(e){toast(e.message)}setB(false)}
+  if(ok===null)return null
+  if(!ok)return <div className="login"><h1>This link<br/>has expired.</h1><p>Reset links work once and only for a short time.{canReset?' Ask for a new one from the sign-in page.':' Ask your admin to reset your password.'}</p><button className="btn" onClick={leave}>Go to sign in</button></div>
+  return <div className="login"><h1>Choose a<br/>new password.</h1><p>Use at least 8 characters.</p>
+    <label>New password</label><input type="password" autoComplete="new-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})}/>
+    <label>Repeat new password</label><input type="password" autoComplete="new-password" value={f.again} onChange={e=>setF({...f,again:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
+    <button className="btn" disabled={b} onClick={go}>Save and sign in</button>{msg&&<div className="toast">{msg}</div>}</div>}
 
 function ChangePassword({forced,toast,msg,done,out}){
   const [f,setF]=useState({current:'',password:'',again:''}),[b,setB]=useState(false),set=k=>e=>setF({...f,[k]:e.target.value})
@@ -390,13 +409,15 @@ function AiConfig({toast}){
   const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({})
   const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model)});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
-  return <><Bar title="AI config" sub={cfg.key_set?'AI is on · key '+cfg.key_hint:'AI is off · no key yet'}/><div className="main">
+  return <><Bar title="AI & email" sub={cfg.key_set?'AI is on · key '+cfg.key_hint:'AI is off · no key yet'}/><div className="main">
     <label>DeepSeek API key</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={cfg.key_set?'Leave blank to keep the current key':'sk-…'}/>
     <label>Model</label><input value={model} onChange={e=>setModel(e.target.value)} placeholder="deepseek-chat"/>
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key,model}}).then(()=>setKey('')),'AI settings saved')}>Save</button>
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Test the key</button>
       <button className="btn ghost" onClick={()=>confirm('Turn AI off for everyone? Students will see "AI unavailable" until you save a key again.')&&run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}>Remove the key (turn AI off)</button></>}
-    <p className="known" style={{marginTop:20}}>One key serves every student. Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p></div></>}
+    <p className="known" style={{marginTop:20}}>One key serves every student. Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
+    <h3 style={{margin:'28px 0 4px'}}>Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
+    {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</div></>}
 
 const VERB={POST:'Created',PUT:'Changed',PATCH:'Edited',DELETE:'Deleted'}
 const describe=(m,p)=>{const s=p.replace(/^\/api\//,'').split('/'),id=s.find(x=>/^\d+$/.test(x)),n=s.filter(x=>!/^\d+$/.test(x)),last=n[n.length-1],noun=n[0]==='admin'?n[1]:n[0],one=(noun||'').replace(/s$/,'')

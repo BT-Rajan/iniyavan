@@ -1,7 +1,8 @@
 from collections import defaultdict
-import csv, io, json, logging, os, re, hashlib, hmac, secrets, datetime as dt, httpx, jwt
+import csv, io, json, logging, os, re, smtplib, hashlib, hmac, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, Header, Request
+from email.message import EmailMessage
+from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -75,6 +76,10 @@ class AuditLog(Base):  # who changed what (staff actions and password changes; n
     __tablename__ = "audit_log"
     id = Column(Integer, primary_key=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
     user_id = Column(Integer, index=True); method = Column(String(8)); path = Column(String(200)); status = Column(Integer)
+class PasswordReset(Base):  # one-time "forgot password" links; only a hash of the link token is stored
+    __tablename__ = "password_resets"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, index=True, nullable=True); token_hash = Column(String(64), unique=True, index=True)
+    ip = Column(String(64), index=True); created_at = Column(DateTime, default=dt.datetime.utcnow, index=True); expires_at = Column(DateTime); used = Column(Boolean, default=False)
 class Unit(Base):
     __tablename__ = "units"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
@@ -181,7 +186,51 @@ async def secure_headers(request: Request, call_next):
     return r
 
 @app.get("/api/config")
-def config(): return {"name": APP_NAME, "version": VERSION}
+def config(): return {"name": APP_NAME, "version": VERSION, "email_reset": mail_on()}
+# ---- forgot password by email (needs SMTP_HOST, SMTP_FROM and APP_URL in .env) ----
+def mail_on(): return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM") and os.getenv("APP_URL"))  # APP_URL is fixed so a forged Host header can't poison reset links
+def send_mail(to, subject, body):
+    m = EmailMessage(); m["From"], m["To"], m["Subject"] = os.getenv("SMTP_FROM"), to, subject; m.set_content(body)
+    host, port, mode = os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT") or 587), (os.getenv("SMTP_TLS") or "starttls").lower()
+    with (smtplib.SMTP_SSL(host, port, timeout=20) if mode == "ssl" else smtplib.SMTP(host, port, timeout=20)) as c:
+        if mode == "starttls": c.starttls()
+        if os.getenv("SMTP_USER"): c.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD") or "")
+        c.send_message(m)
+def deliver_reset(email, name, raw):
+    minutes = int(os.getenv("RESET_MINUTES") or 30)
+    try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{os.getenv('APP_URL').rstrip('/')}/#reset={raw}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n")
+    except Exception as e: log.warning("reset email failed: %s", type(e).__name__)
+def tok_hash(raw): return hashlib.sha256(raw.encode()).hexdigest()
+class ForgotIn(BaseModel): email: str
+@app.post("/api/forgot")
+def forgot(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
+    if not mail_on(): raise HTTPException(503, "Reset by email isn't set up here. Ask your admin to reset your password.")
+    ip, email, now = client_ip(request), b.email.strip().lower()[:190], dt.datetime.utcnow(); hour = now - dt.timedelta(hours=1)
+    if s.query(func.count(PasswordReset.id)).filter(PasswordReset.ip == ip, PasswordReset.created_at >= hour).scalar() >= 20: raise HTTPException(429, "Too many requests. Please try again in an hour.")
+    u = s.query(User).filter_by(email=email).first(); u = u if u and u.active else None
+    reply = {"ok": True, "message": "If that email has an account, a reset link is on its way. Check your inbox and spam folder."}  # same answer whether or not the account exists
+    if u and s.query(func.count(PasswordReset.id)).filter(PasswordReset.user_id == u.id, PasswordReset.created_at >= hour).scalar() >= 3: return reply
+    raw = secrets.token_urlsafe(32)
+    s.add(PasswordReset(user_id=u.id if u else None, token_hash=tok_hash(raw), ip=ip, expires_at=now + dt.timedelta(minutes=int(os.getenv("RESET_MINUTES") or 30)))); s.commit()
+    if u: bg.add_task(deliver_reset, u.email, u.name, raw)
+    return reply
+def live_reset(raw, s):
+    r = s.query(PasswordReset).filter_by(token_hash=tok_hash(raw or "")).first()
+    u = s.get(User, r.user_id) if r and r.user_id else None
+    return (r, u) if r and not r.used and r.expires_at > dt.datetime.utcnow() and u and u.active else (None, None)
+class ResetCheck(BaseModel): token: str
+class ResetIn(BaseModel): token: str; new_password: str
+@app.post("/api/reset/check")
+def reset_check(b: ResetCheck, s: Session = Depends(db)): return {"valid": live_reset(b.token, s)[0] is not None}
+@app.post("/api/reset")
+def reset_password(b: ResetIn, s: Session = Depends(db)):
+    r, u = live_reset(b.token, s)
+    if not r: raise HTTPException(400, "This link has expired or was already used. Ask for a new one.")
+    if len(b.new_password) < 8: raise HTTPException(400, "Use at least 8 characters")
+    if b.new_password.strip().lower() == u.email: raise HTTPException(400, "Password can't be your email")
+    u.pw = hp(b.new_password); u.must_change = False; r.used = True  # ends every old session and any older reset links
+    s.query(PasswordReset).filter(PasswordReset.user_id == u.id, PasswordReset.id != r.id).delete(); s.query(LoginFail).filter_by(email=u.email).delete(); s.commit()
+    return {"token": make_token(u), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": False}}
 @app.get("/manifest.json")  # served dynamically so the installed app carries APP_NAME
 def manifest():
     icons = [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
@@ -211,6 +260,7 @@ def applied_migrations():
 def boot():
     require_secret()
     upgrade_schema()
+    with Session_() as s: s.query(PasswordReset).filter(PasswordReset.created_at < dt.datetime.utcnow() - dt.timedelta(days=2)).delete(); s.commit()
     with Session_() as s: s.query(AuditLog).filter(AuditLog.at < dt.datetime.utcnow() - dt.timedelta(days=400)).delete(); s.commit()
     with Session_() as s:
         for co in s.query(Course).all():  # topics without a unit go into "General"
@@ -488,7 +538,7 @@ class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None;
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
-    return {"key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat")}
+    return {"mail_on": mail_on(), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat")}
 @app.put("/api/admin/settings")
 def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
@@ -503,6 +553,12 @@ async def test_ai(_: User = Depends(admin), s: Session = Depends(db)):
     except httpx.HTTPStatusError as e: return {"ok": False, "message": "DeepSeek rejected the request (" + str(e.response.status_code) + "). " + ("The key looks invalid." if e.response.status_code in (401, 403) else "Check the model name and your balance." if e.response.status_code in (400, 402, 404) else "Try again shortly.")}
     except Exception: return {"ok": False, "message": "No answer from DeepSeek. Check the server's internet access and try again."}
     return {"ok": True, "message": "The key works. Students can use AI now."}
+@app.post("/api/admin/mail/test")
+def test_mail(a: User = Depends(admin)):
+    if not mail_on(): return {"ok": False, "message": "Email isn't set up. Add SMTP_HOST, SMTP_FROM and APP_URL to .env and restart."}
+    try: send_mail(a.email, f"{APP_NAME} test email", "This is a test. Password reset emails can be sent from this server.")
+    except Exception as e: return {"ok": False, "message": "Could not send: " + type(e).__name__ + ": " + str(e)[:150]}
+    return {"ok": True, "message": "Test email sent to " + a.email}
 @app.get("/api/admin/stats")
 def stats(_: User = Depends(admin), s: Session = Depends(db)):
     saved = s.query(func.coalesce(func.sum(AICache.hits * AICache.tokens), 0)).scalar()

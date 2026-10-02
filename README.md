@@ -78,3 +78,10 @@ Admins and faculty (for their own courses) add multiple-choice quizzes to a unit
 
 ## AI (one key for everyone)
 An admin saves a DeepSeek key under **AI config** (or sets `DEEPSEEK_API_KEY` in `.env` as a fallback). That single key serves every student. With a key, the Explain and Sample answer buttons work, and each answer is saved and reused for all students. Without a key, or if the key is removed, students see "AI unavailable. Try again later." and the buttons are hidden, saved answers included, until a key is added again. If DeepSeek errors, times out or rejects the key, students see the same message and can try again, while admins also get the likely cause. **Test the key** checks it with a tiny request, and **Remove the key** turns AI off for everyone. `GET /api/ai/status` tells the app whether AI is on.
+
+## Forgot password (email)
+Set `SMTP_HOST`, `SMTP_FROM` and `APP_URL` in `.env` (plus `SMTP_PORT`, `SMTP_TLS`, `SMTP_USER`, `SMTP_PASSWORD` as your mail server needs; see `.env.example`) and restart. The sign-in page then shows **Forgot password?**: the person enters their email and gets a link that works once, for 30 minutes (`RESET_MINUTES`). Choosing a new password signs them in, ends every older session and link, and lifts any sign-in lockout. Details that matter:
+- The answer is the same whether or not the email has an account, so the form can't be used to find out who is registered, and disabled accounts get no mail.
+- Links always point at `APP_URL`, never at the request's Host header, so a forged header can't redirect a reset link. The token sits after `#` so it never reaches server logs, and only a hash of it is stored.
+- Limits: 3 emails an hour per account and 20 requests an hour per address.
+- Without SMTP settings the sign-in page says "Ask your admin to reset it", and the admin Reset button still works. **AI & email** (admin) shows whether email is on and can send a test email to you.
