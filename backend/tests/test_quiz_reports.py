@@ -20,7 +20,10 @@ def test_student_never_sees_answers_and_is_graded_on_the_server(env):
     assert len(st["questions"]) == 2 and "correct" not in st["questions"][0] and "explanation" not in st["questions"][0] and st["can_edit"] is False
     assert "correct" in env.c.get(f"/api/quizzes/{q}", headers=env.admin).json()["questions"][0]
     r = env.c.post(f"/api/quizzes/{q}/attempt", headers=env.stu, json={"answers": [0, 1]}).json()
-    assert (r["score"], r["total"], r["percent"], r["passed"]) == (1, 2, 50, True) and r["results"][0]["explanation"].startswith("Bicarbonates") and r["results"][1]["correct"] == 0
+    assert (r["score"], r["total"], r["percent"], r["passed"]) == (1, 2, 50, True) and [x["ok"] for x in r["results"]] == [True, False]
+    assert all("correct" not in x and "explanation" not in x for x in r["results"])  # the answer key never goes to students, even after submitting
+    staff = env.c.post(f"/api/quizzes/{q}/attempt", headers=env.admin, json={"answers": [0, 1]}).json()["results"]
+    assert staff[0]["explanation"].startswith("Bicarbonates") and staff[1]["correct"] == 0  # people who can edit the quiz still see it
     r2 = env.c.post(f"/api/quizzes/{q}/attempt", headers=env.stu, json={"answers": [None, None]}).json(); assert r2["percent"] == 0 and r2["passed"] is False
     assert env.c.get(f"/api/quizzes/{q}", headers=env.stu).json()["best"] == 50
     assert env.c.post(f"/api/quizzes/{q}/attempt", headers=env.stu, json={"answers": [0]}).status_code == 400

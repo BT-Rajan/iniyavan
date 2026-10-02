@@ -856,7 +856,8 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     if not qs: raise HTTPException(400, "This quiz has no questions yet")
     if len(b.answers) != len(qs): raise HTTPException(400, "Answer every question or leave it blank")
-    results = [{"chosen": a, "correct": x.correct, "ok": a == x.correct, "explanation": x.explanation} for a, x in zip(b.answers, qs)]
+    key = u.role == "admin" or can_edit(u, cid, s)  # only people who can edit the quiz get the answer key back
+    results = [{"chosen": a, "ok": a == x.correct, **({"correct": x.correct, "explanation": x.explanation} if key else {})} for a, x in zip(b.answers, qs)]
     score = sum(r["ok"] for r in results); pct = round(100 * score / len(qs))
     s.add(Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct)); s.commit()
     return {"score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "results": results}

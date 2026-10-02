@@ -1,5 +1,4 @@
 """Regression tests for hierarchy integrity and access control found in the forensic audit."""
-import pytest
 from main import Session_, User, Semester, Course, Topic, Quiz
 from tests.test_access import CSV, ids, enrol, titles
 
@@ -86,7 +85,6 @@ def test_student_without_program_gets_no_academic_content(env):
     assert len(env.c.get("/api/tree", headers=env.admin).json()) == 2 and len(env.c.get("/api/tree", headers=env.fac).json()) == 2
 
 # Quiz answer key
-@pytest.mark.xfail(strict=True, reason="audit: the attempt response returns the correct answer for every question")
 def test_attempt_response_has_no_answer_key(env):
     env.csv(CSV); i = ids(); enrol("stu@x.com", i["prog"]["Mech"], 1)
     q = env.c.post("/api/quizzes", headers=env.admin, json={"unit_id": i["unit"][i["course"]["Chem"]], "title": "Q", "published": True}).json()["id"]

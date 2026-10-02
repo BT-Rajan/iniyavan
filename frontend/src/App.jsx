@@ -135,10 +135,10 @@ function QuizPlay({id,back,toast}){
   const left=ans.filter(a=>a===null).length
   const submit=async()=>{setBusy(true);try{setRes(await api(`/quizzes/${id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
   return <><Bar title={q.title} sub={q.questions.length+' questions · pass mark '+q.pass_percent+'%'} back={back}/><div className="main">
-    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Read the explanations and try again.'}</p>
+    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Go back over the topics and try again.'}</p>
       <button className="btn" onClick={()=>start(q)}>Try again</button><button className="btn ghost" onClick={back}>Back to the unit</button></div>}
     {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1}</b><div className="prose"><Md>{x.text}</Md></div>
-      {x.options.map((o,k)=>{const r=res&&res.results[i],cls=r?(k===r.correct?' ok':k===r.chosen?' bad':''):ans[i]===k?' sel':''
+      {x.options.map((o,k)=>{const r=res&&res.results[i],cls=r?(k===r.correct||(r.ok&&k===r.chosen)?' ok':k===r.chosen?' bad':''):ans[i]===k?' sel':''
         return <button key={k} className={'opt'+cls} disabled={!!res} onClick={()=>setAns(ans.map((a,n)=>n===i?k:a))}><Md>{o}</Md></button>})}
       {res&&res.results[i].explanation&&<div className="known"><Md>{res.results[i].explanation}</Md></div>}</div>)}
     {!res&&<button className="btn" disabled={busy} onClick={submit}>{busy?'Checking…':'Submit answers'}</button>}
