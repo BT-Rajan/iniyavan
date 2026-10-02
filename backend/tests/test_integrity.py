@@ -1,6 +1,6 @@
 """Regression tests for hierarchy integrity and access control found in the forensic audit."""
 import pytest
-from main import Session_, User, Semester, Course, Topic
+from main import Session_, User, Semester, Course, Topic, Quiz
 from tests.test_access import CSV, ids, enrol, titles
 
 def uid(email):
@@ -35,11 +35,13 @@ def test_student_access_ignores_stale_course_program_id(env):
     enrol("stu@x.com", i["prog"]["Mech"], 1); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 200
 
 # B. Unit re-parenting
-@pytest.mark.xfail(strict=True, reason="audit: moving a unit leaves Topic.course_id stale, so the old course's faculty keep edit rights")
 def test_unit_move_moves_topic_authorization(env):
     i = two_faculty(env); chem, work = i["course"]["Chem"], i["course"]["Workshop"]; unit, water = i["unit"][chem], i["topic"]["Water"]
+    assert env.c.post("/api/quizzes", headers=env.admin, json={"unit_id": unit, "title": "Q"}).status_code == 200
     assert env.c.put(f"/api/units/{unit}", headers=env.admin, json={"name": "U1", "course_id": work}).status_code == 200
-    with Session_() as s: assert s.get(Topic, water).course_id == work
+    with Session_() as s: assert s.get(Topic, water).course_id == work and all(q.course_id == work for q in s.query(Quiz).filter_by(unit_id=unit))
+    assert env.c.get(f"/api/topics/{water}", headers=env.admin).json()["course"] == "Workshop"
+    assert env.c.put(f"/api/units/{unit}", headers=env.admin, json={"name": "U1", "course_id": 99999}).status_code == 400
     assert edit_topic(env, env.fac, water, unit) == 403
     assert env.c.put(f"/api/topics/{water}/publish", headers=env.fac, json={"published": False}).status_code == 403
     assert env.c.delete(f"/api/topics/{water}", headers=env.fac).status_code == 403

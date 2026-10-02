@@ -787,8 +787,10 @@ def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = De
 def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Unit, rid)
     if x: need_edit(u, x.course_id, s)
+    if x and not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
     need_edit(u, b.course_id, s)
-    if x: s.query(Quiz).filter_by(unit_id=rid).update({"course_id": b.course_id})
+    if x:  # the copied course ids of the unit's topics and quizzes follow it
+        for m in (Topic, Quiz): s.query(m).filter_by(unit_id=rid).update({"course_id": b.course_id}, synchronize_session=False)
     return update(x, b.dict(), s)
 @app.put("/api/topics/{rid}")
 def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
