@@ -29,13 +29,13 @@ export default function App(){
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name}/>
   if(user.must_change)return <ChangePassword forced toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)}
-  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI config'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI config'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='learn'&&<Learn user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast}/>}
     {page==='add'&&(admin||user.role==='faculty')&&<Add role={user.role} toast={toast} done={()=>go('learn')}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onAdd={()=>go('add')}/>}
-    {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&admin&&<Reports/>}{page==='activity'&&admin&&<Activity/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
+    {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
         <div className="dhead"><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
@@ -70,10 +70,12 @@ const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header
 
 function Learn({user,toast,onAdd,appName}){
   const isAdmin=user.role==='admin'
-  const [tree,setTree]=useState([]),[nav,setNav]=useState([]),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null)
-  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed])
+  const [tree,setTree]=useState([]),[nav,setNav]=useState([]),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null)
+  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe])
   const landed=useRef(false);useEffect(()=>{if(landed.current||isAdmin||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast}/>
+  if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast}/>
+  if(qe)return <QuizEditor {...qe} done={()=>setQe(null)} toast={toast}/>
   if(ed)return <Add role={user.role} toast={toast} edit={ed} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
   const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
@@ -93,6 +95,10 @@ function Learn({user,toast,onAdd,appName}){
    <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&<div className="hero"><h2>Pick a program.<br/>We’ll remember where you stopped.</h2></div>}
     {list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}</b>{x.sub&&<span>{x.sub}</span>}</div>{(x.d||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.d&&<Check className="done"/>}</span>}</button>
       {mayEdit&&<>{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
+    {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 style={{margin:'28px 0 8px'}}>Quizzes</h3>
+      {unit.quizzes.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+3)%5]}}>?</span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
+        {mayEdit&&<button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id})}><Pencil size={16}/></button>}</div>)}
+      {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{mayEdit?'Nothing here yet. Tap Add to create it.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this semester':''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':del.kind==='topics'?'This removes the topic and its saved AI answers.':'This also removes everything inside it.'}</p>
@@ -101,6 +107,49 @@ function Learn({user,toast,onAdd,appName}){
      {allSems.filter(x=>x.id!==sh.home).map(x=><label key={x.id} className="chk"><input type="checkbox" checked={sh.sel.includes(x.id)} onChange={e=>setSh({...sh,sel:e.target.checked?[...sh.sel,x.id]:sh.sel.filter(i=>i!==x.id)})}/> {x.label}</label>)}
      <button className="btn" onClick={saveShare}>Save</button><button className="btn ghost" onClick={()=>setSh(null)}>Cancel</button></div></div>}
    {mayEdit&&<button className="fab" aria-label="Add content" onClick={onAdd}><Plus/></button>}</>}
+
+function QuizPlay({id,back,toast}){
+  const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false)
+  const start=d=>{setQ(d);setAns(d.questions.map(()=>null));setRes(null)}
+  useEffect(()=>{api('/quizzes/'+id).then(start).catch(e=>{toast(e.message);back()})},[id])
+  if(!q)return <><Bar title="Quiz" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  const left=ans.filter(a=>a===null).length
+  const submit=async()=>{setBusy(true);try{setRes(await api(`/quizzes/${id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
+  return <><Bar title={q.title} sub={q.questions.length+' questions · pass mark '+q.pass_percent+'%'} back={back}/><div className="main">
+    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Read the explanations and try again.'}</p>
+      <button className="btn" onClick={()=>start(q)}>Try again</button><button className="btn ghost" onClick={back}>Back to the unit</button></div>}
+    {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1}</b><div className="prose"><Md>{x.text}</Md></div>
+      {x.options.map((o,k)=>{const r=res&&res.results[i],cls=r?(k===r.correct?' ok':k===r.chosen?' bad':''):ans[i]===k?' sel':''
+        return <button key={k} className={'opt'+cls} disabled={!!res} onClick={()=>setAns(ans.map((a,n)=>n===i?k:a))}><Md>{o}</Md></button>})}
+      {res&&res.results[i].explanation&&<div className="known"><Md>{res.results[i].explanation}</Md></div>}</div>)}
+    {!res&&<button className="btn" disabled={busy} onClick={submit}>{busy?'Checking…':'Submit answers'}</button>}
+    {!res&&left>0&&<p className="known">{left} unanswered. Blank answers count as wrong.</p>}</div></>}
+
+function QuizEditor({id,unit_id,done,toast}){
+  const blank=()=>({text:'',options:['',''],correct:0,explanation:''})
+  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false)
+  useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published});setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||''})):[blank()])}).catch(e=>{toast(e.message);done()})},[id])
+  const upd=(i,p)=>setQs(qs.map((x,n)=>n===i?{...x,...p}:x))
+  const setOpt=(i,k,v)=>upd(i,{options:qs[i].options.map((o,n)=>n===k?v:o)})
+  const delOpt=(i,k)=>upd(i,{options:qs[i].options.filter((_,n)=>n!==k),correct:qs[i].correct===k?0:qs[i].correct>k?qs[i].correct-1:qs[i].correct})
+  const save=async()=>{setBusy(true);try{const qid=id||(await api('/quizzes',{method:'POST',body:{unit_id,...m,pass_percent:+m.pass_percent}})).id
+    if(id)await api('/quizzes/'+id,{method:'PUT',body:{unit_id,...m,pass_percent:+m.pass_percent}})
+    await api(`/quizzes/${qid}/questions`,{method:'PUT',body:{questions:qs.filter(x=>x.text.trim())}});toast('Quiz saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  const del=async()=>{if(!confirm('Delete this quiz and every student attempt?'))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Quiz deleted');done()}catch(e){toast(e.message)}}
+  return <><Bar title={id?'Edit quiz':'New quiz'} back={done}/><div className="main">
+    <label>Title</label><input value={m.title} onChange={e=>setM({...m,title:e.target.value})} placeholder="e.g. Water treatment check"/>
+    <label>Pass mark (%)</label><input type="number" min="1" max="100" value={m.pass_percent} onChange={e=>setM({...m,pass_percent:e.target.value})}/>
+    <label className="chk"><input type="checkbox" checked={m.published} onChange={e=>setM({...m,published:e.target.checked})}/> Published (students can take it)</label>
+    {qs.map((x,i)=><div className="qbox" key={i}><b>Question {i+1}</b>
+      <textarea placeholder="Question (Markdown and $math$ work)" value={x.text} onChange={e=>upd(i,{text:e.target.value})}/>
+      {x.options.map((o,k)=><div className="qopt" key={k}><input type="radio" name={'c'+i} aria-label="Correct answer" checked={x.correct===k} onChange={()=>upd(i,{correct:k})}/><input value={o} placeholder={'Answer '+(k+1)} onChange={e=>setOpt(i,k,e.target.value)}/>{x.options.length>2&&<button className="ic sm" aria-label="Remove answer" onClick={()=>delOpt(i,k)}><X size={16}/></button>}</div>)}
+      {x.options.length<6&&<button className="tool" onClick={()=>upd(i,{options:[...x.options,'']})}>Add answer</button>}
+      <textarea placeholder="Explanation shown after submitting (optional)" value={x.explanation} onChange={e=>upd(i,{explanation:e.target.value})}/>
+      {qs.length>1&&<button className="tool" onClick={()=>setQs(qs.filter((_,n)=>n!==i))}>Remove question</button>}</div>)}
+    <p className="known">Tick the radio button beside the correct answer.</p>
+    <button className="btn ghost" onClick={()=>setQs([...qs,blank()])}>Add question</button>
+    <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
+    {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
 
 function Topic({id,back,toast}){
   const [t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
@@ -360,12 +409,34 @@ function Activity(){
     {rows.length?rows.map(x=><div className="row" key={x.id}><div>{describe(x.method,x.path)}{x.status>=400&&<span className="pill off" style={{marginLeft:8}}>{x.status===403?'Not allowed':'Failed'}</span>}<small>{x.user} · {new Date(x.at).toLocaleString()}</small></div></div>):<p className="known">{busy?'Loading…':'No activity yet.'}</p>}
     {rows.length<total&&<button className="btn ghost" disabled={busy} onClick={()=>load(true)}>Show more ({total-rows.length} older)</button>}</div></>}
 const day=d=>d?new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short'}):'never'
-function Reports({}){
-  const [st,setSt]=useState({}),[r,setR]=useState(null)
-  useEffect(()=>{api('/admin/stats').then(setSt);api('/admin/reports').then(setR)},[])
+const fetchFile=async(url,name,toast)=>{try{const r=await fetch('/api'+url,{headers:{Authorization:'Bearer '+localStorage.t}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Download failed')
+  const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=name;a.click();URL.revokeObjectURL(a.href)}catch(e){toast(e.message)}}
+const Bar2=({v})=><div className="bar"><i style={{width:Math.min(100,v||0)+'%'}}/></div>
+function CourseReports({toast,onOpen}){
+  const [f,setF]=useState({p:0,s:0}),[rows,setRows]=useState(null),[progs,setProgs]=useState([])
+  useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name})))).catch(()=>{})},[])
+  const qs=`?program_id=${f.p}&semester=${f.s}`
+  useEffect(()=>{setRows(null);api('/reports/courses'+qs).then(setRows).catch(e=>toast(e.message))},[f.p,f.s])
+  return <><div className="qopt"><select value={f.p} onChange={e=>setF({...f,p:+e.target.value})}><option value={0}>All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+    <select value={f.s} onChange={e=>setF({...f,s:+e.target.value})}><option value={0}>All semesters</option>{[1,2,3,4,5,6,7,8].map(n=><option key={n} value={n}>Semester {n}</option>)}</select></div>
+    {rows&&!rows.length&&<p className="known">No courses match.</p>}
+    {rows?.map(x=><div className="row" key={x.course_id} style={{cursor:'pointer'}} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program} · {x.semester} · {x.students} students · {x.topics} topics · {x.avg_completion}% read{x.quizzes?' · quiz avg '+(x.avg_quiz_percent??'–')+'%':''}</small><Bar2 v={x.avg_completion}/></div></div>)}
+    {rows?.length>0&&<button className="btn ghost" onClick={()=>fetchFile('/reports/courses?format=csv&program_id='+f.p+'&semester='+f.s,'courses.csv',toast)}>Download courses CSV</button>}</>}
+function StudentReport({c,back,toast}){
+  const [d,setD]=useState(null);useEffect(()=>{api(`/reports/courses/${c.course_id}/students`).then(setD).catch(e=>toast(e.message))},[])
+  return <><Bar title={c.course} sub={c.program+' · '+c.semester} back={back}/><div className="main">
+    {d&&!d.students.length&&<p className="known">No students are enrolled for this course yet.</p>}
+    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off" style={{marginLeft:8}}>Disabled</span>}<small>{x.completion}% · {x.topics_read}/{x.topics} topics{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small><Bar2 v={x.completion}/></div></div>)}
+    {d?.students.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/reports/courses/${c.course_id}/students?format=csv`,'students-'+c.course.replace(/\s+/g,'_')+'.csv',toast)}>Download students CSV</button>}</div></>}
+function Reports({role,toast}){
+  const [st,setSt]=useState({}),[r,setR]=useState(null),[open,setOpen]=useState(null)
+  useEffect(()=>{if(role==='faculty')return;api('/admin/stats').then(setSt);api('/admin/reports').then(setR)},[])
+  if(open)return <StudentReport c={open} back={()=>setOpen(null)} toast={toast}/>
+  if(role==='faculty')return <><Bar title="Reports" sub="Your courses"/><div className="main"><CourseReports toast={toast} onOpen={setOpen}/></div></>
   const list=(rows,empty,f)=>rows?.length?rows.map((x,i)=><div className="row" key={i}>{f(x)}</div>):<p className="known">{empty}</p>
   return <><Bar title="Reports"/><div className="main"><div className="stats">
     {[['students','Students'],['topics','Topics'],['cached','Saved AI answers'],['tokens_saved','Tokens saved']].map(([k,l])=><div className="stat" key={k}><b>{(st[k]??0).toLocaleString()}</b>{l}</div>)}</div>
+    <h3 style={{margin:'28px 0 4px'}}>Courses</h3><CourseReports toast={toast} onOpen={setOpen}/>
     <h3 style={{margin:'28px 0 4px'}}>Most read topics</h3>
     {list(r?.top_topics,'No reading activity yet.',x=><div>{x.title}<small>{x.readers} students, {x.reads} reads</small></div>)}
     <h3 style={{margin:'28px 0 4px'}}>Students</h3>

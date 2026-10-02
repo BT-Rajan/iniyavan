@@ -85,3 +85,10 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .chk{display:flex;gap:10px;align-items:center;padding:10px 0;font-size:15px}.chk input{width:20px;height:20px;accent-color:var(--vio)}
 .tools{display:flex;gap:8px;margin:6px 0}.tools button{padding:8px 14px;border-radius:14px;background:var(--s2);font-size:14px}.tools button:disabled{opacity:.5}
 .prose img{max-width:100%;height:auto;border-radius:12px;margin:8px 0;background:#fff}.prose .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
+
+.qbox{background:var(--s2);border-radius:18px;padding:14px;margin:12px 0}.qbox textarea{margin-top:8px}
+.opt{display:block;width:100%;text-align:left;padding:12px 14px;margin:8px 0;border-radius:14px;background:var(--s1,rgba(255,255,255,.04));border:2px solid transparent}
+.opt.sel{border-color:var(--vio)}.opt.ok{border-color:#22c55e}.opt.bad{border-color:#ef4444}.opt p{margin:0}
+.qopt{display:flex;gap:8px;align-items:center;margin:6px 0}.qopt input:not([type=radio]),.qopt select{flex:1;min-width:0}.qopt input[type=radio]{width:20px;height:20px;flex:none;accent-color:var(--vio)}
+.tool{padding:8px 14px;border-radius:14px;background:var(--s2);font-size:14px;margin:6px 8px 6px 0}
+.bar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(135deg,var(--vio),var(--pink))}

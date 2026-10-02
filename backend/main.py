@@ -1,11 +1,11 @@
 from collections import defaultdict
-import csv, io, os, re, hashlib, hmac, secrets, datetime as dt, httpx, jwt
+import csv, io, json, os, re, hashlib, hmac, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, inspect, text
@@ -85,6 +85,18 @@ class Topic(Base):
     unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
     published = Column(Boolean, default=True)  # drafts are visible to admins and faculty only
+class Quiz(Base):  # a multiple-choice quiz attached to a unit
+    __tablename__ = "quizzes"
+    id = Column(Integer, primary_key=True); unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), index=True); course_id = Column(Integer, index=True)
+    title = Column(String(200)); pass_percent = Column(Integer, default=50); published = Column(Boolean, default=False)
+class Question(Base):
+    __tablename__ = "quiz_questions"
+    id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); pos = Column(Integer, default=0)
+    text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text)  # options is a JSON list
+class Attempt(Base):
+    __tablename__ = "quiz_attempts"
+    id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    score = Column(Integer); total = Column(Integer); percent = Column(Integer); at = Column(DateTime, default=dt.datetime.utcnow)
 class Progress(Base):  # what each student has read
     __tablename__ = "progress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id")); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
@@ -147,7 +159,7 @@ ORIGINS = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if
 if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; "
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
-SKIP_AUDIT = re.compile(r"/(read|bookmark)$|/ai/")  # student reading activity is already tracked as progress
+SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt)$|/ai/")  # student reading activity is already tracked as progress
 def audit_write(uid, method, path, status):
     with Session_() as s: s.add(AuditLog(user_id=uid, method=method, path=path[:200], status=status)); s.commit()
 @app.middleware("http")
@@ -280,14 +292,16 @@ def sem_visible(u, sem):  # a student sees their own program, up to and includin
     if sem.program_id != u.program_id: return False
     n = sem_no(sem.name)
     return u.semester is None or n is None or n <= u.semester
-def check_topic_access(u, t, s):
-    if u.role == "student" and t.published is False: raise HTTPException(404, "Topic not found")
+def check_course_access(u, course_id, s):
     if not scoped(u): return
-    co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
+    co = s.get(Course, course_id); sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
     ok = co and co.program_id == u.program_id and (sem is None or sem_visible(u, sem))
     if not ok and co:  # or the course is shared into one of the student's visible semesters
         ok = any(sem_visible(u, x) for x in s.query(Semester).join(CourseLink, CourseLink.semester_id == Semester.id).filter(CourseLink.course_id == co.id))
-    if not ok: raise HTTPException(403, "This topic is not part of your program or semester")
+    if not ok: raise HTTPException(403, "This is not part of your program or semester")
+def check_topic_access(u, t, s):
+    if u.role == "student" and t.published is False: raise HTTPException(404, "Topic not found")
+    check_course_access(u, t.course_id, s)
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
@@ -484,6 +498,67 @@ def reports(_: User = Depends(admin), s: Session = Depends(db)):
             "students": [{"name": n, "email": e, "active": a, "topics_read": c, "last_active": (l.isoformat() + "Z") if l else None} for n, e, a, c, l in studs],
             "ai": [{"title": t, "kind": k, "hits": h or 0, "tokens": tk or 0, "saved": (h or 0) * (tk or 0)} for t, k, h, tk in ai]}
 
+# ---- course reports (admins see every course; faculty see only their own) ----
+def csv_cell(v): v = "" if v is None else v; return "'" + v if isinstance(v, str) and v[:1] in "=+-@\t\r" else v  # stops spreadsheet formula injection
+def csv_response(name, header, rows):
+    out = io.StringIO(); w = csv.writer(out); w.writerow(header); [w.writerow([csv_cell(c) for c in r]) for r in rows]
+    return Response("\ufeff" + out.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+def course_audience(c, students, sems, links):  # students who can see this course in their own list
+    places = [sems.get(i) for i in [c.semester_id] + links.get(c.id, []) if sems.get(i)]
+    def sees(u):
+        if u.program_id is None: return False
+        if not places: return c.program_id == u.program_id
+        return any(x.program_id == u.program_id and (u.semester is None or sem_no(x.name) is None or sem_no(x.name) <= u.semester) for x in places)
+    return [u for u in students if sees(u)]
+def course_stats(c, aud, s):
+    ids = {u.id for u in aud}; tids = [t.id for t in s.query(Topic.id).filter(Topic.course_id == c.id, Topic.published.isnot(False))]
+    reads, last = defaultdict(int), {}
+    if tids and ids:
+        for uid, n, l in s.query(Progress.user_id, func.count(Progress.id), func.max(Progress.last_read)).filter(Progress.topic_id.in_(tids), Progress.user_id.in_(ids)).group_by(Progress.user_id).all(): reads[uid], last[uid] = n, l
+    qids = [q.id for q in s.query(Quiz.id).filter(Quiz.course_id == c.id, Quiz.published == True)]  # noqa: E712
+    bests = defaultdict(dict)
+    if qids and ids:
+        for qid, uid, b in s.query(Attempt.quiz_id, Attempt.user_id, func.max(Attempt.percent)).filter(Attempt.quiz_id.in_(qids), Attempt.user_id.in_(ids)).group_by(Attempt.quiz_id, Attempt.user_id).all(): bests[uid][qid] = b
+    return tids, reads, last, qids, bests
+def my_courses(u, s):
+    q = s.query(Course)
+    if u.role == "faculty": q = q.filter(Course.id.in_([r.course_id for r in s.query(CourseFaculty).filter_by(user_id=u.id)] or [0]))
+    return q.order_by(Course.id).all()
+@app.get("/api/reports/courses")
+def report_courses(program_id: int = 0, semester: int = 0, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
+    students = s.query(User).filter_by(role="student", active=True).all(); sems = {x.id: x for x in s.query(Semester)}; pn = {p.id: p.name for p in s.query(Program)}
+    links = defaultdict(list)
+    for l in s.query(CourseLink): links[l.course_id].append(l.semester_id)
+    out = []
+    for c in my_courses(u, s):
+        sm = sems.get(c.semester_id)
+        if program_id and c.program_id != program_id: continue
+        if semester and (not sm or sem_no(sm.name) != semester): continue
+        aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
+        comp = [100 * reads[x.id] / len(tids) for x in aud] if tids else []; qb = [b for x in aud for b in bests[x.id].values()]
+        out.append({"course_id": c.id, "course": c.name, "program": pn.get(c.program_id, ""), "semester": sm.name if sm else "", "students": len(aud), "topics": len(tids),
+                    "avg_completion": round(sum(comp) / len(comp)) if comp else 0, "quizzes": len(qids), "quiz_attempts": s.query(func.count(Attempt.id)).filter(Attempt.quiz_id.in_(qids or [0])).scalar(),
+                    "avg_quiz_percent": round(sum(qb) / len(qb)) if qb else None})
+    if format == "csv": return csv_response("courses.csv", ["Program", "Semester", "Course", "Students", "Topics", "Average completion %", "Quizzes", "Quiz attempts", "Average best quiz %"],
+                                           [[r["program"], r["semester"], r["course"], r["students"], r["topics"], r["avg_completion"], r["quizzes"], r["quiz_attempts"], r["avg_quiz_percent"]] for r in out])
+    return out
+@app.get("/api/reports/courses/{cid}/students")
+def report_students(cid: int, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
+    c = s.get(Course, cid)
+    if not c: raise HTTPException(404, "Course not found")
+    need_edit(u, cid, s)
+    students = s.query(User).filter_by(role="student").all(); sems = {x.id: x for x in s.query(Semester)}; pn = {p.id: p.name for p in s.query(Program)}
+    links = defaultdict(list)
+    for l in s.query(CourseLink).filter_by(course_id=cid): links[cid].append(l.semester_id)
+    aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
+    rows = [{"name": x.name, "email": x.email, "program": pn.get(x.program_id, ""), "semester": x.semester, "active": bool(x.active), "topics_read": reads[x.id], "topics": len(tids),
+             "completion": round(100 * reads[x.id] / len(tids)) if tids else 0, "quizzes_taken": len(bests[x.id]), "quizzes": len(qids),
+             "avg_quiz_percent": round(sum(bests[x.id].values()) / len(bests[x.id])) if bests[x.id] else None, "last_active": (last[x.id].isoformat() + "Z") if last.get(x.id) else None}
+            for x in sorted(aud, key=lambda x: (x.name or "").lower())]
+    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", "Semester", "Active", "Topics read", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active"],
+                                           [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"]] for r in rows])
+    return {"course": c.name, "students": rows}
+
 # ---- content: admin writes, everyone reads ----
 class ProgramIn(BaseModel): name: str
 class SemesterIn(BaseModel): name: str; program_id: int
@@ -505,6 +580,12 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     pname = {p.id: p.name for p in s.query(Program)}; sname = {x.id: f"{pname.get(x.program_id, '')} › {x.name}" for x in s.query(Semester)}
     links = defaultdict(list); linked_to = defaultdict(list)
     for l in s.query(CourseLink): linked_to[l.course_id].append(l.semester_id)
+    qcount = dict(s.query(Question.quiz_id, func.count(Question.id)).group_by(Question.quiz_id).all())
+    best = dict(s.query(Attempt.quiz_id, func.max(Attempt.percent)).filter(Attempt.user_id == u.id).group_by(Attempt.quiz_id).all())
+    qz = defaultdict(list)
+    for q in s.query(Quiz).order_by(Quiz.id):
+        if u.role != "student" or (q.published and qcount.get(q.id)):
+            qz[q.unit_id].append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
     cbyid = {c.id: c for c in s.query(Course)}
     mine = {r.course_id for r in s.query(CourseFaculty).filter_by(user_id=u.id)} if u.role == "faculty" else set()
     for l in s.query(CourseLink).order_by(CourseLink.id):
@@ -513,7 +594,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
         shared = c.semester_id != sm.id
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
              "shared_with": len(linked_to[c.id]), "editable": u.role == "admin" or c.id in mine, "units": [
-            {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or u.role != "student"]} for n in un[c.id]]}
+            {"id": n.id, "name": n.name, "quizzes": qz[n.id], "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or u.role != "student"]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]
         return d
     return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester,
@@ -588,12 +669,82 @@ def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = De
 def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Unit, rid)
     if x: need_edit(u, x.course_id, s)
-    need_edit(u, b.course_id, s); return update(x, b.dict(), s)
+    need_edit(u, b.course_id, s)
+    if x: s.query(Quiz).filter_by(unit_id=rid).update({"course_id": b.course_id})
+    return update(x, b.dict(), s)
 @app.put("/api/topics/{rid}")
 def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Topic, rid)
     if x: need_edit(u, x.course_id, s)
     f = topic_fields(b, s); need_edit(u, f["course_id"], s); return update(x, f, s)
+# ---- quizzes: staff write them, students take them and are graded on the server ----
+class QuizIn(BaseModel): unit_id: int = 0; title: str; pass_percent: int = 50; published: bool = False
+class QuestionIn(BaseModel): text: str; options: list[str]; correct: int; explanation: str = ""
+class QuestionsIn(BaseModel): questions: list[QuestionIn]
+class AttemptIn(BaseModel): answers: list[int | None]
+def quiz_or_404(qid, s):
+    q = s.get(Quiz, qid)
+    if not q: raise HTTPException(404, "Quiz not found")
+    return q
+def quiz_fields(b):
+    if not b.title.strip(): raise HTTPException(400, "Give the quiz a title")
+    if not 1 <= b.pass_percent <= 100: raise HTTPException(400, "Pass mark must be between 1 and 100")
+    return {"title": b.title.strip()[:200], "pass_percent": b.pass_percent, "published": b.published}
+@app.post("/api/quizzes")
+def new_quiz(b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
+    un = s.get(Unit, b.unit_id)
+    if not un: raise HTTPException(400, "Choose a unit for this quiz")
+    need_edit(u, un.course_id, s); q = Quiz(unit_id=un.id, course_id=un.course_id, **quiz_fields(b)); s.add(q); s.commit(); return {"id": q.id}
+@app.put("/api/quizzes/{qid}")
+def edit_quiz(qid: int, b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s); need_edit(u, q.course_id, s)
+    for k, v in quiz_fields(b).items(): setattr(q, k, v)
+    s.commit(); return {"ok": True}
+@app.delete("/api/quizzes/{qid}")
+def delete_quiz(qid: int, u: User = Depends(staff), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s); need_edit(u, q.course_id, s); drop_quizzes(s, Quiz.id == qid); s.commit(); return {"ok": True}
+@app.put("/api/quizzes/{qid}/questions")
+def set_questions(qid: int, b: QuestionsIn, u: User = Depends(staff), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s); need_edit(u, q.course_id, s)
+    if len(b.questions) > 100: raise HTTPException(400, "A quiz can have up to 100 questions")
+    for i, x in enumerate(b.questions, 1):
+        opts = [o.strip() for o in x.options]
+        if not x.text.strip(): raise HTTPException(400, f"Question {i} has no text")
+        if not 2 <= len(opts) <= 6 or not all(opts): raise HTTPException(400, f"Question {i} needs 2 to 6 answers, none empty")
+        if not 0 <= x.correct < len(opts): raise HTTPException(400, f"Question {i}: mark which answer is correct")
+    s.query(Question).filter_by(quiz_id=qid).delete()
+    for i, x in enumerate(b.questions):
+        s.add(Question(quiz_id=qid, pos=i, text=x.text.strip(), options=json.dumps([o.strip() for o in x.options]), correct=x.correct, explanation=x.explanation.strip()))
+    s.commit(); return {"ok": True, "count": len(b.questions)}
+@app.get("/api/quizzes/{qid}")
+def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s); staff_view = u.role == "admin" or (u.role == "faculty" and can_edit(u, q.course_id, s))
+    if not staff_view:
+        if not q.published: raise HTTPException(404, "Quiz not found")
+        check_course_access(u, q.course_id, s)
+    qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
+    mine = s.query(Attempt).filter_by(quiz_id=qid, user_id=u.id).all()
+    return {"id": q.id, "title": q.title, "pass_percent": q.pass_percent, "published": bool(q.published), "unit_id": q.unit_id, "can_edit": staff_view,
+            "questions": [{"id": x.id, "text": x.text, "options": json.loads(x.options), **({"correct": x.correct, "explanation": x.explanation} if staff_view else {})} for x in qs],
+            "attempts": len(mine), "best": max([a.percent for a in mine], default=None)}
+@app.post("/api/quizzes/{qid}/attempt")
+def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s)
+    if not q.published and not (u.role == "admin" or can_edit(u, q.course_id, s)): raise HTTPException(404, "Quiz not found")
+    check_course_access(u, q.course_id, s)
+    qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
+    if not qs: raise HTTPException(400, "This quiz has no questions yet")
+    if len(b.answers) != len(qs): raise HTTPException(400, "Answer every question or leave it blank")
+    results = [{"chosen": a, "correct": x.correct, "ok": a == x.correct, "explanation": x.explanation} for a, x in zip(b.answers, qs)]
+    score = sum(r["ok"] for r in results); pct = round(100 * score / len(qs))
+    s.add(Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct)); s.commit()
+    return {"score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "results": results}
+
+def drop_quizzes(s, cond):
+    ids = [q.id for q in s.query(Quiz).filter(cond)]
+    if ids:
+        for m in (Attempt, Question): s.query(m).filter(m.quiz_id.in_(ids)).delete(synchronize_session=False)
+        s.query(Quiz).filter(Quiz.id.in_(ids)).delete(synchronize_session=False)
 @app.delete("/api/{kind}/{rid}")
 def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(db)):
     if kind not in M: raise HTTPException(404, "Unknown item")
@@ -602,7 +753,7 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
     if kind not in ("units", "topics"): 
         if u.role != "admin": raise HTTPException(403, "Admins only")
     else: need_edit(u, r.course_id, s)
-    def drop_course(c): s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete(); s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
+    def drop_course(c): drop_quizzes(s, Quiz.course_id == c.id); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete(); s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
         for c in s.query(Course).filter_by(program_id=rid).all(): drop_course(c)
         s.query(CourseLink).filter(CourseLink.semester_id.in_(s.query(Semester.id).filter_by(program_id=rid))).delete(synchronize_session=False)
@@ -612,7 +763,7 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
         s.query(CourseLink).filter_by(semester_id=rid).delete()
         for c in s.query(Course).filter_by(semester_id=rid).all(): drop_course(c)
     if kind == "courses": drop_course(r); r = None
-    if kind == "units": s.query(Topic).filter_by(unit_id=rid).delete()
+    if kind == "units": drop_quizzes(s, Quiz.unit_id == rid); s.query(Topic).filter_by(unit_id=rid).delete()
     if r is not None: s.delete(r)
     s.commit(); return {"ok": True}
 
