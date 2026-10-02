@@ -4,7 +4,7 @@ import argparse, getpass, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
-from main import Base, engine, Session_, User, hp, upgrade_schema, applied_migrations, integrity_report, DB, UPLOADS
+from main import Base, engine, Session_, User, hp, upgrade_schema, applied_migrations, integrity_report, ownership_report, DB, UPLOADS
 
 def password(given):
     while True:
@@ -29,12 +29,24 @@ def main():
     r = sub.add_parser("role", help="change a user's role"); r.add_argument("--email", required=True); r.add_argument("--role", choices=["student", "faculty", "admin"], required=True)
     b = sub.add_parser("backup", help="dump the database and uploaded images into a folder"); b.add_argument("--dir", default=os.getenv("BACKUP_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backups")); b.add_argument("--keep-days", type=int, default=14)
     sub.add_parser("migrate", help="apply pending database migrations and list what is applied")
+    sub.add_parser("owners", help="list courses that need an owner, with their old assigned faculty (changes nothing)")
     sub.add_parser("integrity", help="list programs, semesters, courses, units, topics and quizzes whose parent is missing (changes nothing)")
     sub.add_parser("list", help="list users"); sub.add_parser("check", help="exit 1 if there is no active admin")
     x = ap.parse_args(); upgrade_schema()
     with Session_() as s:
         if x.cmd == "migrate":
             print("Applied migrations:"); [print("  " + m) for m in applied_migrations()]; return
+        if x.cmd == "owners":
+            with engine.connect() as c: rep, legacy, _ = ownership_report(c)
+            names = {u.id: f"{u.name} <{u.email}> ({u.role}{'' if u.active else ', disabled'})" for u in s.query(User)}
+            from main import Course
+            cname = {co.id: co.name for co in s.query(Course)}
+            print(f"Courses with a working owner: {len(rep['owned'])}")
+            for k, label in (("invalid_owner", "Owner is disabled or no longer faculty"), ("multiple_assigned", "Several faculty were assigned; pick one"),
+                             ("assigned_not_faculty", "The assigned user is not active faculty"), ("no_faculty", "No faculty assigned")):
+                print(f"{label}: {len(rep[k])}")
+                for cid in rep[k]: print(f"  #{cid} {cname.get(cid, '')}" + ("  was assigned: " + "; ".join(names.get(x, f"user #{x}") for x in legacy[cid]) if legacy[cid] else ""))
+            sys.exit(1 if any(rep[k] for k in rep if k != "owned") else 0)
         if x.cmd == "integrity":
             with engine.connect() as c: rep = integrity_report(c)
             for k, v in rep.items(): print(f"{k}: {len(v)}" + (f"  ids: {', '.join(map(str, v[:50]))}" + (" …" if len(v) > 50 else "") if v else ""))

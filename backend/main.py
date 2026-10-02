@@ -36,7 +36,7 @@ class User(Base):
     must_change = Column(Boolean, default=False)  # set when an admin chose the password; cleared once the user picks their own
     program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
     semester = Column(Integer, nullable=True)  # current semester, 1 to 8
-class CourseFaculty(Base):  # which courses a faculty member may edit (units and topics only)
+class CourseFaculty(Base):  # legacy faculty-course assignments from before course owners; kept for reference, grants nothing
     __tablename__ = "course_faculty"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -49,16 +49,17 @@ class Setting(Base):
 # Program and Course keep their original table names ("courses", "subjects") so existing databases upgrade in place.
 class Program(Base):
     __tablename__ = "courses"
-    id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
 class Semester(Base):
     __tablename__ = "semesters"
-    id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     program_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
 class Course(Base):
     __tablename__ = "subjects"
-    id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     program_id = Column("course_id", Integer, ForeignKey("courses.id", ondelete="CASCADE"))
     semester_id = Column(Integer, ForeignKey("semesters.id", ondelete="CASCADE"), nullable=True)
+    faculty_owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)  # the one faculty member who runs the course; null = not assigned yet
 class CourseLink(Base):  # a common course shown in other programs' semesters as well; it is edited only at its home
     __tablename__ = "course_links"
     id = Column(Integer, primary_key=True)
@@ -82,11 +83,11 @@ class PasswordReset(Base):  # one-time "forgot password" links; only a hash of t
     ip = Column(String(64), index=True); created_at = Column(DateTime, default=dt.datetime.utcnow, index=True); expires_at = Column(DateTime); used = Column(Boolean, default=False)
 class Unit(Base):
     __tablename__ = "units"
-    id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
 class Topic(Base):
     __tablename__ = "topics"
-    id = Column(Integer, primary_key=True); title = Column(String(200)); owner_id = Column(Integer, ForeignKey("users.id"))
+    id = Column(Integer, primary_key=True); title = Column(String(200)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
     unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
@@ -152,11 +153,21 @@ def admin(u: User = Depends(me)):
 def staff(u: User = Depends(me)):
     if u.role not in ("admin", "faculty"): raise HTTPException(403, "Admins and faculty only")
     return u
-def can_edit(u, course_id, s):  # admins edit everything; faculty only their assigned courses
+def can_edit(u, course_id, s):  # admins edit everything; faculty only the courses they own. me() has already refused disabled accounts
     if u.role == "admin": return True
-    return u.role == "faculty" and s.query(CourseFaculty).filter_by(user_id=u.id, course_id=course_id).first() is not None
+    co = s.get(Course, course_id) if course_id else None
+    return u.role == "faculty" and co is not None and co.faculty_owner_id == u.id
 def need_edit(u, course_id, s):
-    if not can_edit(u, course_id, s): raise HTTPException(403, "You are not assigned to this course")
+    if not can_edit(u, course_id, s): raise HTTPException(403, "You are not the owner of this course")
+def owner_problem(owner):  # why a course's owner can't run it, or "" when they can
+    if owner is None: return "Owner not assigned"
+    if owner.role != "faculty": return f"Owner {owner.name} is no longer faculty"
+    return "" if owner.active else f"Owner {owner.name} is disabled"
+def set_owner(s, co, user_id):  # the one place a course's owner changes; content, progress and quizzes are untouched
+    if user_id is not None:
+        f = s.get(User, user_id)
+        if not f or f.role != "faculty" or not f.active: raise HTTPException(400, "The owner must be an active faculty member")
+    co.faculty_owner_id = user_id
 def setting(s, k, d=""):
     r = s.get(Setting, k); return r.v if r else d
 
@@ -269,11 +280,41 @@ def repair_parent_copies(c):
     for k, v in integrity_report(c).items():
         if v: log.warning("Left alone, %s: %d (ids %s). Fix or delete these by hand.", k, len(v), v[:50])
     return fixed
+def add_faculty_owner(c):  # subjects.faculty_owner_id with its index and, where the database supports adding one, its foreign key
+    _addcol("subjects", "faculty_owner_id", "INT NULL")(c); ins = inspect(c)
+    if "ix_subjects_faculty_owner_id" not in [i["name"] for i in ins.get_indexes("subjects")]:
+        c.execute(text("CREATE INDEX ix_subjects_faculty_owner_id ON subjects (faculty_owner_id)"))
+    if c.dialect.name != "sqlite" and not any(f["constrained_columns"] == ["faculty_owner_id"] for f in ins.get_foreign_keys("subjects")):
+        c.execute(text("ALTER TABLE subjects ADD CONSTRAINT fk_subjects_faculty_owner FOREIGN KEY (faculty_owner_id) REFERENCES users (id) ON DELETE SET NULL"))
+def ownership_report(c):
+    """Courses without a working owner, with their legacy course_faculty assignments as candidates. Changes nothing."""
+    users = {r[0]: r for r in c.execute(text("SELECT id, name, role, active FROM users"))}
+    legacy = defaultdict(list)
+    for cid, uid in c.execute(text("SELECT course_id, user_id FROM course_faculty ORDER BY id")): legacy[cid].append(uid)
+    ok = lambda uid: uid in users and users[uid][2] == "faculty" and bool(users[uid][3])
+    rep = {"owned": [], "multiple_assigned": [], "no_faculty": [], "assigned_not_faculty": [], "invalid_owner": []}
+    for cid, owner in c.execute(text("SELECT id, faculty_owner_id FROM subjects ORDER BY id")):
+        if owner is not None: rep["owned" if ok(owner) else "invalid_owner"].append(cid)
+        elif len(legacy[cid]) > 1: rep["multiple_assigned"].append(cid)  # never pick one of several
+        elif not legacy[cid]: rep["no_faculty"].append(cid)
+        elif not ok(legacy[cid][0]): rep["assigned_not_faculty"].append(cid)
+    return rep, legacy, ok
+def owners_from_assignments(c):  # a course with exactly one assigned, active faculty member and no owner yet gets them as owner
+    rep, legacy, ok = ownership_report(c); made = 0
+    for cid, uids in legacy.items():
+        if len(uids) == 1 and ok(uids[0]):
+            made += c.execute(text("UPDATE subjects SET faculty_owner_id = :u WHERE id = :c AND faculty_owner_id IS NULL"), {"u": uids[0], "c": cid}).rowcount
+    rep = ownership_report(c)[0]
+    log.warning("Course owners: %d assigned from the only assigned faculty member. Still need an owner: %d with several assigned faculty %s, "
+                "%d with no faculty %s, %d whose assigned user is not active faculty %s. Invalid owners: %s", made, len(rep["multiple_assigned"]), rep["multiple_assigned"][:50],
+                len(rep["no_faculty"]), rep["no_faculty"][:50], len(rep["assigned_not_faculty"]), rep["assigned_not_faculty"][:50], rep["invalid_owner"][:50])
+    return made
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
               ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
-              ("0007_repair_parent_copies", repair_parent_copies)]
+              ("0007_repair_parent_copies", repair_parent_copies), ("0008_subjects_faculty_owner_id", add_faculty_owner),
+              ("0009_course_owners_from_assignments", owners_from_assignments)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -293,12 +334,12 @@ def boot():
         for co in s.query(Course).all():  # topics without a unit go into "General"
             orphans = s.query(Topic).filter(Topic.course_id == co.id, Topic.unit_id.is_(None)).all()
             if orphans:
-                un = Unit(name="General", course_id=co.id, owner_id=co.owner_id); s.add(un); s.flush()
+                un = Unit(name="General", course_id=co.id, created_by=co.created_by); s.add(un); s.flush()
                 for t in orphans: t.unit_id = un.id
         for p in s.query(Program).all():  # courses without a semester go into "Semester 1"
             orphans = s.query(Course).filter(Course.program_id == p.id, Course.semester_id.is_(None)).all()
             if orphans:
-                sem = Semester(name="Semester 1", program_id=p.id, owner_id=p.owner_id); s.add(sem); s.flush()
+                sem = Semester(name="Semester 1", program_id=p.id, created_by=p.created_by); s.add(sem); s.flush()
                 for co in orphans: co.semester_id = sem.id
         s.commit()
 
@@ -401,7 +442,7 @@ USORT = {"name": (func.lower(User.name),), "role": (User.role, func.lower(User.n
          "semester": (func.coalesce(User.semester, 99), func.lower(User.name)), "newest": (User.id.desc(),)}
 def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester}
 @app.get("/api/admin/users")
-def users(q: str = "", program_id: int | None = None, semester: int | None = None, order: str = "role", limit: int = 50, offset: int = 0,
+def users(q: str = "", program_id: int | None = None, semester: int | None = None, role: str = "", order: str = "role", limit: int = 50, offset: int = 0,
           _: User = Depends(admin), s: Session = Depends(db)):
     qs = s.query(User, Program.name).outerjoin(Program, Program.id == User.program_id)
     if q.strip():
@@ -411,6 +452,7 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
         qs = qs.filter(or_(*conds))
     if program_id is not None: qs = qs.filter(User.program_id == program_id)
     if semester is not None: qs = qs.filter(User.semester == semester)
+    if role: qs = qs.filter(User.role == role)
     rows = qs.order_by(*USORT.get(order, USORT["role"]), User.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     return {"total": qs.count(), "items": [urow(u, pn) for u, pn in rows]}
 @app.get("/api/admin/users/{uid}")
@@ -422,19 +464,25 @@ def user_detail(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
     recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid).order_by(Progress.last_read.desc()).limit(10).all()
     return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
             "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
-            "course_ids": [r.course_id for r in s.query(CourseFaculty).filter_by(user_id=uid)]}
+            "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)]}  # the courses they own
 class CoursesIn(BaseModel): course_ids: list[int]
 @app.put("/api/admin/users/{uid}/courses")
-def assign_courses(uid: int, b: CoursesIn, _: User = Depends(admin), s: Session = Depends(db)):
+def assign_courses(uid: int, b: CoursesIn, _: User = Depends(admin), s: Session = Depends(db)):  # make uid the owner of exactly these courses
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
-    if u.role != "faculty": raise HTTPException(400, "Only faculty can be assigned courses")
     want = set(b.course_ids)
-    if len(want) != s.query(Course).filter(Course.id.in_(want)).count(): raise HTTPException(400, "Choose valid courses")
-    s.query(CourseFaculty).filter(CourseFaculty.user_id == uid, ~CourseFaculty.course_id.in_(want or [0])).delete(synchronize_session=False)
-    have = {r.course_id for r in s.query(CourseFaculty).filter_by(user_id=uid)}
-    for i in want - have: s.add(CourseFaculty(user_id=uid, course_id=i))
+    if want and u.role != "faculty": raise HTTPException(400, "Only faculty can own courses")
+    rows = s.query(Course).filter(Course.id.in_(want)).all() if want else []
+    if len(rows) != len(want): raise HTTPException(400, "Choose valid courses")
+    for co in s.query(Course).filter(Course.faculty_owner_id == uid, ~Course.id.in_(want or [0])): set_owner(s, co, None)
+    for co in rows: set_owner(s, co, uid)  # takes the course over from any previous owner
     s.commit(); return {"ok": True}
+class OwnerIn(BaseModel): user_id: int | None = None
+@app.put("/api/courses/{cid}/owner")
+def course_owner(cid: int, b: OwnerIn, _: User = Depends(admin), s: Session = Depends(db)):  # assign, change or clear (null) the owner
+    co = s.get(Course, cid)
+    if not co: raise HTTPException(404, "Course not found")
+    set_owner(s, co, b.user_id); s.commit(); return {"ok": True}
 @app.post("/api/admin/users/{uid}/reset-password")
 def reset_password(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -474,7 +522,9 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
     if b.password:
         if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
         u.pw = hp(b.password); u.must_change = u.id != a.id
-    s.commit(); return {"ok": True}
+    s.commit()  # owners are never reassigned automatically; the admin is told which courses now need one
+    stranded = s.query(Course).filter_by(faculty_owner_id=u.id).count() if owner_problem(u) else 0
+    return {"ok": True, "courses_needing_owner": stranded}
 class UserImportIn(BaseModel): csv: str; dry_run: bool = True
 UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role", "programme": "program", "sem": "semester"}
 @app.post("/api/admin/users/import")
@@ -554,8 +604,11 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     cc = dict(s.query(Course.semester_id, func.count(Course.id)).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     tc = dict(s.query(Course.semester_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(50).all()
+    cl = defaultdict(list)
+    for co, ow in s.query(Course, User).outerjoin(User, User.id == Course.faculty_owner_id).filter(Course.semester_id.in_([x.id for x in sems] or [0])).order_by(Course.id):
+        cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow)})
     return {"id": p.id, "name": p.name, **counts(s, [pid])[pid],
-            "semester_list": [{"id": x.id, "name": x.name, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0)} for x in sems],
+            "semester_list": [{"id": x.id, "name": x.name, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0), "course_list": cl[x.id]} for x in sems],
             "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
 AI_DOWN = "AI unavailable. Try again later."
 def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
@@ -637,7 +690,7 @@ def course_stats(c, aud, s):
     return tids, reads, last, qids, bests
 def my_courses(u, s):
     q = s.query(Course)
-    if u.role == "faculty": q = q.filter(Course.id.in_([r.course_id for r in s.query(CourseFaculty).filter_by(user_id=u.id)] or [0]))
+    if u.role == "faculty": q = q.filter(Course.faculty_owner_id == u.id)
     return q.order_by(Course.id).all()
 @app.get("/api/reports/courses")
 def report_courses(program_id: int = 0, semester: int = 0, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
@@ -677,7 +730,7 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
 # ---- content: admin writes, everyone reads ----
 class ProgramIn(BaseModel): name: str
 class SemesterIn(BaseModel): name: str; program_id: int
-class CourseIn(BaseModel): name: str; semester_id: int
+class CourseIn(BaseModel): name: str; semester_id: int; faculty_owner_id: int | None = None  # leave out to keep the owner, null for none
 class UnitIn(BaseModel): name: str; course_id: int
 class TopicIn(BaseModel):
     title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""; published: bool = True
@@ -701,16 +754,18 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     for q in s.query(Quiz).order_by(Quiz.id):
         qz[q.unit_id].append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
     cbyid = {c.id: c for c in s.query(Course)}
-    mine = {r.course_id for r in s.query(CourseFaculty).filter_by(user_id=u.id)} if u.role == "faculty" else set()
+    mine = {c.id for c in cbyid.values() if c.faculty_owner_id == u.id} if u.role == "faculty" else set()
+    owners = {x.id: x for x in s.query(User).filter(User.id.in_({c.faculty_owner_id for c in cbyid.values() if c.faculty_owner_id} or {0}))}
     for l in s.query(CourseLink).order_by(CourseLink.id):
         if l.course_id in cbyid: links[l.semester_id].append(cbyid[l.course_id])
     def cj(c, sm):
         shared = c.semester_id != sm.id; ed = u.role == "admin" or c.id in mine  # drafts show only to those who can edit the course
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
-             "shared_with": len(linked_to[c.id]), "editable": ed, "units": [
+             "shared_with": len(linked_to[c.id]), "editable": ed, "mine": c.id in mine,
+             "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None, "units": [
             {"id": n.id, "name": n.name, "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
              "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
-        if u.role == "admin": d["link_ids"] = linked_to[c.id]
+        if u.role == "admin": d["link_ids"] = linked_to[c.id]; d["owner_id"] = c.faculty_owner_id; d["owner_problem"] = owner_problem(owners.get(c.faculty_owner_id))
         return d
     return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester,
         "courses": [cj(c, sm) for c in co[sm.id] + links[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
@@ -738,7 +793,7 @@ def set_links(cid: int, b: LinksIn, _: User = Depends(admin), s: Session = Depen
     have = {l.semester_id for l in s.query(CourseLink).filter_by(course_id=cid)}
     for i in want - have: s.add(CourseLink(course_id=cid, semester_id=i))
     s.commit(); return {"ok": True}
-def save_row(row, u, s): row.owner_id = u.id; s.add(row); s.commit(); return {"id": row.id}
+def save_row(row, u, s): row.created_by = u.id; s.add(row); s.commit(); return {"id": row.id}
 def course_fields(b, s):
     sem = s.get(Semester, b.semester_id)
     if not sem: raise HTTPException(400, "Choose a semester for this course")
@@ -765,7 +820,8 @@ def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(d
     if not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
     return save_row(Semester(**b.dict()), u, s)
 @app.post("/api/courses")
-def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Course(**course_fields(b, s)), u, s)
+def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)):
+    co = Course(**course_fields(b, s)); set_owner(s, co, b.faculty_owner_id); return save_row(co, u, s)
 @app.post("/api/units")
 def new_unit(b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     if not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
@@ -783,7 +839,10 @@ def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session 
     if x: s.query(Course).filter_by(semester_id=rid).update({"program_id": b.program_id}, synchronize_session=False)  # keep the copied program id in step
     return update(x, b.dict(), s)
 @app.put("/api/courses/{rid}")
-def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Course, rid), course_fields(b, s), s)
+def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)):
+    co = s.get(Course, rid)
+    if co and "faculty_owner_id" in b.dict(exclude_unset=True): set_owner(s, co, b.faculty_owner_id)
+    return update(co, course_fields(b, s), s)
 @app.put("/api/units/{rid}")
 def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Unit, rid)
@@ -921,7 +980,7 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
     made = {k + "s": 0 for k in cache}; updated = valid = 0; errors = []; carry = {}
     def get(kind, key, make):
         if key not in cache[kind]:
-            o = make(); o.owner_id = a.id; s.add(o); s.flush(); cache[kind][key] = o; made[kind + "s"] += 1
+            o = make(); o.created_by = a.id; s.add(o); s.flush(); cache[kind][key] = o; made[kind + "s"] += 1
         return cache[kind][key]
     try:
         for n, row in enumerate(rows, start=2):
