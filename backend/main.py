@@ -1,5 +1,5 @@
 from collections import defaultdict
-import csv, io, json, os, re, hashlib, hmac, secrets, datetime as dt, httpx, jwt
+import csv, io, json, logging, os, re, hashlib, hmac, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +15,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 APP_NAME = (os.getenv("APP_NAME") or "Eng Tutor").strip()
 VERSION = "1.1.0"
 DB = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost/engtutor")
+log = logging.getLogger("engtutor")
 SECRET = (os.getenv("JWT_SECRET") or "").strip()
 TOKEN_DAYS = int(os.getenv("TOKEN_DAYS") or 7)
 ITER = int(os.getenv("PBKDF2_ITER") or 600000)  # password hashing cost; old 100000-round hashes are upgraded at next sign-in
@@ -470,16 +471,38 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     return {"id": p.id, "name": p.name, **counts(s, [pid])[pid],
             "semester_list": [{"id": x.id, "name": x.name, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0)} for x in sems],
             "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
-class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None
+AI_DOWN = "AI unavailable. Try again later."
+def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
+async def deepseek(key, model, messages, max_tokens=None, timeout=45):
+    async with httpx.AsyncClient(timeout=timeout) as c:
+        r = await c.post("https://api.deepseek.com/chat/completions", headers={"Authorization": f"Bearer {key}"},
+                         json={"model": model, "messages": messages, **({"max_tokens": max_tokens} if max_tokens else {})})
+    r.raise_for_status(); j = r.json(); text = j["choices"][0]["message"]["content"]
+    if not text: raise ValueError("empty answer")
+    return text, j.get("usage", {}).get("total_tokens", 0)
+def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
+    return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
+@app.get("/api/ai/status")
+def ai_status(u: User = Depends(me), s: Session = Depends(db)): return {"available": bool(ai_key(s))}
+class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
-    k = setting(s, "deepseek_key")
+    k = ai_key(s)
     return {"key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat")}
 @app.put("/api/admin/settings")
 def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
+    if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
     for k, v in (("deepseek_key", b.deepseek_key), ("model", b.model)):
-        if v: s.merge(Setting(k=k, v=v.strip()))
+        if v and v.strip() and not (k == "deepseek_key" and b.remove_key): s.merge(Setting(k=k, v=v.strip()))
     s.commit(); return {"ok": True}
+@app.post("/api/admin/ai/test")
+async def test_ai(_: User = Depends(admin), s: Session = Depends(db)):
+    key = ai_key(s)
+    if not key: return {"ok": False, "message": "No key saved yet."}
+    try: await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "user", "content": "Reply with the word OK."}], max_tokens=5, timeout=20)
+    except httpx.HTTPStatusError as e: return {"ok": False, "message": "DeepSeek rejected the request (" + str(e.response.status_code) + "). " + ("The key looks invalid." if e.response.status_code in (401, 403) else "Check the model name and your balance." if e.response.status_code in (400, 402, 404) else "Try again shortly.")}
+    except Exception: return {"ok": False, "message": "No answer from DeepSeek. Check the server's internet access and try again."}
+    return {"ok": True, "message": "The key works. Students can use AI now."}
 @app.get("/api/admin/stats")
 def stats(_: User = Depends(admin), s: Session = Depends(db)):
     saved = s.query(func.coalesce(func.sum(AICache.hits * AICache.tokens), 0)).scalar()
@@ -879,20 +902,19 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     check_topic_access(u, t, s)
     f = full(t, s)
     ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or ""]).encode()).hexdigest()
+    key = ai_key(s)
+    if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")  # without a key AI is off, even for saved answers
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
-    key = setting(s, "deepseek_key")
-    if not key: raise HTTPException(503, "AI isn't set up yet. Ask your admin to add the DeepSeek key.")
     msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
         "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
-    try:
-        async with httpx.AsyncClient(timeout=90) as c:
-            r = await c.post("https://api.deepseek.com/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                json={"model": setting(s, "model", "deepseek-chat"), "messages": [{"role": "system", "content": PROMPTS[kind]}, {"role": "user", "content": msg}]})
-        r.raise_for_status(); j = r.json()
-    except Exception: raise HTTPException(502, "DeepSeek didn't respond. Check the API key and try again.")
-    text = j["choices"][0]["message"]["content"]
-    try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=j.get("usage", {}).get("total_tokens", 0))); s.commit()
+    try: text, tokens = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": PROMPTS[kind]}, {"role": "user", "content": msg}], timeout=60)
+    except httpx.HTTPStatusError as e:
+        log.warning("DeepSeek answered %s", e.response.status_code)
+        raise ai_down(u, "DeepSeek refused the request (" + str(e.response.status_code) + "). Check the key, model name and balance under AI config.")
+    except Exception as e:
+        log.warning("DeepSeek call failed: %s", type(e).__name__); raise ai_down(u, "DeepSeek did not answer.")
+    try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
     except Exception: s.rollback()
     return {"text": text, "cached": False}
 
