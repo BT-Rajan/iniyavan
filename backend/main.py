@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, inspect, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, and_, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -343,16 +343,24 @@ def sem_visible(u, sem):  # a student sees their own program, up to and includin
     if sem.program_id != u.program_id: return False
     n = sem_no(sem.name)
     return u.semester is None or n is None or n <= u.semester
+# Parents are read through the real chain (Topic > Unit > Course > Semester > Program). topics.subject_id and
+# subjects.course_id are older copies kept in sync for compatibility; they never decide who may see or edit something.
+def topic_course_id(t, s):  # None when the chain is broken, which only admins get past
+    un = s.get(Unit, t.unit_id) if t.unit_id else None
+    return un.course_id if un else None
+def quiz_course_id(q, s):
+    un = s.get(Unit, q.unit_id) if q.unit_id else None
+    return un.course_id if un else None
 def check_course_access(u, course_id, s):
     if not scoped(u): return
-    co = s.get(Course, course_id); sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
-    ok = co and co.program_id == u.program_id and (sem is None or sem_visible(u, sem))
+    co = s.get(Course, course_id) if course_id else None; sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
+    ok = co and sem and sem_visible(u, sem)
     if not ok and co:  # or the course is shared into one of the student's visible semesters
         ok = any(sem_visible(u, x) for x in s.query(Semester).join(CourseLink, CourseLink.semester_id == Semester.id).filter(CourseLink.course_id == co.id))
     if not ok: raise HTTPException(403, "This is not part of your program or semester")
 def check_topic_access(u, t, s):
     if u.role == "student" and t.published is False: raise HTTPException(404, "Topic not found")
-    check_course_access(u, t.course_id, s)
+    check_course_access(u, topic_course_id(t, s), s)
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
@@ -683,7 +691,7 @@ class PublishIn(BaseModel): published: bool
 def publish_topic(rid: int, b: PublishIn, u: User = Depends(staff), s: Session = Depends(db)):
     t = s.get(Topic, rid)
     if not t: raise HTTPException(404, "Not found")
-    need_edit(u, t.course_id, s); t.published = b.published; s.commit(); return {"ok": True, "changed": 1}
+    need_edit(u, topic_course_id(t, s), s); t.published = b.published; s.commit(); return {"ok": True, "changed": 1}
 @app.put("/api/units/{rid}/publish")
 def publish_unit(rid: int, b: PublishIn, u: User = Depends(staff), s: Session = Depends(db)):
     un = s.get(Unit, rid)
@@ -754,7 +762,7 @@ def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depend
 @app.put("/api/topics/{rid}")
 def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Topic, rid)
-    if x: need_edit(u, x.course_id, s)
+    if x: need_edit(u, topic_course_id(x, s), s)
     f = topic_fields(b, s); need_edit(u, f["course_id"], s); return update(x, f, s)
 # ---- quizzes: staff write them, students take them and are graded on the server ----
 class QuizIn(BaseModel): unit_id: int = 0; title: str; pass_percent: int = 50; published: bool = False
@@ -776,15 +784,15 @@ def new_quiz(b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
     need_edit(u, un.course_id, s); q = Quiz(unit_id=un.id, course_id=un.course_id, **quiz_fields(b)); s.add(q); s.commit(); return {"id": q.id}
 @app.put("/api/quizzes/{qid}")
 def edit_quiz(qid: int, b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
-    q = quiz_or_404(qid, s); need_edit(u, q.course_id, s)
+    q = quiz_or_404(qid, s); need_edit(u, quiz_course_id(q, s), s)
     for k, v in quiz_fields(b).items(): setattr(q, k, v)
     s.commit(); return {"ok": True}
 @app.delete("/api/quizzes/{qid}")
 def delete_quiz(qid: int, u: User = Depends(staff), s: Session = Depends(db)):
-    q = quiz_or_404(qid, s); need_edit(u, q.course_id, s); drop_quizzes(s, Quiz.id == qid); s.commit(); return {"ok": True}
+    q = quiz_or_404(qid, s); need_edit(u, quiz_course_id(q, s), s); drop_quizzes(s, Quiz.id == qid); s.commit(); return {"ok": True}
 @app.put("/api/quizzes/{qid}/questions")
 def set_questions(qid: int, b: QuestionsIn, u: User = Depends(staff), s: Session = Depends(db)):
-    q = quiz_or_404(qid, s); need_edit(u, q.course_id, s)
+    q = quiz_or_404(qid, s); need_edit(u, quiz_course_id(q, s), s)
     if len(b.questions) > 100: raise HTTPException(400, "A quiz can have up to 100 questions")
     for i, x in enumerate(b.questions, 1):
         opts = [o.strip() for o in x.options]
@@ -797,10 +805,10 @@ def set_questions(qid: int, b: QuestionsIn, u: User = Depends(staff), s: Session
     s.commit(); return {"ok": True, "count": len(b.questions)}
 @app.get("/api/quizzes/{qid}")
 def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
-    q = quiz_or_404(qid, s); staff_view = u.role == "admin" or (u.role == "faculty" and can_edit(u, q.course_id, s))
+    q = quiz_or_404(qid, s); cid = quiz_course_id(q, s); staff_view = u.role == "admin" or (u.role == "faculty" and can_edit(u, cid, s))
     if not staff_view:
         if not q.published: raise HTTPException(404, "Quiz not found")
-        check_course_access(u, q.course_id, s)
+        check_course_access(u, cid, s)
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     mine = s.query(Attempt).filter_by(quiz_id=qid, user_id=u.id).all()
     return {"id": q.id, "title": q.title, "pass_percent": q.pass_percent, "published": bool(q.published), "unit_id": q.unit_id, "can_edit": staff_view,
@@ -808,9 +816,9 @@ def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
             "attempts": len(mine), "best": max([a.percent for a in mine], default=None)}
 @app.post("/api/quizzes/{qid}/attempt")
 def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Depends(db)):
-    q = quiz_or_404(qid, s)
-    if not q.published and not (u.role == "admin" or can_edit(u, q.course_id, s)): raise HTTPException(404, "Quiz not found")
-    check_course_access(u, q.course_id, s)
+    q = quiz_or_404(qid, s); cid = quiz_course_id(q, s)
+    if not q.published and not (u.role == "admin" or can_edit(u, cid, s)): raise HTTPException(404, "Quiz not found")
+    check_course_access(u, cid, s)
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     if not qs: raise HTTPException(400, "This quiz has no questions yet")
     if len(b.answers) != len(qs): raise HTTPException(400, "Answer every question or leave it blank")
@@ -831,10 +839,15 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
     if not r: raise HTTPException(404, "Not found")
     if kind not in ("units", "topics"): 
         if u.role != "admin": raise HTTPException(403, "Admins only")
-    else: need_edit(u, r.course_id, s)
-    def drop_course(c): drop_quizzes(s, Quiz.course_id == c.id); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete(); s.query(Topic).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
+    else: need_edit(u, r.course_id if kind == "units" else topic_course_id(r, s), s)
+    def drop_course(c):  # children are found through their real parents, never through the copied course/program ids
+        uids = [i for (i,) in s.query(Unit.id).filter_by(course_id=c.id)] or [0]
+        drop_quizzes(s, Quiz.unit_id.in_(uids)); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete()
+        s.query(Topic).filter(or_(Topic.unit_id.in_(uids), and_(Topic.unit_id.is_(None), Topic.course_id == c.id))).delete(synchronize_session=False)
+        s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
-        for c in s.query(Course).filter_by(program_id=rid).all(): drop_course(c)
+        sids = [i for (i,) in s.query(Semester.id).filter_by(program_id=rid)] or [0]
+        for c in s.query(Course).filter(or_(Course.semester_id.in_(sids), and_(Course.semester_id.is_(None), Course.program_id == rid))).all(): drop_course(c)
         s.query(CourseLink).filter(CourseLink.semester_id.in_(s.query(Semester.id).filter_by(program_id=rid))).delete(synchronize_session=False)
         s.query(Semester).filter_by(program_id=rid).delete()
         s.query(User).filter_by(program_id=rid).update({"program_id": None})
@@ -906,10 +919,10 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
             "error_count": len(errors), "errors": errors[:20]}
 
 def full(t, s):
-    co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co.semester_id else None
+    co = s.get(Course, topic_course_id(t, s) or t.course_id); sem = s.get(Semester, co.semester_id) if co.semester_id else None
     un = s.get(Unit, t.unit_id) if t.unit_id else None
-    return {"id": t.id, "title": t.title, "course_id": t.course_id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
-            "semester": sem.name if sem else "", "program": s.get(Program, co.program_id).name,
+    return {"id": t.id, "title": t.title, "course_id": co.id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
+            "semester": sem.name if sem else "", "program": (s.get(Program, sem.program_id if sem else co.program_id) or Program(name="")).name,
             "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
 @app.get("/api/topics/{tid}")
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):

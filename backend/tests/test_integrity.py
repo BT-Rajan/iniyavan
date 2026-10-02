@@ -30,7 +30,6 @@ def test_semester_cannot_move_to_missing_program(env):
     env.csv(CSV); i = ids(); mech1 = i["sem"][(i["prog"]["Mech"], "Semester 1")]
     assert env.c.put(f"/api/semesters/{mech1}", headers=env.admin, json={"name": "S", "program_id": 99999}).status_code == 400
 
-@pytest.mark.xfail(strict=True, reason="audit: student access trusts the copied Course.program_id")
 def test_student_access_ignores_stale_course_program_id(env):
     env.csv(CSV); i = ids(); civil = i["prog"]["Civil"]
     with Session_() as s: s.get(Course, i["course"]["Chem"]).program_id = civil; s.commit()  # drift left behind by an old semester move
@@ -49,7 +48,6 @@ def test_unit_move_moves_topic_authorization(env):
     assert edit_topic(env, env.fac2, water, unit) == 200
     assert env.c.put(f"/api/topics/{water}/publish", headers=env.fac2, json={"published": True}).status_code == 200
 
-@pytest.mark.xfail(strict=True, reason="audit: topic authorization trusts the copied Topic.course_id")
 def test_authorization_ignores_stale_topic_course_id(env):
     i = two_faculty(env); chem, work = i["course"]["Chem"], i["course"]["Workshop"]; water = i["topic"]["Water"]
     with Session_() as s: s.get(Topic, water).course_id = work; s.commit()  # drift left behind by an old unit move
@@ -94,3 +92,12 @@ def test_attempt_response_has_no_answer_key(env):
     assert r.status_code == 200; body = r.json()
     assert (body["score"], body["total"], body["percent"], body["passed"]) == (0, 1, 0, False)
     assert all("correct" not in x and "explanation" not in x for x in body["results"]) and "It is c" not in r.text
+
+def test_delete_follows_real_parents_not_stale_copies(env):
+    env.csv(CSV); i = ids(); chem, work = i["course"]["Chem"], i["course"]["Workshop"]
+    with Session_() as s:  # drift: Water's copy says Workshop, Maths' copy says Mech
+        s.get(Topic, i["topic"]["Water"]).course_id = work; s.get(Course, i["course"]["Maths"]).program_id = i["prog"]["Mech"]; s.commit()
+    assert env.c.delete(f"/api/courses/{work}", headers=env.admin).status_code == 200
+    with Session_() as s: assert s.get(Topic, i["topic"]["Water"]) is not None and s.get(Topic, i["topic"]["Tools"]) is None
+    assert env.c.delete(f"/api/programs/{i['prog']['Mech']}", headers=env.admin).status_code == 200
+    with Session_() as s: assert s.get(Course, i["course"]["Maths"]) is not None and s.get(Course, chem) is None and s.get(Topic, i["topic"]["Water"]) is None
