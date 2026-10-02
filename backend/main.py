@@ -1,5 +1,5 @@
 from collections import defaultdict
-import csv, io, os, re, hashlib, secrets, datetime as dt, httpx, jwt
+import csv, io, os, re, hashlib, hmac, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +14,13 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 APP_NAME = (os.getenv("APP_NAME") or "Eng Tutor").strip()
 VERSION = "1.1.0"
 DB = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost/engtutor")
-SECRET = os.getenv("JWT_SECRET", "change-me")
+SECRET = (os.getenv("JWT_SECRET") or "").strip()
+TOKEN_DAYS = int(os.getenv("TOKEN_DAYS") or 7)
+ITER = int(os.getenv("PBKDF2_ITER") or 600000)  # password hashing cost; old 100000-round hashes are upgraded at next sign-in
+TEMP_ITER = 100000  # one-time passwords made in bulk are hashed cheaply; the user's own password (set on first sign-in) gets the full cost
+def require_secret():
+    if len(SECRET) < 32 or SECRET in ("change-me",) or "generate-with" in SECRET:
+        raise RuntimeError("JWT_SECRET is missing or too weak. Put a random value of 32+ characters in .env, for example: openssl rand -hex 32")
 engine = create_engine(DB, pool_pre_ping=True)
 Session_ = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -56,6 +62,10 @@ class CourseLink(Base):  # a common course shown in other programs' semesters as
     course_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), index=True)
     semester_id = Column(Integer, ForeignKey("semesters.id", ondelete="CASCADE"), index=True)
     __table_args__ = (UniqueConstraint("course_id", "semester_id"),)
+class LoginFail(Base):  # failed sign-in attempts, used for lockout
+    __tablename__ = "login_fails"
+    id = Column(Integer, primary_key=True); email = Column(String(190), index=True); ip = Column(String(64), index=True)
+    at = Column(DateTime, default=dt.datetime.utcnow, index=True)
 class Unit(Base):
     __tablename__ = "units"
     id = Column(Integer, primary_key=True); name = Column(String(150)); owner_id = Column(Integer, ForeignKey("users.id"))
@@ -84,19 +94,30 @@ class AICache(Base):  # shared by all students; key changes when the topic is ed
     tokens = Column(Integer, default=0); hits = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint("topic_id", "kind", "chash"),)
 
-def hp(p, salt=None):
-    salt = salt or secrets.token_hex(8)
-    return salt + "$" + hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), 100000).hex()
-def vp(p, h): return hp(p, h.split("$")[0]) == h
+def _dk(p, salt, it): return hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), it).hex()
+def hp(p, iters=None):
+    it = iters or ITER; salt = secrets.token_hex(8)
+    return f"pbkdf2_sha256${it}${salt}${_dk(p, salt, it)}"
+def _parts(h):  # new format pbkdf2_sha256$rounds$salt$hash; legacy format salt$hash (100000 rounds)
+    a = h.split("$")
+    return (int(a[1]), a[2], a[3]) if a[0] == "pbkdf2_sha256" and len(a) == 4 else (100000, a[0], a[-1])
+def vp(p, h):
+    try: it, salt, dig = _parts(h)
+    except Exception: return False
+    return hmac.compare_digest(_dk(p, salt, it), dig)
+def stale(h): return _parts(h)[0] < ITER
+def fp(u): return hashlib.sha256(u.pw.encode()).hexdigest()[:16]  # changes whenever the password does, which signs out every old token
+def make_token(u): return jwt.encode({"uid": u.id, "k": fp(u), "exp": dt.datetime.utcnow() + dt.timedelta(days=TOKEN_DAYS)}, SECRET)
 def db():
     s = Session_()
     try: yield s
     finally: s.close()
 def me(request: Request, authorization: str = Header(""), s: Session = Depends(db)):
-    try: uid = jwt.decode(authorization[7:], SECRET, algorithms=["HS256"])["uid"]
+    try: claims = jwt.decode(authorization[7:], SECRET, algorithms=["HS256"]); uid = claims["uid"]
     except Exception: raise HTTPException(401, "Please sign in again")
     u = s.get(User, uid)
     if not u or not u.active: raise HTTPException(401, "Account disabled. Ask your admin.")
+    if claims.get("k") != fp(u): raise HTTPException(401, "Your password changed. Please sign in again.")
     if u.must_change and request.url.path not in ("/api/me", "/api/me/password"): raise HTTPException(403, "Please set a new password first")
     return u
 def admin(u: User = Depends(me)):
@@ -114,7 +135,17 @@ def setting(s, k, d=""):
     r = s.get(Setting, k); return r.v if r else d
 
 app = FastAPI(title=APP_NAME)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+ORIGINS = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if o.strip()]  # the app is same-origin; set this only for a separate front-end
+if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
+CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; "
+       "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+@app.middleware("http")
+async def secure_headers(request: Request, call_next):
+    r = await call_next(request)
+    r.headers.update({"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin", "Content-Security-Policy": CSP,
+                      "Permissions-Policy": "camera=(), microphone=(), geolocation=()"})
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https": r.headers["Strict-Transport-Security"] = "max-age=31536000"
+    return r
 
 @app.get("/api/config")
 def config(): return {"name": APP_NAME, "version": VERSION}
@@ -135,6 +166,7 @@ def upgrade_schema():
             if col not in cols(t): c.execute(text(f"ALTER TABLE {t} ADD COLUMN {col} {typ}"))
 @app.on_event("startup")
 def boot():
+    require_secret()
     upgrade_schema()
     with Session_() as s:
         for co in s.query(Course).all():  # topics without a unit go into "General"
@@ -150,22 +182,43 @@ def boot():
         s.commit()
 
 class Login(BaseModel): email: str; password: str
+DUMMY = None  # hashed lazily so a missing account takes as long to reject as a wrong password
+def client_ip(request): return (request.client.host if request.client else "?")[:64]
+def throttle(s, email, ip):  # 5 misses per account from one address, 20 per account, 200 per address, each per 15 minutes
+    since = dt.datetime.utcnow() - dt.timedelta(minutes=15); q = s.query(func.count(LoginFail.id)).filter(LoginFail.at >= since)
+    if q.filter(LoginFail.email == email, LoginFail.ip == ip).scalar() >= 5 or q.filter(LoginFail.email == email).scalar() >= 20 or q.filter(LoginFail.ip == ip).scalar() >= 200:
+        raise HTTPException(429, "Too many wrong attempts. Please wait 15 minutes and try again.", headers={"Retry-After": "900"})
+def note_fail(s, email, ip):
+    s.add(LoginFail(email=email, ip=ip)); s.query(LoginFail).filter(LoginFail.at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
+def clear_fails(s, email, ip): s.query(LoginFail).filter_by(email=email, ip=ip).delete(); s.commit()
 @app.post("/api/login")
-def login(b: Login, s: Session = Depends(db)):
-    u = s.query(User).filter_by(email=b.email.strip().lower()).first()
-    if not u or not vp(b.password, u.pw): raise HTTPException(401, "Wrong email or password")
+def login(b: Login, request: Request, s: Session = Depends(db)):
+    global DUMMY
+    email, ip = b.email.strip().lower()[:190], client_ip(request); throttle(s, email, ip)
+    u = s.query(User).filter_by(email=email).first()
+    if DUMMY is None: DUMMY = hp("not-a-real-password")
+    if not vp(b.password, u.pw if u else DUMMY) or not u: note_fail(s, email, ip); raise HTTPException(401, "Wrong email or password")
     if not u.active: raise HTTPException(403, "Account disabled. Ask your admin.")
-    return {"token": jwt.encode({"uid": u.id, "exp": dt.datetime.utcnow() + dt.timedelta(days=14)}, SECRET), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}}
+    clear_fails(s, email, ip)
+    if stale(u.pw) and not u.must_change: u.pw = hp(b.password); s.commit()  # quietly upgrade old hashes
+    return {"token": make_token(u), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}}
+@app.get("/api/health")
+def health():
+    try:
+        with engine.connect() as c: c.execute(text("SELECT 1"))
+    except Exception: return JSONResponse({"ok": False, "db": False}, status_code=503)
+    return {"ok": True, "db": True}
 @app.get("/api/me")
 def whoami(u: User = Depends(me)): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}
 class PwChange(BaseModel): current: str; new_password: str
 @app.post("/api/me/password")
-def change_password(b: PwChange, u: User = Depends(me), s: Session = Depends(db)):
-    if not vp(b.current, u.pw): raise HTTPException(400, "Your current password is wrong")
+def change_password(b: PwChange, request: Request, u: User = Depends(me), s: Session = Depends(db)):
+    ip = client_ip(request); throttle(s, u.email, ip)
+    if not vp(b.current, u.pw): note_fail(s, u.email, ip); raise HTTPException(400, "Your current password is wrong")
     if len(b.new_password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if b.new_password == b.current: raise HTTPException(400, "Choose a password different from the current one")
     if b.new_password.strip().lower() == u.email: raise HTTPException(400, "Password can't be your email")
-    u.pw = hp(b.new_password); u.must_change = False; s.commit(); return {"ok": True}
+    u.pw = hp(b.new_password); u.must_change = False; s.commit(); clear_fails(s, u.email, ip); return {"ok": True, "token": make_token(u)}
 
 # ---- admin ----
 ROLES = ("student", "faculty", "admin")
@@ -318,13 +371,13 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
             if role: u.role = role
             if prog: u.program_id = prog.id  # blank program/semester cells leave the current value alone
             if sem: u.semester = sem
-            if pw and not b.dry_run: u.pw = hp(pw); u.must_change = u.id != a.id
+            if pw and not b.dry_run: u.pw = hp(pw, TEMP_ITER); u.must_change = u.id != a.id
             updated += 1
         else:
             created += 1; generated += not pw
             if not b.dry_run:
                 final = pw or gen_pw()
-                s.add(User(name=name, email=e, pw=hp(final), role=role or "student", program_id=prog.id if prog else None, semester=sem, must_change=(role or "student") != "admin"))
+                s.add(User(name=name, email=e, pw=hp(final, TEMP_ITER), role=role or "student", program_id=prog.id if prog else None, semester=sem, must_change=(role or "student") != "admin"))
                 if not pw: creds.append({"name": name, "email": e, "password": final})
     s.rollback() if b.dry_run else s.commit()
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,

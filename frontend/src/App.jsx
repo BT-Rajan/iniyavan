@@ -56,7 +56,7 @@ function Login({onIn,toast,msg,appName}){
 function ChangePassword({forced,toast,msg,done,out}){
   const [f,setF]=useState({current:'',password:'',again:''}),[b,setB]=useState(false),set=k=>e=>setF({...f,[k]:e.target.value})
   const go=async()=>{if(f.password.length<8)return toast('Use at least 8 characters');if(f.password!==f.again)return toast("The new passwords don't match")
-    setB(true);try{await api('/me/password',{method:'POST',body:{current:f.current,new_password:f.password}});toast('Password changed');done()}catch(e){toast(e.message)}setB(false)}
+    setB(true);try{const d=await api('/me/password',{method:'POST',body:{current:f.current,new_password:f.password}});if(d.token)localStorage.t=d.token;toast('Password changed');done()}catch(e){toast(e.message)}setB(false)}
   const form=<><label>{forced?'Password your admin gave you':'Current password'}</label><input type="password" autoComplete="current-password" value={f.current} onChange={set('current')}/>
     <label>New password (8+ characters)</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
     <label>Repeat new password</label><input type="password" autoComplete="new-password" value={f.again} onChange={set('again')} onKeyDown={e=>e.key==='Enter'&&go()}/>

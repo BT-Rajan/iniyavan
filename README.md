@@ -54,3 +54,11 @@ Topic content is Markdown with math: `$x^2$` inline, or a block with `$$` on its
 
 ## Draft and publish
 Topics have a Published flag. Drafts are visible to admins and faculty only: students don't see them in the course list, and opening, reading, bookmarking or asking the AI about a draft returns "not found". In the editor, tick "Published" (it starts unticked for faculty and ticked for admins). In a unit, the eye icon on a topic publishes or unpublishes it, and "Publish all N drafts" publishes the whole unit. Faculty can publish topics in their own courses. Topics created by CSV import are published. Existing topics stay published when the `topics.published` column is added on start.
+
+## Security settings
+- **JWT_SECRET** is required (32+ random characters). The app refuses to start without it, and `run.sh` generates one if it is missing or still the placeholder.
+- **Sign-in lockout:** 5 wrong passwords per account from one address, 20 per account, or 200 per address inside 15 minutes returns "try again in 15 minutes". The same limit guards the current-password check when changing a password.
+- **Sessions** last `TOKEN_DAYS` (default 7) and end whenever the password changes, is reset by an admin, or the account is disabled. Changing your own password keeps you signed in on that device.
+- **Password hashing** is PBKDF2 with 600,000 rounds (`PBKDF2_ITER`). Old hashes upgrade automatically at the next sign-in. One-time passwords made by bulk upload use fewer rounds and are replaced by the full-strength hash when the user sets their own.
+- **CORS** is off (same-origin). Set `ALLOWED_ORIGINS` only if the front-end is served from another site. Responses carry CSP, nosniff, frame-deny and referrer headers, and HSTS over HTTPS.
+- **GET /api/health** returns 200 when the database answers, 503 otherwise, for uptime monitors.
