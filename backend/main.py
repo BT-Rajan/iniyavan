@@ -364,7 +364,7 @@ ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 
 def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number; None if the name carries no semester number
     m = re.search(r"(?<![\w])(?:[1-8]|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
     return None if not m else (int(m.group(0)) if m.group(0).isdigit() else ROMAN[m.group(0).lower()])
-def scoped(u): return u.role == "student" and u.program_id is not None  # unenrolled students keep the old open view
+def scoped(u): return u.role == "student"  # a student without a program sees no programs, courses or topics until an admin enrols them
 def sem_visible(u, sem):  # a student sees their own program, up to and including their current semester
     if not scoped(u): return True
     if sem.program_id != u.program_id: return False

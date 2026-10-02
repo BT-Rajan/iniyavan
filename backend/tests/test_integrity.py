@@ -74,7 +74,6 @@ def test_faculty_cannot_read_other_course_drafts(env):
     assert env.c.get(f"/api/quizzes/{q}", headers=env.fac).status_code == 404 and env.c.get(f"/api/quizzes/{q}", headers=env.fac2).status_code == 200
 
 # D. Student with no program
-@pytest.mark.xfail(strict=True, reason="audit: a student with no program sees every program")
 def test_student_without_program_gets_no_academic_content(env):
     env.csv(CSV); i = ids()
     q = env.c.post("/api/quizzes", headers=env.admin, json={"unit_id": i["unit"][i["course"]["Chem"]], "title": "Q", "published": True}).json()["id"]
