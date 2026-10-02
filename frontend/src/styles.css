@@ -83,3 +83,5 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .link{display:flex;align-items:center;gap:2px;background:none;color:var(--mut);font-weight:600;padding:2px 0;margin:0 0 12px}
 
 .chk{display:flex;gap:10px;align-items:center;padding:10px 0;font-size:15px}.chk input{width:20px;height:20px;accent-color:var(--vio)}
+.tools{display:flex;gap:8px;margin:6px 0}.tools button{padding:8px 14px;border-radius:14px;background:var(--s2);font-size:14px}.tools button:disabled{opacity:.5}
+.prose img{max-width:100%;height:auto;border-radius:12px;margin:8px 0;background:#fff}.prose .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}

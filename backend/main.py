@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, inspect, text
@@ -637,5 +638,30 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     except Exception: s.rollback()
     return {"text": text, "cached": False}
 
+UPLOADS = os.path.abspath(os.getenv("UPLOAD_DIR") or os.path.join(os.path.dirname(__file__), "uploads"))
+MAX_IMG = 3 * 1024 * 1024
+def sniff(b):  # trust the bytes, not the file name or the browser's content type
+    if b[:8] == b"\x89PNG\r\n\x1a\n": return "png"
+    if b[:3] == b"\xff\xd8\xff": return "jpg"
+    if b[:6] in (b"GIF87a", b"GIF89a"): return "gif"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP": return "webp"
+MIME = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+@app.post("/api/uploads")
+async def upload_image(request: Request, _: User = Depends(staff)):
+    if int(request.headers.get("content-length") or 0) > MAX_IMG: raise HTTPException(413, "Image is too large. Keep it under 3 MB.")
+    b = await request.body()
+    if len(b) > MAX_IMG: raise HTTPException(413, "Image is too large. Keep it under 3 MB.")
+    ext = sniff(b)
+    if not ext: raise HTTPException(400, "Use a PNG, JPG, GIF or WebP image")
+    os.makedirs(UPLOADS, exist_ok=True)
+    name = f"{os.urandom(16).hex()}.{ext}"
+    with open(os.path.join(UPLOADS, name), "wb") as f: f.write(b)
+    return {"url": f"/api/uploads/{name}"}
+@app.get("/api/uploads/{name}")  # public on purpose: <img> tags can't send a login token; names are random
+def get_image(name: str):
+    m = re.fullmatch(r"[0-9a-f]{32}\.(png|jpg|gif|webp)", name)
+    path = os.path.join(UPLOADS, name)
+    if not m or not os.path.isfile(path): raise HTTPException(404, "Not found")
+    return FileResponse(path, media_type=MIME[m.group(1)], headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"})
 dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.isdir(dist): app.mount("/", StaticFiles(directory=dist, html=True), name="ui")
