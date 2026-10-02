@@ -66,6 +66,7 @@ class Topic(Base):
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
     unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
+    published = Column(Boolean, default=True)  # drafts are visible to admins and faculty only
 class Progress(Base):  # what each student has read
     __tablename__ = "progress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id")); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
@@ -128,7 +129,7 @@ def manifest():
 def upgrade_schema():
     Base.metadata.create_all(engine)
     cols = lambda t: [c["name"] for c in inspect(engine).get_columns(t)]
-    add = [("topics", "unit_id", "INT NULL"), ("subjects", "semester_id", "INT NULL"), ("users", "program_id", "INT NULL"), ("users", "semester", "INT NULL"), ("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")]
+    add = [("topics", "unit_id", "INT NULL"), ("subjects", "semester_id", "INT NULL"), ("users", "program_id", "INT NULL"), ("users", "semester", "INT NULL"), ("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0"), ("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")]
     with engine.begin() as c:  # upgrade older schemas in place
         for t, col, typ in add:
             if col not in cols(t): c.execute(text(f"ALTER TABLE {t} ADD COLUMN {col} {typ}"))
@@ -188,6 +189,7 @@ def sem_visible(u, sem):  # a student sees their own program, up to and includin
     n = sem_no(sem.name)
     return u.semester is None or n is None or n <= u.semester
 def check_topic_access(u, t, s):
+    if u.role == "student" and t.published is False: raise HTTPException(404, "Topic not found")
     if not scoped(u): return
     co = s.get(Course, t.course_id); sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
     ok = co and co.program_id == u.program_id and (sem is None or sem_visible(u, sem))
@@ -396,7 +398,7 @@ class SemesterIn(BaseModel): name: str; program_id: int
 class CourseIn(BaseModel): name: str; semester_id: int
 class UnitIn(BaseModel): name: str; course_id: int
 class TopicIn(BaseModel):
-    title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""
+    title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""; published: bool = True
 M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Unit, "topics": Topic}
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
@@ -419,11 +421,24 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
         shared = c.semester_id != sm.id
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
              "shared_with": len(linked_to[c.id]), "editable": u.role == "admin" or c.id in mine, "units": [
-            {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked} for t in tp[n.id]]} for n in un[c.id]]}
+            {"id": n.id, "name": n.name, "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or u.role != "student"]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]
         return d
     return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester,
         "courses": [cj(c, sm) for c in co[sm.id] + links[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
+class PublishIn(BaseModel): published: bool
+@app.put("/api/topics/{rid}/publish")
+def publish_topic(rid: int, b: PublishIn, u: User = Depends(staff), s: Session = Depends(db)):
+    t = s.get(Topic, rid)
+    if not t: raise HTTPException(404, "Not found")
+    need_edit(u, t.course_id, s); t.published = b.published; s.commit(); return {"ok": True, "changed": 1}
+@app.put("/api/units/{rid}/publish")
+def publish_unit(rid: int, b: PublishIn, u: User = Depends(staff), s: Session = Depends(db)):
+    un = s.get(Unit, rid)
+    if not un: raise HTTPException(404, "Not found")
+    need_edit(u, un.course_id, s)
+    n = s.query(Topic).filter(Topic.unit_id == rid, Topic.published != b.published).update({"published": b.published}, synchronize_session=False)
+    s.commit(); return {"ok": True, "changed": n}
 class LinksIn(BaseModel): semester_ids: list[int]
 @app.put("/api/courses/{cid}/links")
 def set_links(cid: int, b: LinksIn, _: User = Depends(admin), s: Session = Depends(db)):
@@ -573,7 +588,7 @@ def full(t, s):
     un = s.get(Unit, t.unit_id) if t.unit_id else None
     return {"id": t.id, "title": t.title, "course_id": t.course_id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
             "semester": sem.name if sem else "", "program": s.get(Program, co.program_id).name,
-            "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline}
+            "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
 @app.get("/api/topics/{tid}")
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
