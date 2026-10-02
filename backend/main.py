@@ -54,6 +54,8 @@ class Semester(Base):
     __tablename__ = "semesters"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     program_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
+    semester_no = Column(Integer, nullable=True)  # the semester's place in its program (1 to 8): decides order and which students see it; never read from the name
+    __table_args__ = (UniqueConstraint("program_id", "semester_no", name="uq_semesters_program_no"),)
 class Course(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
@@ -262,6 +264,7 @@ REPAIRS = [
     ("quizzes", "course_id", "SELECT un.subject_id FROM units un JOIN subjects co ON co.id = un.subject_id WHERE un.id = quizzes.unit_id")]
 ORPHANS = {  # name -> query for the ids of rows whose parent is missing
     "semesters without a program": "SELECT sm.id FROM semesters sm LEFT JOIN courses p ON p.id = sm.program_id WHERE p.id IS NULL",
+    "semesters without a number": "SELECT id FROM semesters WHERE semester_no IS NULL",
     "courses without a semester": "SELECT co.id FROM subjects co LEFT JOIN semesters sm ON sm.id = co.semester_id WHERE sm.id IS NULL",
     "units without a course": "SELECT un.id FROM units un LEFT JOIN subjects co ON co.id = un.subject_id WHERE co.id IS NULL",
     "topics without a unit": "SELECT t.id FROM topics t LEFT JOIN units un ON un.id = t.unit_id WHERE un.id IS NULL",
@@ -309,12 +312,29 @@ def owners_from_assignments(c):  # a course with exactly one assigned, active fa
                 "%d with no faculty %s, %d whose assigned user is not active faculty %s. Invalid owners: %s", made, len(rep["multiple_assigned"]), rep["multiple_assigned"][:50],
                 len(rep["no_faculty"]), rep["no_faculty"][:50], len(rep["assigned_not_faculty"]), rep["assigned_not_faculty"][:50], rep["invalid_owner"][:50])
     return made
+def semester_numbers(c):  # semesters.semester_no, filled once from the names where that is unambiguous, then unique per program
+    _addcol("semesters", "semester_no", "INT NULL")(c)
+    rows = list(c.execute(text("SELECT id, program_id, name, semester_no FROM semesters ORDER BY id")))
+    taken, claims = defaultdict(set), defaultdict(list)
+    for i, p, n, no in rows:
+        if no is not None: taken[p].add(no)
+    for i, p, n, no in rows:
+        if no is None and sem_no(n) is not None: claims[(p, sem_no(n))].append(i)
+    made, left = 0, [i for i, p, n, no in rows if no is None and sem_no(n) is None]
+    for (p, k), sids in claims.items():
+        if len(sids) == 1 and k not in taken[p]: made += c.execute(text("UPDATE semesters SET semester_no = :k WHERE id = :i"), {"k": k, "i": sids[0]}).rowcount
+        else: left += sids  # two semesters of one program read as the same number: an admin decides
+    ins = inspect(c)
+    if "uq_semesters_program_no" not in [x["name"] for x in ins.get_indexes("semesters")] + [x["name"] for x in ins.get_unique_constraints("semesters")]:
+        c.execute(text("CREATE UNIQUE INDEX uq_semesters_program_no ON semesters (program_id, semester_no)"))
+    log.warning("Semester numbers: %d set from their names; %d left without a number (ids %s). Set them under Programs.", made, len(left), sorted(left)[:50])
+    return made
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
               ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
               ("0007_repair_parent_copies", repair_parent_copies), ("0008_subjects_faculty_owner_id", add_faculty_owner),
-              ("0009_course_owners_from_assignments", owners_from_assignments)]
+              ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -402,14 +422,14 @@ def to_sem(v):  # 3, "3", "Semester 3", "S3" -> 3; blank -> None; anything else 
     if not m: raise HTTPException(400, "Semester must be a number from 1 to 8")
     return int(m.group(1))
 ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8}
-def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number; None if the name carries no semester number
+def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number. Only used to fill semesters.semester_no once (migration 0010, CSV import)
     m = re.search(r"(?<![\w])(?:[1-8]|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
     return None if not m else (int(m.group(0)) if m.group(0).isdigit() else ROMAN[m.group(0).lower()])
 def scoped(u): return u.role == "student"  # a student without a program sees no programs, courses or topics until an admin enrols them
 def sem_visible(u, sem):  # a student sees their own program, up to and including their current semester
     if not scoped(u): return True
     if sem.program_id != u.program_id: return False
-    n = sem_no(sem.name)
+    n = sem.semester_no
     return u.semester is None or n is None or n <= u.semester
 # Parents are read through the real chain (Topic > Unit > Course > Semester > Program). topics.subject_id and
 # subjects.course_id are older copies kept in sync for compatibility; they never decide who may see or edit something.
@@ -430,6 +450,16 @@ def check_topic_access(u, t, s):  # drafts are for admins and the faculty assign
     cid = topic_course_id(t, s)
     if t.published is False and not can_edit(u, cid, s): raise HTTPException(404, "Topic not found")
     check_course_access(u, cid, s)
+def sem_number(s, program_id, n, keep=None):  # a semester number is 1 to 8 and unique within its program
+    if n is None or not 1 <= n <= 8: raise HTTPException(400, "Semester number must be from 1 to 8")
+    dup = s.query(Semester).filter(Semester.program_id == program_id, Semester.semester_no == n, Semester.id != (keep or 0)).first()
+    if dup: raise HTTPException(400, f"This program already has semester {n} ({dup.name})")
+    return n
+def item_name(v, what):
+    n = (v or "").strip()
+    if not n: raise HTTPException(400, f"Enter a {what} name")
+    if len(n) > 150: raise HTTPException(400, f"The {what} name is too long")
+    return n
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
@@ -573,7 +603,7 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,
             "error_count": len(errors), "errors": errors[:20], "credentials": creds}
 PSORT = {"name": lambda stu: (func.lower(Program.name),), "newest": lambda stu: (Program.id.desc(),), "students": lambda stu: (stu.desc(), func.lower(Program.name))}
-def nat(name): return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name or "")]  # "Semester 2" before "Semester 10"
+SEM_ORDER = (Semester.semester_no.is_(None), Semester.semester_no, Semester.id)  # by number; semesters without one last
 def counts(s, ids):
     """Per program: semesters, courses, units, topics, students."""
     c = {i: dict(semesters=0, courses=0, units=0, topics=0, students=0) for i in ids}
@@ -600,7 +630,7 @@ def admin_programs(q: str = "", order: str = "name", limit: int = 50, offset: in
 def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     p = s.get(Program, pid)
     if not p: raise HTTPException(404, "No such program")
-    sems = sorted(s.query(Semester).filter_by(program_id=pid).all(), key=lambda x: nat(x.name))
+    sems = s.query(Semester).filter_by(program_id=pid).order_by(*SEM_ORDER).all()
     cc = dict(s.query(Course.semester_id, func.count(Course.id)).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     tc = dict(s.query(Course.semester_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(50).all()
@@ -608,7 +638,7 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     for co, ow in s.query(Course, User).outerjoin(User, User.id == Course.faculty_owner_id).filter(Course.semester_id.in_([x.id for x in sems] or [0])).order_by(Course.id):
         cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow)})
     return {"id": p.id, "name": p.name, **counts(s, [pid])[pid],
-            "semester_list": [{"id": x.id, "name": x.name, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0), "course_list": cl[x.id]} for x in sems],
+            "semester_list": [{"id": x.id, "name": x.name, "number": x.semester_no, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0), "course_list": cl[x.id]} for x in sems],
             "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
 AI_DOWN = "AI unavailable. Try again later."
 def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
@@ -676,7 +706,7 @@ def course_audience(c, students, sems, links):  # students who can see this cour
     def sees(u):
         if u.program_id is None: return False
         if not places: return c.program_id == u.program_id
-        return any(x.program_id == u.program_id and (u.semester is None or sem_no(x.name) is None or sem_no(x.name) <= u.semester) for x in places)
+        return any(x.program_id == u.program_id and (u.semester is None or x.semester_no is None or x.semester_no <= u.semester) for x in places)
     return [u for u in students if sees(u)]
 def course_stats(c, aud, s):
     ids = {u.id for u in aud}; tids = [t.id for t in s.query(Topic.id).filter(Topic.course_id == c.id, Topic.published.isnot(False))]
@@ -701,7 +731,7 @@ def report_courses(program_id: int = 0, semester: int = 0, format: str = "json",
     for c in my_courses(u, s):
         sm = sems.get(c.semester_id)
         if program_id and c.program_id != program_id: continue
-        if semester and (not sm or sem_no(sm.name) != semester): continue
+        if semester and (not sm or sm.semester_no != semester): continue
         aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
         comp = [100 * reads[x.id] / len(tids) for x in aud] if tids else []; qb = [b for x in aud for b in bests[x.id].values()]
         out.append({"course_id": c.id, "course": c.name, "program": pn.get(c.program_id, ""), "semester": sm.name if sm else "", "students": len(aud), "topics": len(tids),
@@ -729,7 +759,9 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
 
 # ---- content: admin writes, everyone reads ----
 class ProgramIn(BaseModel): name: str
-class SemesterIn(BaseModel): name: str; program_id: int
+class SemesterIn(BaseModel): name: str; program_id: int; semester_no: int | None = None  # on edit, leave out to keep the number
+class NewSemesterIn(BaseModel): name: str; semester_no: int
+class NewCourseIn(BaseModel): name: str; faculty_owner_id: int | None = None
 class CourseIn(BaseModel): name: str; semester_id: int; faculty_owner_id: int | None = None  # leave out to keep the owner, null for none
 class UnitIn(BaseModel): name: str; course_id: int
 class TopicIn(BaseModel):
@@ -741,7 +773,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     marked = {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}
     def g(model, k):
         d = defaultdict(list)
-        for r in s.query(model).order_by(model.id): d[getattr(r, k)].append(r)
+        for r in s.query(model).order_by(*(SEM_ORDER if model is Semester else (model.id,))): d[getattr(r, k)].append(r)
         return d
     tp, un, co, se = g(Topic, "unit_id"), g(Unit, "course_id"), g(Course, "semester_id"), g(Semester, "program_id")
     progs = [p for p in s.query(Program).order_by(Program.id) if not scoped(u) or p.id == u.program_id]
@@ -767,7 +799,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
              "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]; d["owner_id"] = c.faculty_owner_id; d["owner_problem"] = owner_problem(owners.get(c.faculty_owner_id))
         return d
-    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "current": scoped(u) and u.semester is not None and sem_no(sm.name) == u.semester,
+    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "number": sm.semester_no, "current": scoped(u) and u.semester is not None and sm.semester_no == u.semester,
         "courses": [cj(c, sm) for c in co[sm.id] + links[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
 class PublishIn(BaseModel): published: bool
 @app.put("/api/topics/{rid}/publish")
@@ -816,12 +848,24 @@ def program_name(name, s, keep=None):  # names must be unique: the users CSV imp
 @app.post("/api/programs")
 def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Program(name=program_name(b.name, s)), u, s)
 @app.post("/api/semesters")
-def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(db)):
+def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(db)):  # older flat form of POST /api/programs/{id}/semesters
     if not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
-    return save_row(Semester(**b.dict()), u, s)
+    return program_semester(b.program_id, NewSemesterIn(name=b.name, semester_no=b.semester_no if b.semester_no is not None else 0), u, s)
+@app.post("/api/programs/{pid}/semesters")
+def program_semester(pid: int, b: NewSemesterIn, u: User = Depends(admin), s: Session = Depends(db)):  # semesters are made inside a program
+    if not s.get(Program, pid): raise HTTPException(404, "No such program")
+    return save_row(Semester(name=item_name(b.name, "semester"), program_id=pid, semester_no=sem_number(s, pid, b.semester_no)), u, s)
+@app.post("/api/programs/{pid}/semesters/{sid}/courses")
+def semester_course(pid: int, sid: int, b: NewCourseIn, u: User = Depends(admin), s: Session = Depends(db)):  # courses are made inside a semester
+    sem = s.get(Semester, sid)
+    if not sem or sem.program_id != pid: raise HTTPException(404, "That semester is not part of this program")
+    co = Course(name=item_name(b.name, "course"), semester_id=sem.id, program_id=sem.program_id); set_owner(s, co, b.faculty_owner_id)
+    return save_row(co, u, s)
 @app.post("/api/courses")
-def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)):
-    co = Course(**course_fields(b, s)); set_owner(s, co, b.faculty_owner_id); return save_row(co, u, s)
+def new_course(b: CourseIn, u: User = Depends(admin), s: Session = Depends(db)):  # older flat form of POST /api/programs/{id}/semesters/{id}/courses
+    sem = s.get(Semester, b.semester_id)
+    if not sem: raise HTTPException(400, "Choose a semester for this course")
+    return semester_course(sem.program_id, sem.id, NewCourseIn(name=b.name, faculty_owner_id=b.faculty_owner_id), u, s)
 @app.post("/api/units")
 def new_unit(b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     if not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course for this unit")
@@ -835,14 +879,20 @@ def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = 
 @app.put("/api/semesters/{rid}")
 def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)):
     x = s.get(Semester, rid)
-    if x and not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
-    if x: s.query(Course).filter_by(semester_id=rid).update({"program_id": b.program_id}, synchronize_session=False)  # keep the copied program id in step
-    return update(x, b.dict(), s)
+    if not x: raise HTTPException(404, "Not found")
+    if not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
+    n = b.semester_no if "semester_no" in b.dict(exclude_unset=True) else x.semester_no
+    vals = {"name": item_name(b.name, "semester"), "program_id": b.program_id, "semester_no": sem_number(s, b.program_id, n, keep=rid) if n is not None else None}
+    s.query(Course).filter_by(semester_id=rid).update({"program_id": b.program_id}, synchronize_session=False)  # keep the copied program id in step
+    return update(x, vals, s)
 @app.put("/api/courses/{rid}")
 def edit_course(rid: int, b: CourseIn, _: User = Depends(admin), s: Session = Depends(db)):
     co = s.get(Course, rid)
-    if co and "faculty_owner_id" in b.dict(exclude_unset=True): set_owner(s, co, b.faculty_owner_id)
-    return update(co, course_fields(b, s), s)
+    if not co: raise HTTPException(404, "Not found")
+    if "faculty_owner_id" in b.dict(exclude_unset=True): set_owner(s, co, b.faculty_owner_id)  # moving a course keeps its owner
+    f = {**course_fields(b, s), "name": item_name(b.name, "course")}  # program always comes from the new semester
+    s.query(CourseLink).filter_by(course_id=rid, semester_id=f["semester_id"]).delete()  # its new home can't also be a shared copy
+    return update(co, f, s)
 @app.put("/api/units/{rid}")
 def edit_unit(rid: int, b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
     x = s.get(Unit, rid)
@@ -958,7 +1008,7 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
 # ---- CSV import (admin) ----
 LEVELS = ["program", "semester", "course", "unit"]
 TEXT_COLS = ["content", "question_pattern", "sample_content", "guideline"]
-ALIAS = {"title": "topic", "topic_title": "topic", "notes": "content", "topic_content": "content", "answer_guideline": "guideline",
+ALIAS = {"sem_no": "semester_no", "semester_number": "semester_no", "title": "topic", "topic_title": "topic", "notes": "content", "topic_content": "content", "answer_guideline": "guideline",
          "sample": "sample_content", "pattern": "question_pattern"}
 class ImportIn(BaseModel): csv: str; dry_run: bool = True
 @app.post("/api/admin/import")
@@ -977,7 +1027,10 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
              "course": {(x.semester_id, (x.name or "").lower()): x for x in s.query(Course)},
              "unit": {(x.course_id, (x.name or "").lower()): x for x in s.query(Unit)},
              "topic": {(x.unit_id, (x.title or "").lower()): x for x in s.query(Topic)}}
-    made = {k + "s": 0 for k in cache}; updated = valid = 0; errors = []; carry = {}
+    made = {k + "s": 0 for k in cache}; updated = valid = 0; errors = []; warnings = []; carry = {}
+    used = defaultdict(set)  # semester numbers already taken in each program
+    for x in cache["semester"].values():
+        if x.semester_no is not None: used[x.program_id].add(x.semester_no)
     def get(kind, key, make):
         if key not in cache[kind]:
             o = make(); o.created_by = a.id; s.add(o); s.flush(); cache[kind][key] = o; made[kind + "s"] += 1
@@ -996,8 +1049,16 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
             if gaps: errors.append({"row": n, "error": "Missing " + ", ".join(gaps)}); continue
             if any(len(v[c]) > 150 for c in LEVELS) or len(v["topic"]) > 200:
                 errors.append({"row": n, "error": "A name is too long (150 characters, topics 200)"}); continue
+            given = v.get("semester_no", "")
+            if given and not (given.isdigit() and 1 <= int(given) <= 8): errors.append({"row": n, "error": "semester_no must be a number from 1 to 8"}); continue
             p = get("program", v["program"].lower(), lambda: Program(name=v["program"]))
-            sm = get("semester", (p.id, v["semester"].lower()), lambda: Semester(name=v["semester"], program_id=p.id))
+            if (p.id, v["semester"].lower()) not in cache["semester"]:  # a new semester gets semester_no, or else the number in its name, if that is free
+                no = int(given) if given else sem_no(v["semester"])
+                if given and no in used[p.id]: errors.append({"row": n, "error": f"{v['program']} already has semester {no}"}); continue
+                if no in used[p.id] or no is None:
+                    warnings.append(f"{v['program']} › {v['semester']} has no semester number yet. Set it under Programs."); no = None
+                if no is not None: used[p.id].add(no)
+            sm = get("semester", (p.id, v["semester"].lower()), lambda: Semester(name=v["semester"], program_id=p.id, semester_no=no))
             co = get("course", (sm.id, v["course"].lower()), lambda: Course(name=v["course"], semester_id=sm.id, program_id=p.id))
             un = get("unit", (co.id, v["unit"].lower()), lambda: Unit(name=v["unit"], course_id=co.id))
             vals = {k: v[k] for k in TEXT_COLS if v.get(k)}
@@ -1012,7 +1073,7 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
     except Exception:
         s.rollback(); raise HTTPException(500, "Import failed. Nothing was saved.")
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": valid, "created": made, "updated_topics": updated,
-            "error_count": len(errors), "errors": errors[:20]}
+            "error_count": len(errors), "errors": errors[:20], "warnings": warnings[:20]}
 
 def full(t, s):
     co = s.get(Course, topic_course_id(t, s) or t.course_id); sem = s.get(Semester, co.semester_id) if co.semester_id else None

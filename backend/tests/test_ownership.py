@@ -78,8 +78,10 @@ def test_owner_change_keeps_units_topics_quizzes_and_progress(env):
     q = env.c.post("/api/quizzes", headers=env.fac, json={"unit_id": i["cu"], "title": "Q", "published": True}).json()["id"]
     env.c.put(f"/api/quizzes/{q}/questions", headers=env.fac, json={"questions": [{"text": "t", "options": ["a", "b"], "correct": 0}]})
     env.c.post(f"/api/topics/{i['water']}/read", headers=env.stu); env.c.post(f"/api/quizzes/{q}/attempt", headers=env.stu, json={"answers": [0]})
-    snap = lambda: (lambda s: (s.query(Unit).filter_by(course_id=i["chem"]).count(), s.query(Topic).filter_by(unit_id=i["cu"]).count(),
-                               s.query(Quiz).filter_by(unit_id=i["cu"]).count(), s.query(Progress).count(), s.query(main.Attempt).count()))(Session_())
+    def snap():
+        with Session_() as s:  # closed at once: an open session holds MariaDB metadata locks and stalls the next test's drop_all
+            return (s.query(Unit).filter_by(course_id=i["chem"]).count(), s.query(Topic).filter_by(unit_id=i["cu"]).count(),
+                    s.query(Quiz).filter_by(unit_id=i["cu"]).count(), s.query(Progress).count(), s.query(main.Attempt).count())
     before = snap(); own(env, i["chem"], "fac2@x.com"); own(env, i["chem"], None)
     assert snap() == before and env.c.get(f"/api/quizzes/{q}", headers=env.stu).json()["best"] == 100
 

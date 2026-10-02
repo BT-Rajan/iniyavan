@@ -17,14 +17,21 @@ No account is created automatically. Create or reset the admin (creates it if mi
 `./manage.sh admin --email you@example.com`. Reset any user with `./manage.sh passwd --email x@y.com`, or from the Admin tab in the app (Reset).
 
 ## Content
-Structure: Program > Semester > Course > Unit > Topic. Only admins create, edit and delete; students read and learn.
+Structure: Program > Semester > Course > Unit > Topic. Admins build and change programs, semesters and courses; each course's faculty owner looks after its units and topics; students read and learn.
 Upgrades are automatic: earlier "courses" become programs, their "subjects" become courses inside a "Semester 1", and loose topics go into a "General" unit. (Table names are unchanged: `courses` = programs, `subjects` = courses.)
 
 ## Programs
-Admin > Programs works like Users: a table of programs with course and student counts, search (program, semester or course name), sorting, and New program. Tap a row for the program's page: semesters, enrolled students, Rename, Delete (with a warning of what goes with it) and Add content. Program names must be unique, because the users CSV import matches programs by name. Deleting a program un-enrols its students but keeps their accounts.
+Admin > Programs works like Users: a table of programs with course and student counts, search (program, semester or course name), sorting, and New program. Tap a row for the program's page: its semesters in order, Add semester, enrolled students, Rename, Delete (with a warning of what goes with it) and Open semesters and courses. Program names must be unique, because the users CSV import matches programs by name. Deleting a program un-enrols its students but keeps their accounts.
+
+## Building the structure (admins)
+Everything is made from where it belongs. In Learn (or from a program's page): the programs list has **New program**; inside a program, **Add semester** asks for its number (1 to 8) and a name; inside a semester, **Add course** asks for a name and the faculty owner. A course page shows its program, semester and owner, with **Edit course** (rename, move to another semester, change owner) and **Change owner**. The pencil on a program, semester or course edits it in place; the trash icon deletes it after saying exactly what goes with it.
+
+A semester's **number** is stored data, not read from its name: it decides the order semesters are listed in and which students see them (a student in semester 3 sees semesters 1 to 3). Each number is used once per program. On upgrade, migration 0010 fills the number from each existing semester's name when that is unambiguous; any it can't fill show "No semester number set" and are listed by `./manage.sh integrity`. Until numbered, such a semester is visible to every student of the program, as before.
+
+Moving a course to another semester also moves it to that semester's program, with its units, topics, quizzes and owner.
 
 ## CSV import (content)
-Admin > Programs > Bulk upload. Columns: `program, semester, course, unit, topic` plus optional `content, question_pattern, sample_content, guideline`. Blank hierarchy cells repeat the row above; existing names are reused and existing topics are updated. A preview shows what will change before anything is saved.
+Admin > Programs > Bulk upload. Columns: `program, semester, course, unit, topic` plus optional `semester_no, content, question_pattern, sample_content, guideline`. A new semester takes `semester_no`, or else the number in its name if that number is free in the program; otherwise it is created without a number and the preview says so. Imported courses have no owner until an admin assigns one. Blank hierarchy cells repeat the row above; existing names are reused and existing topics are updated. A preview shows what will change before anything is saved.
 
 ## Name and menu
 The app name comes from `APP_NAME` in `.env` (login screen, top bar, drawer, installed app name). The drawer menu (top left) has Learn, and for admins Users, Programs, AI config, Reports and About.

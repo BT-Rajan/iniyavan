@@ -17,10 +17,12 @@ def edit_topic(env, h, tid, unit_id, title="Water"):
 # A. Semester re-parenting
 def test_semester_move_keeps_courses_consistent(env):
     env.csv(CSV); i = ids(); mech1, civil = i["sem"][(i["prog"]["Mech"], "Semester 1")], i["prog"]["Civil"]
-    assert env.c.put(f"/api/semesters/{mech1}", headers=env.admin, json={"name": "Semester 1", "program_id": civil}).status_code == 200
+    assert env.c.put(f"/api/semesters/{mech1}", headers=env.admin, json={"name": "Semester 1", "program_id": civil}).status_code == 400  # Civil already has a semester 1
+    assert env.c.put(f"/api/semesters/{mech1}", headers=env.admin, json={"name": "Semester 1", "program_id": civil, "semester_no": 3}).status_code == 200
     with Session_() as s:
         for c in s.query(Course).filter_by(semester_id=mech1): assert c.program_id == civil == s.get(Semester, c.semester_id).program_id
-    enrol("stu@x.com", civil, 1); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 200
+    enrol("stu@x.com", civil, 1); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 403  # it is Civil's semester 3 now
+    enrol("stu@x.com", civil, 3); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 200
     enrol("stu@x.com", i["prog"]["Mech"], 1); assert env.c.get(f"/api/topics/{i['topic']['Water']}", headers=env.stu).status_code == 403
 
 def test_semester_cannot_move_to_missing_program(env):

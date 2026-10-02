@@ -22,7 +22,7 @@ const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/adm
 const Ctx=createContext({})
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[page,setPage]=useState('learn'),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[page,setPage]=useState('learn'),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null)
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
   useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setCanReset(!!c.email_reset);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
   useEffect(()=>{const k=e=>e.key==='Escape'&&setOpen(false);addEventListener('keydown',k);return()=>removeEventListener('keydown',k)},[])
@@ -31,18 +31,18 @@ export default function App(){
   if(resetTok)return <ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/>
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} canReset={canReset}/>
   if(user.must_change)return <ChangePassword forced toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
-  const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)}
+  const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
   const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI & email'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
-    {page==='learn'&&<Learn user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
+    {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} onAdd={()=>go('add')} appName={name}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast}/>}
     {page==='add'&&(admin||user.role==='faculty')&&<Add role={user.role} toast={toast} done={()=>go('learn')}/>}
-    {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onAdd={()=>go('add')}/>}
+    {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
         <div className="dhead"><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
-        {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k||(k==='learn'&&page==='add')?' on':'')} onClick={()=>go(k)}><I size={20}/>{l}</button>)}
+        {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k||(k==='learn'&&page==='add')?' on':'')} onClick={()=>{if(k==='learn')setStart(null);go(k)}}><I size={20}/>{l}</button>)}
         <button className="dlink out" onClick={()=>{localStorage.removeItem('t');setOpen(false);setPage('learn');setUser(null)}}><LogOut size={20}/>Sign out</button>
       </nav></div>
     {msg&&<div className="toast" role="status">{msg}</div>}
@@ -89,10 +89,10 @@ const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header
   {back?<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>:<button className="ic" aria-label="Open menu" onClick={menu}><Menu/></button>}
   <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</header>}
 
-function Learn({user,toast,onAdd,appName}){
-  const isAdmin=user.role==='admin'
-  const [tree,setTree]=useState([]),[nav,setNav]=useState([]),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null)
-  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe])
+function Learn({user,toast,onAdd,appName,start}){
+  const isAdmin=user.role==='admin',staff=user.role!=='student'
+  const [tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null)
+  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet])
   const landed=useRef(false);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast}/>
   if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast}/>
@@ -105,9 +105,9 @@ function Learn({user,toast,onAdd,appName}){
   const setPub=async(url,published,msg)=>{try{await api(url,{method:'PUT',body:{published}});toast(msg);load()}catch(e){toast(e.message)}}
   const list=unit?unit.topics.map(x=>({id:x.id,n:x.title,d:x.read,b:x.bookmarked,kind:'topics',sub:x.published===false?'Draft · students cannot see it':'',draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({kind:'topic',id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
     :co?co.units.map(x=>row(x,'units','unit',x.topics.length+' topics'+(mayEdit&&drafts(x.topics)?' · '+drafts(x.topics)+' draft':''),{course_id:co.id}))
-    :sem?sem.courses.map(x=>({...row(x,'courses','course',x.units.length+' units'+(x.shared?' · shared from '+x.home:x.shared_with?' · shared with '+x.shared_with+' more':'')+(user.role!=='student'?' · '+ownerLine(x):''),{semester_id:x.semester_id,owner_id:x.owner_id,owner:x.owner}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
-    :prog?prog.semesters.map(x=>row(x,'semesters','semester',x.courses.length+' courses',{program_id:prog.id}))
-    :tree.map(x=>row(x,'programs','program',x.semesters.length+' semesters'))
+    :sem?sem.courses.map(x=>({...row(x,'courses','course',x.units.length+' units'+(x.shared?' · shared from '+x.home:x.shared_with?' · shared with '+x.shared_with+' more':'')+(staff?' · '+ownerLine(x):'')),edit:()=>setSheet({type:'course',c:x,pid:prog.id,sid:x.semester_id}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
+    :prog?prog.semesters.map(x=>({...row(x,'semesters','semester',(isAdmin?(x.number?'Semester no. '+x.number:'No semester number set')+' · ':'')+x.courses.length+' courses'),edit:()=>setSheet({type:'semester',sem:x,pid:prog.id})}))
+    :tree.map(x=>({...row(x,'programs','program',x.semesters.length+' semesters'),edit:()=>setSheet({type:'program',p:x})}))
   const cur=unit||co||sem||prog,crumbs=[prog,sem,co,unit].filter(Boolean).slice(0,-1).map(x=>x.name).join(' › ')
   const allSems=tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))
   const myCourses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>c.mine&&!c.shared).map(c=>({p,s,c}))))
@@ -115,6 +115,10 @@ function Learn({user,toast,onAdd,appName}){
   const remove=async()=>{try{if(del.unlink)await api(`/courses/${del.unlink.id}/links`,{method:'PUT',body:{semester_ids:del.unlink.keep}});else await api(`/${del.kind}/${del.id}`,{method:'DELETE'});toast('Deleted');setDel(null);load()}catch(e){toast(e.message)}}
   return <><Bar title={cur?.name||appName} sub={nav.length?crumbs:'Hi '+user.name} back={nav.length>0&&(()=>setNav(nav.slice(0,-1)))}/>
    <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&<div className="hero"><h2>Pick a program.<br/>We’ll remember where you stopped.</h2></div>}
+     {isAdmin&&!sem&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add semester to '+prog.name:'New program'}</button>}
+     {isAdmin&&sem&&!co&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
+     {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],['Semester',sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
+       {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
      {!nav.length&&user.role==='faculty'&&<><h3 style={{margin:'0 0 8px'}}>My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}</b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
        :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 style={{margin:'20px 0 8px'}}>All programs</h3></>}
     {list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}</b>{x.sub&&<span>{x.sub}</span>}</div>{(x.d||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.d&&<Check className="done"/>}</span>}</button>
@@ -125,12 +129,40 @@ function Learn({user,toast,onAdd,appName}){
       {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{mayEdit?'Nothing here yet. Tap Add to create it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this semester':''}?</h3>
-     <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':del.kind==='topics'?'This removes the topic and its saved AI answers.':'This also removes everything inside it.'}</p>
+     <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
      <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Keep it</button></div></div>}
    {sh&&<div className="scrim" onClick={()=>setSh(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Share “{sh.name}”</h3><p className="known">Tick every semester that should also show this course. You still edit it in one place.</p>
      {allSems.filter(x=>x.id!==sh.home).map(x=><label key={x.id} className="chk"><input type="checkbox" checked={sh.sel.includes(x.id)} onChange={e=>setSh({...sh,sel:e.target.checked?[...sh.sel,x.id]:sh.sel.filter(i=>i!==x.id)})}/> {x.label}</label>)}
      <button className="btn" onClick={saveShare}>Save</button><button className="btn ghost" onClick={()=>setSh(null)}>Cancel</button></div></div>}
-   {mayEdit&&<button className="fab" aria-label="Add content" onClick={onAdd}><Plus/></button>}</>}
+   {sheet?.type==='program'&&<ProgramSheet p={sheet.p} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
+   {sheet?.type==='semester'&&<SemesterSheet sem={sheet.sem} pid={sheet.pid} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
+   {sheet?.type==='course'&&<CourseSheet c={sheet.c} pid={sheet.pid} sid={sheet.sid} sems={tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
+   {sheet?.type==='owner'&&<OwnerSheet c={sheet.c} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
+   {mayEdit&&co&&<button className="fab" aria-label="Add content" onClick={onAdd}><Plus/></button>}</>}
+const DELETES={programs:"This deletes its semesters and courses with their units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. Enrolled students keep their accounts but lose their program.",
+  semesters:"This deletes its courses with their units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. Courses shared into it from elsewhere are only unlinked.",
+  courses:"This deletes its units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. The owner keeps their account.",
+  units:"This deletes its topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them.",
+  topics:"This deletes the topic, its saved AI answers, and the students' reading progress and bookmarks for it."}
+function SemesterSheet({sem,pid,close,done,toast}){
+  const isNew=!sem.id,[f,setF]=useState({name:sem.name||'',no:sem.number||''}),[busy,setBusy]=useState(false)
+  const pickNo=e=>{const no=e.target.value;setF({no,name:!f.name||/^Semester \d+$/.test(f.name)?(no?'Semester '+no:''):f.name})}
+  const save=async()=>{setBusy(true);try{const body={name:f.name,semester_no:f.no?+f.no:null};await api(isNew?`/programs/${pid}/semesters`:'/semesters/'+sem.id,{method:isNew?'POST':'PUT',body:isNew?body:{...body,program_id:pid}});toast(isNew?'Semester added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New semester':'Edit semester'}</h3>
+    <label>Semester number</label><select value={f.no} onChange={pickNo}><option value="">Choose…</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
+    <label>Name</label><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Semester 3"/>
+    <p className="known" style={{marginTop:10}}>The number sets the order and which students see it: a student in semester 3 sees semesters 1 to 3. Each number is used once per program.</p>
+    <button className="btn" disabled={busy||!f.no||!f.name.trim()} onClick={save}>{isNew?'Add semester':'Save changes'}</button></Sheet>}
+function CourseSheet({c,pid,sid,sems,close,done,toast}){
+  const isNew=!c.id,faculty=useFaculty(true),[f,setF]=useState({name:c.name||'',sem:sid,owner:c.owner_id||''}),[busy,setBusy]=useState(false)
+  const save=async()=>{setBusy(true);try{const owner=String(f.owner)!==String(c.owner_id||'')?{faculty_owner_id:f.owner?+f.owner:null}:{}  // unchanged owners are left alone
+    await api(isNew?`/programs/${pid}/semesters/${sid}/courses`:'/courses/'+c.id,{method:isNew?'POST':'PUT',body:isNew?{name:f.name,...owner}:{name:f.name,semester_id:+f.sem,...owner}});toast(isNew?'Course added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New course in '+(sems.find(x=>x.id===sid)?.label||''):'Edit course'}</h3>
+    <label>Name</label><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Thermodynamics"/>
+    {!isNew&&<><label>Semester</label><select value={f.sem} onChange={e=>setF({...f,sem:+e.target.value})}>{sems.map(x=><option key={x.id} value={x.id}>{x.label}</option>)}</select></>}
+    <label>Owner (faculty)</label><select value={f.owner} onChange={e=>setF({...f,owner:e.target.value})}><option value="">Not assigned</option>{c.owner_id&&!faculty.some(u=>u.id===c.owner_id)&&<option value={c.owner_id}>{c.owner} (can't edit)</option>}{faculty.map(u=><option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}</select>
+    {!isNew&&+f.sem!==sid&&<p className="known">Moving the course takes its units, topics, quizzes and owner with it. Students of the new semester will see it.</p>}
+    <button className="btn" disabled={busy||!f.name.trim()} onClick={save}>{isNew?'Add course':'Save changes'}</button></Sheet>}
 
 function QuizPlay({id,back,toast}){
   const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false)
@@ -194,27 +226,25 @@ function Topic({id,back,toast}){
 function Add({role,toast,done,edit,cancel}){
   const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null)
   const blank={name:'',title:'',program_id:'',semester_id:'',course_id:'',unit_id:'',owner:'',content:'',sample_content:'',question_pattern:'',guideline:'',published:true}
-  const [kind,setKind]=useState(edit?.kind||'topic'),[tree,setTree]=useState([]),[f,setF]=useState(edit?{...blank,name:edit.name||'',program_id:edit.program_id||'',semester_id:edit.semester_id||'',course_id:edit.course_id||'',owner:edit.owner_id||''}:{...blank,published:!fac})
-  const faculty=useFaculty(!fac),owner0=edit?.owner_id||''  // the owner is only sent when it changes, so an edit never clears an owner who is missing from the list
+  const [kind,setKind]=useState(edit?.kind||'topic'),[tree,setTree]=useState([]),[f,setF]=useState(edit?{...blank,name:edit.name||'',program_id:edit.program_id||'',semester_id:edit.semester_id||'',course_id:edit.course_id||''}:{...blank,published:!fac})
   useEffect(()=>{api('/tree').then(setTree);if(edit?.kind==='topic')api('/topics/'+edit.id).then(t=>setF({...blank,title:t.title,unit_id:t.unit_id||'',content:t.content||'',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false})).catch(e=>toast(e.message))},[])
   const set=k=>e=>setF({...f,[k]:e.target.value})
   const pickImg=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;if(file.size>3*1024*1024)return toast('Image is too large. Keep it under 3 MB.')
     setUp(true);try{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:file});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Upload failed')
       const pos=taRef.current?.selectionStart??f.content.length;setF({...f,content:f.content.slice(0,pos)+`\n\n![Describe the image](${d.url})\n\n`+f.content.slice(pos)});toast('Image added')}catch(er){toast(er.message)}setUp(false)}
-  const sems=tree.flatMap(p=>p.semesters.map(s=>({...s,label:`${p.name} › ${s.name}`})))
   const ok=c=>!c.shared&&(!fac||c.editable)
   const courses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(ok).map(c=>({...c,label:`${p.name} › ${s.name} › ${c.name}`}))))
   const units=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(ok).flatMap(c=>c.units.map(n=>({...n,label:`${p.name} › ${s.name} › ${c.name} › ${n.name}`})))))
   const save=async()=>{try{
     const path='/'+kind+'s'+(edit?'/'+edit.id:''),method=edit?'PUT':'POST'
-    const body={program:{name:f.name},semester:{name:f.name,program_id:+f.program_id},course:{name:f.name,semester_id:+f.semester_id,...(String(f.owner)!==String(owner0)?{faculty_owner_id:f.owner?+f.owner:null}:{})},unit:{name:f.name,course_id:+f.course_id},
+    const body={unit:{name:f.name,course_id:+f.course_id},
       topic:{title:f.title,unit_id:+f.unit_id,published:f.published!==false,content:f.content,sample_content:f.sample_content,question_pattern:f.question_pattern,guideline:f.guideline}}[kind]
     await api(path,{method,body});toast(edit?'Changes saved':'Saved');done()}catch(e){toast(e.message)}}
   const T=(k,l,ph)=><><label>{l}</label><textarea placeholder={ph} value={f[k]} onChange={set(k)}/></>
   const pick=(l,k,opts)=><><label>{l}</label><select value={f[k]} onChange={set(k)}><option value="">Choose…</option>{opts.map(o=><option key={o.id} value={o.id}>{o.label||o.name}</option>)}</select></>
-  return <><Bar title={edit?'Edit '+kind:'Add content'} back={edit&&cancel}/><div className="main">{!edit&&<div className="tabs">{(fac?['unit','topic']:['program','semester','course','unit','topic']).map(k=><button key={k} className={kind===k?'on':''} onClick={()=>setKind(k)}>{k[0].toUpperCase()+k.slice(1)}</button>)}</div>}
-    {kind==='semester'&&pick('Program','program_id',tree)}{kind==='course'&&<>{pick('Semester','semester_id',sems)}<label>Owner (faculty)</label><select value={f.owner} onChange={set('owner')}><option value="">Not assigned</option>{owner0&&!faculty.some(u=>u.id===owner0)&&<option value={owner0}>{edit.owner} (can't edit)</option>}{faculty.map(u=><option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}</select></>}{kind==='unit'&&pick('Course','course_id',courses)}{kind==='topic'&&pick('Unit','unit_id',units)}
-    {kind!=='topic'&&<><label>Name</label><input value={f.name} onChange={set('name')} placeholder={{program:'B.E. Mechanical Engineering',semester:'Semester 3',course:'Thermodynamics',unit:'Unit 1: Basic concepts'}[kind]}/></>}
+  return <><Bar title={edit?'Edit '+kind:'Add content'} back={edit&&cancel}/><div className="main">{!edit&&<div className="tabs">{['unit','topic'].map(k=><button key={k} className={kind===k?'on':''} onClick={()=>setKind(k)}>{k[0].toUpperCase()+k.slice(1)}</button>)}</div>}
+    {kind==='unit'&&pick('Course','course_id',courses)}{kind==='topic'&&pick('Unit','unit_id',units)}
+    {kind!=='topic'&&<><label>Name</label><input value={f.name} onChange={set('name')} placeholder="Unit 1: Basic concepts"/></>}
     {kind==='topic'&&<><label>Topic title</label><input value={f.title} onChange={set('title')} placeholder="First law of thermodynamics"/>
       <label>Topic content</label><div className="tools"><button type="button" disabled={up} onClick={()=>fileRef.current.click()}>{up?'Uploading…':'Add image'}</button><button type="button" onClick={()=>setPrev(!prev)}>{prev?'Back to editing':'Preview'}</button></div>
       <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={pickImg}/>
@@ -224,7 +254,6 @@ function Add({role,toast,done,edit,cancel}){
       {T('sample_content','Sample content','A sample question and answer')}{T('guideline','How an answer should be','Intro, labelled diagram, steps, units, conclusion')}</>}
     <button className="btn" onClick={save}>{edit?'Save changes':'Save '+kind}</button></div></>}
 
-const num=n=>+(String(n).match(/\d+/)||[999])[0]
 const unmarked=(tree,id)=>tree.map(p=>({...p,semesters:p.semesters.map(s=>({...s,courses:s.courses.map(c=>({...c,units:c.units.map(u=>({...u,topics:u.topics.map(x=>x.id===id?{...x,bookmarked:false}:x)}))}))}))}))
 const tabTo=e=>e.currentTarget.scrollIntoView?.({inline:'center',block:'nearest'})
 
@@ -235,7 +264,7 @@ function Bookmarks({toast}){
   if(!tree)return <><Bar title="Bookmarks"/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const marks=u=>u.topics.filter(x=>x.bookmarked),cnt=c=>c.units.reduce((n,u)=>n+marks(u).length,0)
   const sems=tree.flatMap(p=>p.semesters.map(sm=>({...sm,prog:p.name,courses:sm.courses.filter(c=>cnt(c)>0)}))).filter(sm=>sm.courses.length)
-    .sort((a,b)=>a.prog.localeCompare(b.prog)||num(a.name)-num(b.name)||a.id-b.id)
+    .sort((a,b)=>a.prog.localeCompare(b.prog)||(a.number??99)-(b.number??99)||a.id-b.id)
   const multi=new Set(sems.map(x=>x.prog)).size>1,total=sems.reduce((n,x)=>n+x.courses.reduce((m,c)=>m+cnt(c),0),0)
   const sm=sems.find(x=>x.id===sem)||sems[0],co=sm?.courses.find(x=>x.id===course)||sm?.courses[0],un=co?.units.find(x=>x.id===unit)
   const drop=async id=>{try{await api(`/topics/${id}/bookmark`,{method:'DELETE'});setTree(unmarked(tree,id));toast('Bookmark removed')}catch(e){toast(e.message)}}
@@ -349,7 +378,7 @@ function UserSheet({u,me,progs,close,done,toast}){
     {self&&<p className="known">You can't change your own role or status.</p>}
     <button className="btn" disabled={busy} onClick={save}>{isNew?'Add user':'Save changes'}</button></Sheet>}
 
-function Programs({toast,onAdd}){
+function Programs({toast,onOpen}){
   const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[order,setOrder]=useState('name')
   const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
   const url=offset=>`/admin/programs?q=${encodeURIComponent(q)}&order=${order}&limit=50&offset=${offset}`
@@ -359,7 +388,7 @@ function Programs({toast,onAdd}){
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
   const r=bulk?.res,made=r&&Object.entries(r.created).filter(([,v])=>v).map(([k,v])=>v+' '+k).join(', ')||'nothing new'
-  if(view)return <ProgramDetail id={view} onAdd={onAdd} toast={toast} back={()=>{setView(null);load()}}/>
+  if(view)return <ProgramDetail id={view} onOpen={onOpen} toast={toast} back={()=>{setView(null);load()}}/>
   return <><Bar title="Programs" sub={total+(q?' matches':' programs')}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label="Search programs" placeholder="Search program, semester or course" value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters"><select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="name">Sort: name</option><option value="students">Sort: most students</option><option value="newest">Sort: newest first</option></select></div>
@@ -383,8 +412,8 @@ function Programs({toast,onAdd}){
         <button className="btn ghost" onClick={()=>setBulk(null)}>Close</button></>}
     </Sheet>}</>}
 
-function ProgramDetail({id,back,onAdd,toast}){
-  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false),[ow,setOw]=useState(null)
+function ProgramDetail({id,back,onOpen,toast}){
+  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false),[addSem,setAddSem]=useState(false)
   const load=()=>api('/admin/programs/'+id).then(setP).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[id])
   if(!p)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
@@ -393,15 +422,15 @@ function ProgramDetail({id,back,onAdd,toast}){
   return <><Bar title={p.name} sub={p.semesters+' semesters'} back={back}/><div className="main">
     <div className="stats">{[['semesters','Semesters'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
     <h3 style={{margin:'24px 0 4px'}}>Semesters</h3>
-    {p.semester_list.length?p.semester_list.map(x=><div key={x.id}>{row(x.name,x.courses+' courses, '+x.topics+' topics')}
-      {x.course_list.map(c=><div className="row" key={c.id} style={{paddingLeft:16}}><div>{c.name}<small>{ownerLine(c)}</small></div><button className="ic sm" aria-label={'Change owner of '+c.name} onClick={()=>setOw(c)}><Pencil size={16}/></button></div>)}</div>):<p className="known">No semesters yet.</p>}
+    {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}</b><span>{(x.number?'':'No semester number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button></div>):<p className="known">No semesters yet.</p>}
+    <button className="btn ghost" onClick={()=>setAddSem(true)}>Add semester</button>
     <h3 style={{margin:'28px 0 4px'}}>Students</h3>
     {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?'Semester '+u.semester:'Semester not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
     {p.students>p.student_list.length&&<p className="known">Showing {p.student_list.length} of {p.students}. Use Users to see everyone.</p>}
     <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Rename</button><button className="btn danger" onClick={()=>setAsk(true)}>Delete</button></div>
-    <button className="btn ghost" onClick={onAdd}>Add content</button></div>
+    <button className="btn ghost" onClick={()=>onOpen([p.id])}>Open semesters and courses</button></div>
     {ed&&<ProgramSheet p={p} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
-    {ow&&<OwnerSheet c={ow} toast={toast} close={()=>setOw(null)} done={()=>{setOw(null);load()}}/>}
+    {addSem&&<SemesterSheet sem={{}} pid={p.id} toast={toast} close={()=>setAddSem(false)} done={()=>{setAddSem(false);load()}}/>}
     {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {p.semesters} semesters, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
       <button className="btn danger" disabled={busy} onClick={del}>Delete program</button><button className="btn ghost" onClick={()=>setAsk(false)}>Keep it</button></Sheet>}</>}
 
