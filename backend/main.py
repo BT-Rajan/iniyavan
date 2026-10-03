@@ -846,6 +846,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
              "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None, "units": [
             {"id": n.id, "name": n.name, "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
              "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False,
+                         "last_read": mine_p[t.id].last_read.isoformat() + "Z" if t.id in mine_p and mine_p[t.id].last_read else None,
                          **learning_state(t.learning_due_at, mine_p.get(t.id), now)} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]; d["owner_id"] = c.faculty_owner_id; d["owner_problem"] = owner_problem(owners.get(c.faculty_owner_id))
         return d

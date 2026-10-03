@@ -81,3 +81,14 @@ def test_migrations_add_the_new_columns(env):
     from sqlalchemy import inspect
     cols = lambda t: {c["name"] for c in inspect(main.engine).get_columns(t)}
     assert "topic_id" in cols("quiz_questions") and "detail" in cols("quiz_attempts") and "0014_attempts_detail" in main.applied_migrations()
+
+def test_tree_gives_a_student_the_time_each_topic_was_last_read(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,w\n,,,,Fuel,f\n")
+    prog = env.c.get("/api/tree", headers=env.admin).json()[0]["id"]
+    env.add_user("lr@x.com", program=prog, semester=1); h = env.login("lr@x.com")
+    tr = lambda: env.c.get("/api/tree", headers=h).json()
+    topics = lambda: tr()[0]["semesters"][0]["courses"][0]["units"][0]["topics"]
+    assert [t["last_read"] for t in topics()] == [None, None]
+    tid = topics()[0]["id"]; env.c.post(f"/api/topics/{tid}/read", headers=h)
+    got = {t["id"]: t["last_read"] for t in topics()}
+    assert got[tid] and got[tid].endswith("Z") and list(got.values()).count(None) == 1
