@@ -611,6 +611,42 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
     s.commit()  # owners are never reassigned automatically; the admin is told which courses now need one
     stranded = s.query(Course).filter_by(faculty_owner_id=u.id).count() if owner_problem(u) else 0
     return {"ok": True, "courses_needing_owner": stranded}
+class BulkIn(BaseModel):
+    ids: list[int]; action: str; program_id: int | None = None; semester: int | None = None
+BULK_ACTIONS = ("disable", "enable", "set_placement", "reset_passwords")
+@app.post("/api/admin/users/bulk")
+def bulk_users(b: BulkIn, a: User = Depends(admin), s: Session = Depends(db)):
+    """One action on many accounts. Accounts that can't take it (yourself, non-students for a placement) are skipped and named; the rest go through."""
+    if b.action not in BULK_ACTIONS: raise HTTPException(400, "Unknown action")
+    ids = list(dict.fromkeys(b.ids))
+    if not ids: raise HTTPException(400, "Select at least one user")
+    if len(ids) > (200 if b.action == "reset_passwords" else 500): raise HTTPException(400, "Too many users at once. Select fewer.")
+    prog = sem = None
+    if b.action == "set_placement":
+        if b.program_id is None: raise HTTPException(400, "Choose a program")
+        prog = check_program(b.program_id, s); sem = to_sem(b.semester)
+    users = {u.id: u for u in s.query(User).filter(User.id.in_(ids))}
+    changed, skipped, creds = 0, [], []
+    for i in ids:
+        u = users.get(i)
+        if not u: skipped.append({"id": i, "name": f"#{i}", "reason": "No such user"}); continue
+        why = None
+        if u.id == a.id and b.action in ("disable", "reset_passwords"): why = "That is your own account"
+        elif b.action == "set_placement" and u.role != "student": why = "Only students have a program and semester"
+        elif b.action == "disable" and not u.active: why = "Already disabled"
+        elif b.action == "enable" and u.active: why = "Already enabled"
+        if why: skipped.append({"id": u.id, "name": u.name, "reason": why}); continue
+        if b.action == "disable": u.active = False
+        elif b.action == "enable": u.active = True
+        elif b.action == "set_placement": u.program_id, u.semester = prog, sem
+        else:
+            pw = gen_pw(); u.pw = hp(pw, TEMP_ITER); u.must_change = True; creds.append({"name": u.name, "email": u.email, "password": pw})
+        changed += 1
+    s.commit()
+    stranded = sum(s.query(Course).filter_by(faculty_owner_id=u.id).count() for u in users.values() if b.action == "disable" and not u.active and u.role == "faculty")
+    out = {"action": b.action, "changed": changed, "skipped": skipped[:50], "skipped_count": len(skipped), "courses_needing_owner": stranded}
+    if creds: out["credentials"] = creds  # shown once; only hashes are stored
+    return out
 class UserImportIn(BaseModel): csv: str; dry_run: bool = True
 UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role", "programme": "program", "sem": "semester"}
 @app.post("/api/admin/users/import")

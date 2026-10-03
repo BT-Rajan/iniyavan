@@ -426,9 +426,27 @@ Ravi S,ravi@example.com,Welcome#2026,student,B.E. Mechanical Engineering,1
 `
 const SEMS=[1,2,3,4,5,6,7,8]
 
+const BULK_TEXT={disable:['Disable these accounts?','They can no longer sign in. Their progress and quiz results are kept, and you can enable them again.','Disable'],
+  enable:['Enable these accounts?','They can sign in again.','Enable'],reset_passwords:['Reset these passwords?','Each person gets a new one-time password and must choose their own at next sign-in. Anyone signed in is signed out. You download the list once; it is not shown again.','Reset passwords']}
+function BulkSheet({act,ids,progs,toast,close,done}){
+  const [p,setP]=useState(''),[s,setS]=useState(''),[busy,setBusy]=useState(false)
+  if(act.kind==='result'){const r=act.r,cell=v=>'"'+String(v).replace(/"/g,'""')+'"'
+    return <Sheet close={close}><h3>{pl(r.changed,'account')} updated</h3>
+      {r.courses_needing_owner>0&&<p className="known">{pl(r.courses_needing_owner,'course')} now {r.courses_needing_owner===1?'has':'have'} no active owner. Assign new owners under Programs.</p>}
+      {r.skipped_count>0&&<div className="qbox"><b>{r.skipped_count} skipped</b>{r.skipped.slice(0,10).map(x=><p className="known" style={{margin:'4px 0'}} key={x.id}>{x.name}: {x.reason}</p>)}{r.skipped_count>10&&<p className="known">…and {r.skipped_count-10} more.</p>}</div>}
+      {r.credentials&&<button className="btn" onClick={()=>download('new-passwords.csv','name,email,password\n'+r.credentials.map(c=>[c.name,c.email,c.password].map(cell).join(',')).join('\n')+'\n')}>Download the new passwords</button>}
+      <button className="btn ghost" onClick={close}>Close</button></Sheet>}
+  const run=async()=>{setBusy(true);try{done(await api('/admin/users/bulk',{method:'POST',body:{ids,action:act.kind,...(act.kind==='set_placement'?{program_id:+p,semester:s?+s:null}:{})}}))}catch(e){toast(e.message);setBusy(false)}}
+  if(act.kind==='set_placement')return <Sheet close={close}><h3>Move {pl(ids.length,'user')}</h3><p className="known">Sets the program and semester of the selected students. Faculty and admins in the selection are skipped.</p>
+    <label htmlFor="bp">Program</label><select id="bp" value={p} onChange={e=>setP(e.target.value)}><option value="">Choose a program</option>{progs.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
+    <label htmlFor="bs">Semester</label><select id="bs" value={s} onChange={e=>setS(e.target.value)}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>Semester {n}</option>)}</select>
+    <button className="btn" disabled={busy||!p} onClick={run}>{busy?'Working…':'Move'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>
+  const [t,d,l]=BULK_TEXT[act.kind]
+  return <Sheet close={close}><h3>{t.replace('these',ids.length===1?'this':'these')}</h3><p className="known">{pl(ids.length,'account')} selected. {d}</p>
+    <button className={'btn'+(act.kind==='disable'?' danger':'')} disabled={busy} onClick={run}>{busy?'Working…':l}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 function Users({toast,me}){
   const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[prog,setProg]=useState(''),[sem,setSem]=useState(''),[order,setOrder]=useState('role'),[progs,setProgs]=useState([])
-  const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
+  const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef(),[selMode,setSelMode]=useState(false),[sel,setSel]=useState([]),[act,setAct]=useState(null)
   const url=offset=>`/admin/users?q=${encodeURIComponent(q)}&order=${order}&limit=50&offset=${offset}`+(prog?'&program_id='+prog:'')+(sem?'&semester='+sem:'')
   const load=()=>api(url(0)).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
   useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q,prog,sem,order])
@@ -445,14 +463,19 @@ function Users({toast,me}){
       <select aria-label="Filter by semester" value={sem} onChange={e=>setSem(e.target.value)}><option value="">All semesters</option>{SEMS.map(n=><option key={n} value={n}>Semester {n}</option>)}</select>
       <select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="role">Sort: role, then name</option><option value="name">Sort: name</option><option value="program">Sort: program</option><option value="semester">Sort: semester</option><option value="newest">Sort: newest first</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>New user</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
+    <button className="btn ghost" style={{marginTop:10}} aria-pressed={selMode} onClick={()=>{setSelMode(!selMode);setSel([])}}>{selMode?'Done selecting':'Select several users'}</button>
+    {selMode&&items.length>0&&<div className="selbar"><button className="tool" onClick={()=>setSel(items.map(u=>u.id))}>Select all {items.length} shown</button>{sel.length>0&&<button className="tool" onClick={()=>setSel([])}>Clear</button>}</div>}
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead" aria-hidden="true"><span>Name</span><span>Program</span><span>Sem</span></div>}
-    {items.map(u=><button key={u.id} className="utr" onClick={()=>setView(u.id)} aria-label={'Open '+u.name}>
-      <span className="nm"><span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?'Admin':'Faculty'}</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
+    {items.map(u=><button key={u.id} className={'utr'+(selMode?' sel':'')+(sel.includes(u.id)?' on':'')} onClick={()=>selMode?setSel(sel.includes(u.id)?sel.filter(i=>i!==u.id):[...sel,u.id]):setView(u.id)} aria-label={(selMode?(sel.includes(u.id)?'Deselect ':'Select '):'Open ')+u.name} aria-pressed={selMode?sel.includes(u.id):undefined}>
+      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?'Admin':'Faculty'}</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
       <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
     {!items.length&&<p className="known">{filtered?'No one matches that search.':'No users yet.'}</p>}
     {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
     <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
+    {selMode&&sel.length>0&&<div className="actbar" role="toolbar" aria-label="Actions for selected users"><b>{sel.length} selected</b>
+      <button className="tool" onClick={()=>setAct({kind:'set_placement'})}>Move…</button><button className="tool" onClick={()=>setAct({kind:'disable'})}>Disable</button><button className="tool" onClick={()=>setAct({kind:'enable'})}>Enable</button><button className="tool" onClick={()=>setAct({kind:'reset_passwords'})}>Reset passwords</button></div>}
+    {act&&<BulkSheet act={act} ids={sel} progs={progs} toast={toast} close={()=>setAct(null)} done={r=>{setAct({kind:'result',r});setSel([]);load()}}/>}
     {ed&&<UserSheet u={ed} me={me} progs={progs} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
     {bulk&&<Sheet close={()=>setBulk(null)}>
       {bulk.stage==='pick'&&<><h3>Bulk upload users</h3><p className="known">One row per person with the columns name, email, password, role, program and semester. Leave the password blank to generate one. Role is student or admin and defaults to student. Program must match a name on the Programs tab, and semester is a number from 1 to 8. Emails that already exist are updated, and blank program or semester cells leave the current value alone.</p>
