@@ -133,3 +133,4 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .seg+small,.dfoot small{display:block;color:var(--mut);font-size:12px;padding:0 8px}
 .lpreview{display:flex;align-items:center;gap:14px;padding:14px;border-radius:12px;background:var(--s1);border:1px solid var(--line);margin:10px 0}
 :focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.sheet .btn.ghost{background:var(--s1);border:1px solid var(--line)}

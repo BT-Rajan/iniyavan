@@ -820,6 +820,50 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
     return {"course": c.name, "students": rows}
 
 # ---- content: admin writes, everyone reads ----
+@app.get("/api/overview")
+def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs attention today: admins see the whole college, faculty only their own courses
+    mine = my_courses(u, s); cids = [c.id for c in mine]; now = dt.datetime.utcnow(); week = now - dt.timedelta(days=7)
+    units = s.query(Unit.id).filter(Unit.course_id.in_(cids or [0]))
+    topics = s.query(Topic).filter(Topic.unit_id.in_(units))
+    drafts = topics.filter(Topic.published == False).count()  # noqa: E712
+    out = {"role": u.role, "courses": len(cids), "topics": topics.count(), "drafts": drafts, "attention": []}
+    add = lambda kind, n, text: n and out["attention"].append({"kind": kind, "count": n, "text": text})
+    add("drafts", drafts, f"{drafts} draft topic{'s' if drafts != 1 else ''} not yet visible to students")
+    empty = [c for c in mine if not s.query(Unit.id).filter_by(course_id=c.id).first()]
+    add("empty_courses", len(empty), f"{len(empty)} course{'s have' if len(empty) != 1 else ' has'} no units yet: " + ", ".join(c.name for c in empty[:5]))
+    if u.role == "admin":
+        stu = s.query(User).filter_by(role="student", active=True)
+        out["people"] = {"students": stu.count(), "faculty": s.query(User).filter_by(role="faculty", active=True).count(),
+                         "active_week": s.query(func.count(func.distinct(Progress.user_id))).join(User, User.id == Progress.user_id).filter(User.role == "student", Progress.last_read >= week).scalar()}
+        out["programs"] = s.query(Program).count()
+        noown = [c for c in mine if c.faculty_owner_id is None]
+        add("unowned", len(noown), f"{len(noown)} course{'s have' if len(noown) != 1 else ' has'} no owner, so only admins can edit: " + ", ".join(c.name for c in noown[:5]))
+        unplaced = stu.filter(or_(User.program_id.is_(None), User.semester.is_(None))).count()
+        add("unenrolled", unplaced, f"{unplaced} active student{'s are' if unplaced != 1 else ' is'} not placed in a program and semester, so they see nothing")
+        nonum = s.query(Semester).filter(Semester.semester_no.is_(None)).count()
+        add("semester_numbers", nonum, f"{nonum} semester{'s have' if nonum != 1 else ' has'} no semester number (set it under Programs)")
+        quiet = stu.filter(User.id.notin_(s.query(Progress.user_id))).count()
+        add("never_opened", quiet, f"{quiet} active student{'s have' if quiet != 1 else ' has'} never opened a topic")
+    return out
+class RolloverIn(BaseModel): dry_run: bool = True; finishing: str = "keep"  # keep: leave the last semester's students where they are; deactivate: switch their accounts off
+@app.post("/api/admin/programs/{pid}/rollover")
+def rollover(pid: int, b: RolloverIn, _: User = Depends(admin), s: Session = Depends(db)):
+    """Start of a new term: every active student in the program moves up one semester. Students already in the program's last semester are
+    kept or deactivated. Run it once per term; the preview (dry_run) changes nothing."""
+    p = s.get(Program, pid)
+    if not p: raise HTTPException(404, "Program not found")
+    if b.finishing not in ("keep", "deactivate"): raise HTTPException(400, "finishing must be keep or deactivate")
+    top = min(8, max([x.semester_no for x in s.query(Semester).filter_by(program_id=pid) if x.semester_no] or [8]))
+    stu = s.query(User).filter_by(role="student", active=True, program_id=pid).order_by(User.name).all()
+    moving = [x for x in stu if x.semester and x.semester < top]; finishing = [x for x in stu if x.semester and x.semester >= top]; unplaced = [x for x in stu if not x.semester]
+    if not b.dry_run:
+        for x in moving: x.semester += 1
+        if b.finishing == "deactivate":
+            for x in finishing: x.active = False
+        s.commit()
+    names = lambda L: [x.name for x in L[:20]]
+    return {"program": p.name, "dry_run": b.dry_run, "last_semester": top, "moved": len(moving), "finishing": len(finishing), "finishing_action": b.finishing, "unplaced": len(unplaced),
+            "finishing_names": names(finishing), "unplaced_names": names(unplaced)}
 class ProgramIn(BaseModel): name: str
 class SemesterIn(BaseModel): name: str; program_id: int; semester_no: int | None = None  # on edit, leave out to keep the number
 class NewSemesterIn(BaseModel): name: str; semester_no: int

@@ -29,6 +29,7 @@ const Mark=({s})=>s==='completed'?<Check className="done" aria-label="Completed"
 const ownerLine=c=>c.mine?'Your course':c.owner_problem||(c.owner?'Owner: '+c.owner:'Owner not assigned')
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
+const pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`
 const Ctx=createContext({})
 const THEMES=[['system',Monitor,'Auto'],['light',Sun,'Light'],['dark',Moon,'Dark']]
 const readTheme=()=>{try{return localStorage.theme||'system'}catch{return 'system'}}
@@ -48,10 +49,11 @@ export default function App(){
   if(resetTok)return <ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/>
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
-  const student=user.role==='student',page=pageSel||(student?'home':'learn'),admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
-  const links=[...(student?[['home',Home,'Home'],['learn',GraduationCap,'My courses']]:[['learn',Home,'Learn']]),...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
+  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn}/>}
+    {page==='home'&&!student&&<StaffHome user={user} toast={toast} go={go}/>}
     {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast} role={user.role}/>}
@@ -198,6 +200,22 @@ function AreaList({areas,onStudy,staff}){
     return <div className={'qbox area '+k} key={k}><b>{title} ({L.length})</b>{hint&&!staff&&<p className="known" style={{margin:'4px 0 8px'}}>{hint}</p>}
       {L.map(a=><div className="arow" key={a.topic_id||'u'+a.unit_id}><div><span>{a.title}</span><small>{a.correct} of {a.total} right · {a.percent}%{a.study&&!staff?' · '+STUDY[a.study]:''}{a.course?' · '+a.course:''}</small><Bar2 v={a.percent}/></div>
         {a.topic_id&&onStudy&&<button className="tool" onClick={()=>onStudy(a.topic_id)}>{k==='strong'?'Review':'Study again'}</button>}</div>)}</div>})}</>}
+const ATTN_GO={drafts:'learn',empty_courses:'learn',unowned:'programs',unenrolled:'users',semester_numbers:'programs',never_opened:'users'}
+function StaffHome({user,toast,go}){
+  const [o,setO]=useState(null),[open,setOpen]=useState(null)
+  useEffect(()=>{api('/overview').then(setO).catch(e=>toast(e.message))},[toast])
+  if(open)return <StudentReport c={open} back={()=>setOpen(null)} toast={toast}/>
+  const admin=user.role==='admin',hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
+  const stats=o?(admin?[[o.people.students,'Active students'],[o.people.active_week,'Studied this week'],[o.people.faculty,'Faculty'],[o.courses,'Courses']]:[[o.courses,'Your courses'],[o.topics,'Topics'],[o.drafts,'Drafts']]):[]
+  return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={admin?'Across the whole college':'Your courses'}/><div className="main">
+    {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
+    {o&&<div className="stats">{stats.map(([n,l])=><div className="stat" key={l}><b>{(n??0).toLocaleString()}</b>{l}</div>)}</div>}
+    {o&&<><h3 style={{margin:'24px 0 8px'}}>Needs attention</h3>
+      {o.attention.length?o.attention.map(x=><button key={x.kind} className="card" style={{textAlign:'left'}} onClick={()=>go(ATTN_GO[x.kind]||'learn')}><div style={{flex:1}}><b>{x.text}</b></div><ChevronRight size={18}/></button>)
+        :<p className="known">Nothing needs your attention right now.</p>}</>}
+    {o&&!o.courses&&!admin&&<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}
+    {o?.courses>0&&<><h3 style={{margin:'28px 0 4px'}}>{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setOpen}/></>}
+  </div></>}
 function Dashboard({user,toast,onOpen}){
   const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[topic,setTopic]=useState(null)
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{})},[topic,toast])
@@ -251,9 +269,29 @@ function QuizPlay({id,back,toast,role}){
     {!res&&<button className="btn" disabled={busy} onClick={submit}>{busy?'Checking…':'Submit answers'}</button>}
     {!res&&left>0&&<p className="known">{left} unanswered. Blank answers count as wrong.</p>}</div></>}
 
+const parseCsv=text=>{const rows=[];let row=[],cell='',q=false;const t=text.replace(/^\ufeff/,'')
+  for(let i=0;i<t.length;i++){const ch=t[i]
+    if(q){if(ch==='"'&&t[i+1]==='"'){cell+='"';i++}else if(ch==='"')q=false;else cell+=ch}
+    else if(ch==='"')q=true;else if(ch===','||ch===';'||ch==='\t'){row.push(cell);cell=''}
+    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;row.push(cell);cell='';if(row.some(x=>x.trim()))rows.push(row);row=[]}
+    else cell+=ch}
+  row.push(cell);if(row.some(x=>x.trim()))rows.push(row);return rows}
+const QUIZ_TEMPLATE='question,a,b,c,d,correct,explanation,topic\n"Which ion makes water hard?",Na+,Ca2+,Cl-,K+,B,"Calcium and magnesium salts cause hardness.",1. Water Treatment\n'
+// rows of a questions CSV -> {questions, errors}; "correct" is a letter (A-F) or a 1-based number; "topic" is matched against this unit's topic titles
+const quizFromCsv=(text,topics)=>{const rows=parseCsv(text),head=(rows.shift()||[]).map(h=>h.trim().toLowerCase().replace(/[^a-z0-9]+/g,'_')),col=n=>head.indexOf(n),errors=[],questions=[]
+  const al=head.map((h,i)=>/^(option_|answer_)?[a-f]$/.test(h)?i:-1).filter(i=>i>=0)
+  if(col('question')<0||al.length<2)return {questions,errors:['The first row must name the columns: question, a, b, c, d, correct (and optionally explanation, topic).']}
+  rows.forEach((r,n)=>{const line=n+2,text=(r[col('question')]||'').trim(),opts=al.map(i=>(r[i]||'').trim()).filter(Boolean),raw=(r[col('correct')]||'').trim().toUpperCase()
+    const k=/^[A-F]$/.test(raw)?raw.charCodeAt(0)-65:/^[1-6]$/.test(raw)?+raw-1:-1
+    if(!text)return errors.push(`Row ${line}: no question text`);if(opts.length<2)return errors.push(`Row ${line}: needs at least two answers`)
+    if(k<0||k>=opts.length)return errors.push(`Row ${line}: "correct" must be a letter such as B that points at one of the answers`)
+    const tn=(r[col('topic')]||'').trim().toLowerCase(),tp=tn&&topics.find(t=>t.title.trim().toLowerCase()===tn)
+    if(tn&&!tp)errors.push(`Row ${line}: no topic called "${r[col('topic')].trim()}" in this unit, so it is not tied to a topic`)
+    questions.push({text,options:opts,correct:k,explanation:(r[col('explanation')]||'').trim(),topic_id:tp?tp.id:null})})
+  return {questions,errors}}
 function QuizEditor({id,unit_id,unitTopics,done,toast}){
   const blank=()=>({text:'',options:['',''],correct:0,explanation:'',topic_id:null})
-  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[])
+  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),[csvMsg,setCsvMsg]=useState([])
   useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published});setTopics(d.topics||[]);setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id??null})):[blank()])}).catch(e=>{toast(e.message);done()})},[id])
   const upd=(i,p)=>setQs(qs.map((x,n)=>n===i?{...x,...p}:x))
   const setOpt=(i,k,v)=>upd(i,{options:qs[i].options.map((o,n)=>n===k?v:o)})
@@ -261,6 +299,8 @@ function QuizEditor({id,unit_id,unitTopics,done,toast}){
   const save=async()=>{setBusy(true);try{const qid=id||(await api('/quizzes',{method:'POST',body:{unit_id,...m,pass_percent:+m.pass_percent}})).id
     if(id)await api('/quizzes/'+id,{method:'PUT',body:{unit_id,...m,pass_percent:+m.pass_percent}})
     await api(`/quizzes/${qid}/questions`,{method:'PUT',body:{questions:qs.filter(x=>x.text.trim())}});toast('Quiz saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  const importCsv=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const {questions,errors}=quizFromCsv(await f.text(),topics);setCsvMsg(errors)
+    if(questions.length){setQs(cur=>[...cur.filter(x=>x.text.trim()),...questions]);toast(`${questions.length} questions added. Review them, then save.`)}else toast('No questions were added')}
   const del=async()=>{if(!confirm('Delete this quiz and every student attempt?'))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Quiz deleted');done()}catch(e){toast(e.message)}}
   return <><Bar title={id?'Edit quiz':'New quiz'} back={done}/><div className="main">
     <label>Title</label><input value={m.title} onChange={e=>setM({...m,title:e.target.value})} placeholder="e.g. Water treatment check"/>
@@ -275,11 +315,14 @@ function QuizEditor({id,unit_id,unitTopics,done,toast}){
       {qs.length>1&&<button className="tool" onClick={()=>setQs(qs.filter((_,n)=>n!==i))}>Remove question</button>}</div>)}
     <p className="known">Tick the radio button beside the correct answer. Tie each question to the topic it tests: students then see which topics they know well and which need another round of study.</p>
     <button className="btn ghost" onClick={()=>setQs([...qs,blank()])}>Add question</button>
+    <input ref={csvRef} type="file" accept=".csv,text/csv" hidden onChange={importCsv}/>
+    <div className="two"><button className="btn ghost" onClick={()=>csvRef.current.click()}><Upload size={16}/> Import from CSV</button><button className="btn ghost" onClick={()=>download('quiz-template.csv',QUIZ_TEMPLATE)}>CSV template</button></div>
+    {csvMsg.length>0&&<div className="qbox" role="alert"><b>{csvMsg.length} {csvMsg.length===1?'row needs':'rows need'} a look</b>{csvMsg.slice(0,8).map((m,i)=><p className="known" style={{margin:'4px 0'}} key={i}>{m}</p>)}{csvMsg.length>8&&<p className="known">…and {csvMsg.length-8} more.</p>}</div>}
     <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
     {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
 
 function Topic({id:first,back,toast,role}){
-  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
+  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false)
   const opened=useRef(false),jump=nid=>{opened.current=false;setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>toast(e.message))},[id,v])  // opening starts it, after the page has loaded
@@ -293,11 +336,13 @@ function Topic({id:first,back,toast,role}){
     :aiOk===false?<p className="known">AI unavailable. Try again later.</p>
     :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?'Thinking…':k==='explain'?'Explain it to me':'Show a sample answer'}</button>{aiMsg&&<p className="known">{aiMsg}</p>}</>
   return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={<button className={'ic'+(bm?' on':'')} aria-label={bm?'Remove bookmark':'Bookmark this topic'} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
-    {t.can_edit&&<div className="two" style={{marginBottom:12}}><button className="btn ghost" style={{marginTop:0}} onClick={()=>setEditing(true)}><Pencil size={16}/> Edit topic</button>
+    {t.can_edit&&pv&&<div className="qbox" style={{marginTop:0}}><b>Previewing as a student</b><p className="known" style={{margin:'4px 0 8px'}}>This is what students see: no editing buttons, and drafts show as unavailable to them.</p><button className="btn ghost" style={{marginTop:0}} onClick={()=>setPv(false)}>Back to editing</button></div>}
+    {t.can_edit&&!pv&&<div className="two" style={{marginBottom:12}}><button className="btn ghost" style={{marginTop:0}} onClick={()=>setEditing(true)}><Pencil size={16}/> Edit topic</button>
       <button className="btn ghost" style={{marginTop:0}} onClick={async()=>{try{await api(`/topics/${id}/publish`,{method:'PUT',body:{published:!t.published}});toast(t.published?'Moved to drafts':'Published');setV(v+1)}catch(e){toast(e.message)}}}>{t.published?<><EyeOff size={16}/> Unpublish</>:<><Eye size={16}/> Publish</>}</button></div>}
     <div className="qbox" style={{marginTop:0}}><div className="row"><div>{t.learning_due_at?when(t.learning_due_at):'No deadline'}<small>Learn by</small></div>{t.overdue&&role==='student'&&<span className="pill off">Overdue</span>}</div>
       {role==='student'&&<><div className="row"><div>{STATUS[t.status]}{t.status==='completed'&&t.completed_at&&' on '+when(t.completed_at)+(t.late?', after the deadline':'')}<small>Your status</small></div></div>
         {t.status==='completed'?<button className="btn ghost" onClick={()=>setDone(false)}>Mark as not completed</button>:<button className="btn" onClick={()=>setDone(true)}><Check size={16}/> Mark as completed</button>}</>}</div>
+    {t.can_edit&&!pv&&<button className="tool" onClick={()=>setPv(true)}><Eye size={14}/> Preview as student</button>}
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
     <div className="tabs">{[['notes','Notes'],['explain','Explain'],['answer','Sample answer']].map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
@@ -498,14 +543,26 @@ function Programs({toast,onOpen}){
         <button className="btn ghost" onClick={()=>setBulk(null)}>Close</button></>}
     </Sheet>}</>}
 
+function RolloverSheet({p,close,done,toast}){
+  const [fin,setFin]=useState('keep'),[r,setR]=useState(null),[busy,setBusy]=useState(false)
+  const url=`/admin/programs/${p.id}/rollover`
+  useEffect(()=>{setR(null);api(url,{method:'POST',body:{dry_run:true,finishing:fin}}).then(setR).catch(e=>{toast(e.message);close()})},[fin]) 
+  const go=async()=>{setBusy(true);try{const x=await api(url,{method:'POST',body:{dry_run:false,finishing:fin}});toast(`${x.moved} students moved up`+(fin==='deactivate'&&x.finishing?`, ${x.finishing} accounts switched off`:''));done()}catch(e){toast(e.message);setBusy(false)}}
+  return <Sheet close={close}><h3>Start a new term</h3><p className="known">Moves every active student of {p.name} up one semester. Do this once, when the new term begins.</p>
+    {!r?<div className="sk"/>:<div className="qbox" style={{marginTop:0}}>
+      <div className="row"><div>{pl(r.moved,'student')}<small>{r.moved===1?'moves':'move'} up one semester</small></div></div>
+      <div className="row"><div>{pl(r.finishing,'student')}<small>{r.finishing===1?'is':'are'} in the last semester (Semester {r.last_semester}){r.finishing_names.length?': '+r.finishing_names.join(', ')+(r.finishing>r.finishing_names.length?'…':''):''}</small></div></div>
+      {r.unplaced>0&&<div className="row"><div>{pl(r.unplaced,'student')}<small>{r.unplaced===1?'has':'have'} no semester set and are left alone: {r.unplaced_names.join(', ')}</small></div></div>}</div>}
+    <label htmlFor="fin">Students finishing the program</label><select id="fin" value={fin} onChange={e=>setFin(e.target.value)}><option value="keep">Leave them as they are</option><option value="deactivate">Switch their accounts off</option></select>
+    <button className="btn" disabled={busy||!r||(!r.moved&&!(fin==='deactivate'&&r.finishing))} onClick={go}>{busy?'Working…':'Apply'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 function ProgramDetail({id,back,onOpen,toast}){
-  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false),[addSem,setAddSem]=useState(false)
+  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false),[addSem,setAddSem]=useState(false),[term,setTerm]=useState(false)
   const load=()=>api('/admin/programs/'+id).then(setP).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[id])
   if(!p)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const del=async()=>{setBusy(true);try{await api('/programs/'+p.id,{method:'DELETE'});toast('Program deleted');back()}catch(e){toast(e.message);setBusy(false)}}
   const row=(v,l,k)=><div className="row" key={k}><div>{v}<small>{l}</small></div></div>
-  return <><Bar title={p.name} sub={p.semesters+' semesters'} back={back}/><div className="main">
+  return <><Bar title={p.name} sub={pl(p.semesters,'semester')} back={back}/><div className="main">
     <div className="stats">{[['semesters','Semesters'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
     <h3 style={{margin:'24px 0 4px'}}>Semesters</h3>
     {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}</b><span>{(x.number?'':'No semester number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button></div>):<p className="known">No semesters yet.</p>}
@@ -513,8 +570,10 @@ function ProgramDetail({id,back,onOpen,toast}){
     <h3 style={{margin:'28px 0 4px'}}>Students</h3>
     {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?'Semester '+u.semester:'Semester not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
     {p.students>p.student_list.length&&<p className="known">Showing {p.student_list.length} of {p.students}. Use Users to see everyone.</p>}
+    {p.students>0&&<button className="btn ghost" onClick={()=>setTerm(true)}>Start a new term (move students up)</button>}
     <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Rename</button><button className="btn danger" onClick={()=>setAsk(true)}>Delete</button></div>
     <button className="btn ghost" onClick={()=>onOpen([p.id])}>Open semesters and courses</button></div>
+    {term&&<RolloverSheet p={p} toast={toast} close={()=>setTerm(false)} done={()=>{setTerm(false);load()}}/>}
     {ed&&<ProgramSheet p={p} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
     {addSem&&<SemesterSheet sem={{}} pid={p.id} toast={toast} close={()=>setAddSem(false)} done={()=>{setAddSem(false);load()}}/>}
     {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {p.semesters} semesters, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
