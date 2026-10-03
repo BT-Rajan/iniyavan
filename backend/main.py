@@ -106,10 +106,12 @@ class Question(Base):
     __tablename__ = "quiz_questions"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); pos = Column(Integer, default=0)
     text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text)  # options is a JSON list
+    topic_id = Column(Integer, nullable=True)  # the topic this question tests, chosen by the author; must be a topic of the quiz's unit
 class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
     score = Column(Integer); total = Column(Integer); percent = Column(Integer); at = Column(DateTime, default=dt.datetime.utcnow)
+    detail = Column(Text, nullable=True)  # JSON [[question_id, 1 or 0], ...] so strengths and weak areas can be worked out; null on attempts made before this existed
 class Progress(Base):  # one row per student and topic, made when they first open it. No row = not started; completed_at null = in progress
     __tablename__ = "progress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id")); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
@@ -354,7 +356,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
               ("0007_repair_parent_copies", repair_parent_copies), ("0008_subjects_faculty_owner_id", add_faculty_owner),
               ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers),
-              ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns)]
+              ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns),
+              ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL"))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -789,12 +792,16 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
     links = defaultdict(list)
     for l in s.query(CourseLink).filter_by(course_id=cid): links[cid].append(l.semester_id)
     aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
-    rows = [{"name": x.name, "email": x.email, "program": pn.get(x.program_id, ""), "semester": x.semester, "active": bool(x.active), "topics_read": reads[x.id], "topics": len(tids),
+    batches = latest_batches(s, [x.id for x in aud], course_quiz_ids(cid, s)); ctx = area_context(batches, s); per = defaultdict(list)
+    for b in batches: per[b[0]].append(b)
+    mine = {uid: tally(bs, ctx, True) for uid, bs in per.items()}
+    names = lambda uid, st: [a["title"] for a in sorted(mine.get(uid, {}).values(), key=lambda a: (a["percent"], a["title"])) if a["status"] == st]
+    rows = [{"strong": names(x.id, "strong"), "needs_study": names(x.id, "needs_study"), "name": x.name, "email": x.email, "program": pn.get(x.program_id, ""), "semester": x.semester, "active": bool(x.active), "topics_read": reads[x.id], "topics": len(tids),
              "completion": round(100 * reads[x.id] / len(tids)) if tids else 0, "quizzes_taken": len(bests[x.id]), "quizzes": len(qids),
              "avg_quiz_percent": round(sum(bests[x.id].values()) / len(bests[x.id])) if bests[x.id] else None, "last_active": (last[x.id].isoformat() + "Z") if last.get(x.id) else None}
             for x in sorted(aud, key=lambda x: (x.name or "").lower())]
-    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", "Semester", "Active", "Topics read", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active"],
-                                           [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"]] for r in rows])
+    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", "Semester", "Active", "Topics read", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active", "Strong areas", "Needs another round of study"],
+                                           [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"], "; ".join(r["strong"]), "; ".join(r["needs_study"])] for r in rows])
     return {"course": c.name, "students": rows}
 
 # ---- content: admin writes, everyone reads ----
@@ -976,7 +983,7 @@ def order_topics(uid: int, b: OrderIn, u: User = Depends(staff), s: Session = De
     need_edit(u, un.course_id, s); reorder(s.query(Topic).filter_by(unit_id=uid).all(), b.ids); s.commit(); return {"ok": True}
 # ---- quizzes: staff write them, students take them and are graded on the server ----
 class QuizIn(BaseModel): unit_id: int = 0; title: str; pass_percent: int = 50; published: bool = False
-class QuestionIn(BaseModel): text: str; options: list[str]; correct: int; explanation: str = ""
+class QuestionIn(BaseModel): text: str; options: list[str]; correct: int; explanation: str = ""; topic_id: int | None = None
 class QuestionsIn(BaseModel): questions: list[QuestionIn]
 class AttemptIn(BaseModel): answers: list[int | None]
 def quiz_or_404(qid, s):
@@ -987,6 +994,81 @@ def quiz_fields(b):
     if not b.title.strip(): raise HTTPException(400, "Give the quiz a title")
     if not 1 <= b.pass_percent <= 100: raise HTTPException(400, "Pass mark must be between 1 and 100")
     return {"title": b.title.strip()[:200], "pass_percent": b.pass_percent, "published": b.published}
+# ---- strengths and weak areas: what a student has mastered, and what needs another round of study ----
+STRONG, WEAK = 80, 60  # at or above STRONG is a strength; below WEAK needs another round of study; in between is getting there
+def area_status(pct): return "strong" if pct >= STRONG else "needs_study" if pct < WEAK else "getting_there"
+def latest_batches(s, user_ids, quiz_ids):
+    """Each user's newest attempt of each quiz, so a retake replaces the earlier result. Returns [(user_id, quiz, {question_id: Question}, [[question_id, 1|0], ...])]."""
+    if not user_ids or not quiz_ids: return []
+    ids = [r[0] for r in s.query(func.max(Attempt.id)).filter(Attempt.user_id.in_(list(user_ids)), Attempt.quiz_id.in_(list(quiz_ids)), Attempt.detail.isnot(None)).group_by(Attempt.user_id, Attempt.quiz_id)]
+    atts = s.query(Attempt).filter(Attempt.id.in_(ids or [0])).all(); quizzes = {q.id: q for q in s.query(Quiz).filter(Quiz.id.in_({a.quiz_id for a in atts} or {0}))}
+    qm = defaultdict(dict)
+    for x in s.query(Question).filter(Question.quiz_id.in_(set(quizzes) or {0})): qm[x.quiz_id][x.id] = x
+    return [(a.user_id, quizzes[a.quiz_id], qm[a.quiz_id], json.loads(a.detail)) for a in atts if a.quiz_id in quizzes]
+def area_context(batches, s):
+    tids = {x.topic_id for _, _, qm, _ in batches for x in qm.values() if x.topic_id}; uids = {q.unit_id for _, q, _, _ in batches}
+    topics = {t.id: t for t in s.query(Topic).filter(Topic.id.in_(tids or {0}))}; units = {x.id: x for x in s.query(Unit).filter(Unit.id.in_(uids or {0}))}
+    courses = {c.id: c.name for c in s.query(Course).filter(Course.id.in_({x.course_id for x in units.values()} or {0}))}
+    return topics, units, courses
+def tally(batches, ctx, staff):
+    """Groups one person's answers by topic; a question with no topic (or whose topic is a draft they can't see, was deleted or moved) counts under its unit."""
+    topics, units, courses = ctx; acc = {}
+    for _, q, qm, detail in batches:
+        un = units.get(q.unit_id)
+        for qid, ok in detail:
+            x = qm.get(qid)
+            if not x: continue
+            t = topics.get(x.topic_id) if x.topic_id else None
+            if t and (t.unit_id != q.unit_id or (t.published is False and not staff)): t = None
+            key = ("t", t.id) if t else ("u", q.unit_id)
+            a = acc.setdefault(key, {"key": key, "topic_id": t.id if t else None, "unit_id": q.unit_id, "unit": un.name if un else "", "course_id": un.course_id if un else None,
+                                     "course": courses.get(un.course_id, "") if un else "", "title": t.title if t else ((un.name + " · general questions") if un else q.title), "correct": 0, "total": 0})
+            a["correct"] += ok; a["total"] += 1
+    for a in acc.values(): a["percent"] = round(100 * a["correct"] / a["total"]); a["status"] = area_status(a["percent"])
+    return acc
+def areas_for(batches, s, staff, uid=None):
+    ctx = area_context(batches, s); acc = tally(batches, ctx, staff)
+    study = {}
+    if uid and acc:
+        for r in s.query(Progress).filter(Progress.user_id == uid, Progress.topic_id.in_([a["topic_id"] for a in acc.values() if a["topic_id"]] or [0])): study[r.topic_id] = "completed" if r.completed_at else "in_progress"
+    out = [{k: v for k, v in a.items() if k != "key"} | {"study": (study.get(a["topic_id"], "not_started") if uid else None) if a["topic_id"] else None} for a in acc.values()]
+    return sorted(out, key=lambda a: (a["percent"], a["title"]))
+@app.get("/api/me/insights")
+def my_insights(u: User = Depends(me), s: Session = Depends(db)):
+    ok_course = {}
+    def allowed(cid):
+        if cid not in ok_course:
+            try: check_course_access(u, cid, s); ok_course[cid] = True
+            except HTTPException: ok_course[cid] = False
+        return ok_course[cid]
+    qs = [(q, quiz_course_id(q, s)) for q in s.query(Quiz).filter(Quiz.published == True, Quiz.id.in_(s.query(Attempt.quiz_id).filter(Attempt.user_id == u.id)))]  # noqa: E712
+    qids = [q.id for q, cid in qs if cid and allowed(cid)]
+    areas = areas_for(latest_batches(s, [u.id], qids), s, u.role != "student", u.id)
+    by = defaultdict(list)
+    for a in areas: by[a["course_id"]].append(a)
+    courses = [{"course_id": cid, "course": L[0]["course"], "percent": round(100 * sum(a["correct"] for a in L) / sum(a["total"] for a in L)), "areas": L} for cid, L in by.items()]
+    return {"quizzes_taken": len(qids), "courses": courses, "strong": sorted([a for a in areas if a["status"] == "strong"], key=lambda a: (-a["percent"], a["title"])),
+            "getting_there": [a for a in areas if a["status"] == "getting_there"], "needs_study": [a for a in areas if a["status"] == "needs_study"]}
+def course_quiz_ids(cid, s): return [q.id for q in s.query(Quiz).join(Unit, Unit.id == Quiz.unit_id).filter(Unit.course_id == cid, Quiz.published == True)]  # noqa: E712
+def course_users(c, s):
+    sems = {x.id: x for x in s.query(Semester)}; links = defaultdict(list)
+    for l in s.query(CourseLink).filter_by(course_id=c.id): links[c.id].append(l.semester_id)
+    return course_audience(c, s.query(User).filter_by(role="student").all(), sems, links)
+@app.get("/api/reports/courses/{cid}/weak-areas")
+def class_weak_areas(cid: int, u: User = Depends(staff), s: Session = Depends(db)):
+    c = s.get(Course, cid)
+    if not c: raise HTTPException(404, "Course not found")
+    need_edit(u, cid, s)
+    aud = [x for x in course_users(c, s) if x.active]; batches = latest_batches(s, [x.id for x in aud], course_quiz_ids(cid, s)); ctx = area_context(batches, s)
+    per = defaultdict(list)
+    for b in batches: per[b[0]].append(b)
+    agg = {}
+    for uid, bs in per.items():
+        for key, a in tally(bs, ctx, True).items():
+            g = agg.setdefault(key, {**{k: v for k, v in a.items() if k not in ("key", "status", "percent")}, "correct": 0, "total": 0, "students": 0, "strong": 0, "getting_there": 0, "needs_study": 0})
+            g["correct"] += a["correct"]; g["total"] += a["total"]; g["students"] += 1; g[a["status"]] += 1
+    rows = sorted(agg.values(), key=lambda g: (round(100 * g["correct"] / g["total"]), g["title"]))
+    return {"course": c.name, "students_with_results": len(per), "areas": [{**g, "percent": round(100 * g["correct"] / g["total"])} for g in rows]}
 @app.post("/api/quizzes")
 def new_quiz(b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
     un = s.get(Unit, b.unit_id)
@@ -1009,9 +1091,10 @@ def set_questions(qid: int, b: QuestionsIn, u: User = Depends(staff), s: Session
         if not x.text.strip(): raise HTTPException(400, f"Question {i} has no text")
         if not 2 <= len(opts) <= 6 or not all(opts): raise HTTPException(400, f"Question {i} needs 2 to 6 answers, none empty")
         if not 0 <= x.correct < len(opts): raise HTTPException(400, f"Question {i}: mark which answer is correct")
+        if x.topic_id is not None and not s.query(Topic.id).filter(Topic.id == x.topic_id, Topic.unit_id == q.unit_id).first(): raise HTTPException(400, f"Question {i}: pick a topic from this unit")
     s.query(Question).filter_by(quiz_id=qid).delete()
     for i, x in enumerate(b.questions):
-        s.add(Question(quiz_id=qid, pos=i, text=x.text.strip(), options=json.dumps([o.strip() for o in x.options]), correct=x.correct, explanation=x.explanation.strip()))
+        s.add(Question(quiz_id=qid, pos=i, text=x.text.strip(), options=json.dumps([o.strip() for o in x.options]), correct=x.correct, explanation=x.explanation.strip(), topic_id=x.topic_id))
     s.commit(); return {"ok": True, "count": len(b.questions)}
 @app.get("/api/quizzes/{qid}")
 def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
@@ -1022,7 +1105,8 @@ def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     mine = s.query(Attempt).filter_by(quiz_id=qid, user_id=u.id).all()
     return {"id": q.id, "title": q.title, "pass_percent": q.pass_percent, "published": bool(q.published), "unit_id": q.unit_id, "can_edit": staff_view,
-            "questions": [{"id": x.id, "text": x.text, "options": json.loads(x.options), **({"correct": x.correct, "explanation": x.explanation} if staff_view else {})} for x in qs],
+            "questions": [{"id": x.id, "text": x.text, "options": json.loads(x.options), **({"correct": x.correct, "explanation": x.explanation, "topic_id": x.topic_id} if staff_view else {})} for x in qs],
+            **({"topics": [{"id": t.id, "title": t.title} for t in s.query(Topic).filter_by(unit_id=q.unit_id).order_by(*ORDER[Topic])]} if staff_view else {}),
             "attempts": len(mine), "best": max([a.percent for a in mine], default=None)}
 @app.post("/api/quizzes/{qid}/attempt")
 def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Depends(db)):
@@ -1035,8 +1119,10 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     key = u.role == "admin" or can_edit(u, cid, s)  # only people who can edit the quiz get the answer key back
     results = [{"chosen": a, "ok": a == x.correct, **({"correct": x.correct, "explanation": x.explanation} if key else {})} for a, x in zip(b.answers, qs)]
     score = sum(r["ok"] for r in results); pct = round(100 * score / len(qs))
-    s.add(Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct)); s.commit()
-    return {"score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "results": results}
+    detail = [[x.id, int(r["ok"])] for x, r in zip(qs, results)]
+    s.add(Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct, detail=json.dumps(detail))); s.commit()
+    areas = areas_for([(u.id, q, {x.id: x for x in qs}, detail)], s, u.role != "student", u.id)
+    return {"score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "results": results, "areas": areas}
 
 def drop_topics(s, cond):  # topics with their reading progress, bookmarks and saved AI answers (SQLite would not cascade them)
     ids = [i for (i,) in s.query(Topic.id).filter(cond)]

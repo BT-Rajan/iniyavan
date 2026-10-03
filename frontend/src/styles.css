@@ -93,3 +93,6 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .tool{padding:8px 14px;border-radius:14px;background:var(--s2);font-size:14px;margin:6px 8px 6px 0}
 .bar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(135deg,var(--vio),var(--pink))}
 .st{color:var(--mut);font-size:14px;min-width:16px;text-align:center}
+
+.area{margin:14px 0}.area.needs_study{border-left:4px solid #f59e0b}.area.strong{border-left:4px solid #22c55e}.area.getting_there{border-left:4px solid #38bdf8}
+.arow{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #ffffff12}.arow:first-of-type{border-top:0}.arow>div{flex:1;min-width:0}.arow small{display:block;opacity:.75;font-size:13px}

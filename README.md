@@ -109,3 +109,10 @@ Set `SMTP_HOST`, `SMTP_FROM` and `APP_URL` in `.env` (plus `SMTP_PORT`, `SMTP_TL
 - Links always point at `APP_URL`, never at the request's Host header, so a forged header can't redirect a reset link. The token sits after `#` so it never reaches server logs, and only a hash of it is stored.
 - Limits: 3 emails an hour per account and 20 requests an hour per address.
 - Without SMTP settings the sign-in page says "Ask your admin to reset it", and the admin Reset button still works. **AI & email** (admin) shows whether email is on and can send a test email to you.
+
+## Strengths and weak areas
+Authors tie each quiz question to the topic it tests (the "Topic this tests" menu in the quiz editor; untied questions count under their unit). From each student's **latest** result in each published quiz the app works out, per topic, what share they got right: **80% or more is a strength**, **below 60% needs another round of study**, and in between is "getting there" (`STRONG` and `WEAK` in `backend/main.py`). A retake replaces the earlier result, so improving moves a topic up.
+- **After a quiz** the student sees "How you did by topic" with the weakest first and a **Study again** button that opens the topic. They still don't get the answer key.
+- **My progress** (students' drawer) lists strengths and the topics that need another round of study across all their courses, with whether they have opened or completed each topic.
+- **Staff** see, in Reports > a course, the topics the class finds hardest (with how many students need another round) and, under each student, their strong and weak topics; the students CSV gains "Strong areas" and "Needs another round of study" columns. Faculty see only their own courses.
+- A draft topic is never named to students (its questions count under the unit), and attempts made before this feature have no per-question detail, so they are ignored until the student retakes the quiz.

@@ -5,7 +5,7 @@ import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import 'katex/contrib/mhchem'
 const Md=({children})=><Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{children}</Markdown>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp} from 'lucide-react'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -37,9 +37,10 @@ export default function App(){
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} canReset={canReset}/>
   if(user.must_change)return <ChangePassword forced toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
-  const links=[['learn',Home,'Learn'],['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI & email'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['learn',Home,'Learn'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],['ai',Sparkles,'AI & email'],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
+    {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
@@ -102,7 +103,7 @@ function Learn({user,toast,appName,start}){
   const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
   useEffect(()=>{setCp(null);if(co&&mayEdit&&!co.shared)api(`/courses/${co.id}/progress`).then(setCp).catch(()=>{})},[co?.id,mayEdit,t])
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role={user.role}/>
-  if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast}/>
+  if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast} role={user.role}/>
   if(qe)return <QuizEditor {...qe} done={()=>setQe(null)} toast={toast}/>
   if(ed)return <TopicEditor role={user.role} toast={toast} edit={ed.id?ed:null} unitId={ed.unit_id} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const tsub=x=>[x.published===false&&'Draft · students cannot see it',x.learning_due_at?'Due '+when(x.learning_due_at):!staff&&'No deadline',x.overdue&&!staff&&'Overdue',
@@ -136,8 +137,8 @@ function Learn({user,toast,appName,start}){
       {mayEdit&&<>{(x.kind==='units'||x.kind==='topics')&&list.length>1&&[[-1,ArrowUp,'up'],[1,ArrowDown,'down']].map(([d,I,w])=><button key={w} className="ic sm" aria-label={`Move ${x.n} ${w}`} disabled={i+d<0||i+d>=list.length} onClick={()=>move(list,i,d,x.kind==='units'?`/courses/${co.id}/units/order`:`/units/${unit.id}/topics/order`)}><I size={16}/></button>)}{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
     {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 style={{margin:'28px 0 8px'}}>Quizzes</h3>
       {unit.quizzes.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+3)%5]}}>?</span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
-        {mayEdit&&<button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id})}><Pencil size={16}/></button>}</div>)}
-      {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id})}>Add quiz</button>}</>}
+        {mayEdit&&<button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}><Pencil size={16}/></button>}</div>)}
+      {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{(mayEdit&&co)||isAdmin?'Nothing here yet. Use the button above to add it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this semester':''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
@@ -176,16 +177,36 @@ function CourseSheet({c,pid,sid,sems,close,done,toast}){
     {!isNew&&+f.sem!==sid&&<p className="known">Moving the course takes its units, topics, quizzes and owner with it. Students of the new semester will see it.</p>}
     <button className="btn" disabled={busy||!f.name.trim()} onClick={save}>{isNew?'Add course':'Save changes'}</button></Sheet>}
 
-function QuizPlay({id,back,toast}){
-  const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false)
+const STUDY={not_started:'Not opened yet',in_progress:'Opened, not marked completed',completed:'Marked completed'}
+const AREA_GROUPS=[['needs_study','Needs another round of study','Read these topics again, then retake the quiz.'],['getting_there','Getting there',''],['strong','Strong areas','You answered these well.']]
+function AreaList({areas,onStudy,staff}){
+  return <>{AREA_GROUPS.map(([k,title,hint])=>{const L=areas.filter(a=>a.status===k);if(!L.length)return null
+    return <div className={'qbox area '+k} key={k}><b>{title} ({L.length})</b>{hint&&!staff&&<p className="known" style={{margin:'4px 0 8px'}}>{hint}</p>}
+      {L.map(a=><div className="arow" key={a.topic_id||'u'+a.unit_id}><div><span>{a.title}</span><small>{a.correct} of {a.total} right · {a.percent}%{a.study&&!staff?' · '+STUDY[a.study]:''}{a.course?' · '+a.course:''}</small><Bar2 v={a.percent}/></div>
+        {a.topic_id&&onStudy&&<button className="tool" onClick={()=>onStudy(a.topic_id)}>{k==='strong'?'Review':'Study again'}</button>}</div>)}</div>})}</>}
+function Insights({toast,role}){
+  const [d,setD]=useState(null),[topic,setTopic]=useState(null)
+  useEffect(()=>{if(!topic)api('/me/insights').then(setD).catch(e=>toast(e.message))},[topic])
+  if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
+  const n=d?d.needs_study.length:0
+  return <><Bar title="My progress" sub="Where you shine and what to revisit"/><div className="main">
+    {!d&&<p className="known">Loading…</p>}
+    {d&&!d.courses.length&&<p className="known">Take a quiz and your strengths and weak spots will show up here.</p>}
+    {d?.courses.length>0&&<div className="qbox"><b>{n?`${n} ${n===1?'area needs':'areas need'} another round of study`:'Nothing needs another round of study right now'}</b><p className="known" style={{margin:'4px 0 0'}}>{d.strong.length} strong · {d.getting_there.length} getting there · based on your latest result in {d.quizzes_taken} {d.quizzes_taken===1?'quiz':'quizzes'}</p></div>}
+    {d?.courses.map(c=><section key={c.course_id}><h3 style={{margin:'24px 0 4px'}}>{c.course} · {c.percent}% right</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>)}</div></>}
+
+function QuizPlay({id,back,toast,role}){
+  const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false),[topic,setTopic]=useState(null)
   const start=d=>{setQ(d);setAns(d.questions.map(()=>null));setRes(null)}
   useEffect(()=>{api('/quizzes/'+id).then(start).catch(e=>{toast(e.message);back()})},[id])
+  if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
   if(!q)return <><Bar title="Quiz" back={back}/><div className="main"><p className="known">Loading…</p></div></>
   const left=ans.filter(a=>a===null).length
   const submit=async()=>{setBusy(true);try{setRes(await api(`/quizzes/${id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
   return <><Bar title={q.title} sub={q.questions.length+' questions · pass mark '+q.pass_percent+'%'} back={back}/><div className="main">
     {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Go back over the topics and try again.'}</p>
       <button className="btn" onClick={()=>start(q)}>Try again</button><button className="btn ghost" onClick={back}>Back to the unit</button></div>}
+    {res&&res.areas?.length>0&&<><h3 style={{margin:'20px 0 4px'}}>How you did by topic</h3><AreaList areas={res.areas} onStudy={setTopic}/></>}
     {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1}</b><div className="prose"><Md>{x.text}</Md></div>
       {x.options.map((o,k)=>{const r=res&&res.results[i],cls=r?(k===r.correct||(r.ok&&k===r.chosen)?' ok':k===r.chosen?' bad':''):ans[i]===k?' sel':''
         return <button key={k} className={'opt'+cls} disabled={!!res} onClick={()=>setAns(ans.map((a,n)=>n===i?k:a))}><Md>{o}</Md></button>})}
@@ -193,10 +214,10 @@ function QuizPlay({id,back,toast}){
     {!res&&<button className="btn" disabled={busy} onClick={submit}>{busy?'Checking…':'Submit answers'}</button>}
     {!res&&left>0&&<p className="known">{left} unanswered. Blank answers count as wrong.</p>}</div></>}
 
-function QuizEditor({id,unit_id,done,toast}){
-  const blank=()=>({text:'',options:['',''],correct:0,explanation:''})
-  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false)
-  useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published});setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||''})):[blank()])}).catch(e=>{toast(e.message);done()})},[id])
+function QuizEditor({id,unit_id,unitTopics,done,toast}){
+  const blank=()=>({text:'',options:['',''],correct:0,explanation:'',topic_id:null})
+  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[])
+  useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published});setTopics(d.topics||[]);setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id??null})):[blank()])}).catch(e=>{toast(e.message);done()})},[id])
   const upd=(i,p)=>setQs(qs.map((x,n)=>n===i?{...x,...p}:x))
   const setOpt=(i,k,v)=>upd(i,{options:qs[i].options.map((o,n)=>n===k?v:o)})
   const delOpt=(i,k)=>upd(i,{options:qs[i].options.filter((_,n)=>n!==k),correct:qs[i].correct===k?0:qs[i].correct>k?qs[i].correct-1:qs[i].correct})
@@ -212,9 +233,10 @@ function QuizEditor({id,unit_id,done,toast}){
       <textarea placeholder="Question (Markdown and $math$ work)" value={x.text} onChange={e=>upd(i,{text:e.target.value})}/>
       {x.options.map((o,k)=><div className="qopt" key={k}><input type="radio" name={'c'+i} aria-label="Correct answer" checked={x.correct===k} onChange={()=>upd(i,{correct:k})}/><input value={o} placeholder={'Answer '+(k+1)} onChange={e=>setOpt(i,k,e.target.value)}/>{x.options.length>2&&<button className="ic sm" aria-label="Remove answer" onClick={()=>delOpt(i,k)}><X size={16}/></button>}</div>)}
       {x.options.length<6&&<button className="tool" onClick={()=>upd(i,{options:[...x.options,'']})}>Add answer</button>}
+      <label>Topic this tests</label><select value={x.topic_id??''} onChange={e=>upd(i,{topic_id:e.target.value?+e.target.value:null})}><option value="">Not tied to one topic</option>{topics.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select>
       <textarea placeholder="Explanation shown after submitting (optional)" value={x.explanation} onChange={e=>upd(i,{explanation:e.target.value})}/>
       {qs.length>1&&<button className="tool" onClick={()=>setQs(qs.filter((_,n)=>n!==i))}>Remove question</button>}</div>)}
-    <p className="known">Tick the radio button beside the correct answer.</p>
+    <p className="known">Tick the radio button beside the correct answer. Tie each question to the topic it tests: students then see which topics they know well and which need another round of study.</p>
     <button className="btn ghost" onClick={()=>setQs([...qs,blank()])}>Add question</button>
     <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
     {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
@@ -516,10 +538,11 @@ function CourseReports({toast,onOpen}){
     {rows?.map(x=><div className="row" key={x.course_id} style={{cursor:'pointer'}} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program} · {x.semester} · {x.students} students · {x.topics} topics · {x.avg_completion}% read{x.quizzes?' · quiz avg '+(x.avg_quiz_percent??'–')+'%':''}</small><Bar2 v={x.avg_completion}/></div></div>)}
     {rows?.length>0&&<button className="btn ghost" onClick={()=>fetchFile('/reports/courses?format=csv&program_id='+f.p+'&semester='+f.s,'courses.csv',toast)}>Download courses CSV</button>}</>}
 function StudentReport({c,back,toast}){
-  const [d,setD]=useState(null);useEffect(()=>{api(`/reports/courses/${c.course_id}/students`).then(setD).catch(e=>toast(e.message))},[])
+  const [d,setD]=useState(null),[w,setW]=useState(null);useEffect(()=>{api(`/reports/courses/${c.course_id}/students`).then(setD).catch(e=>toast(e.message));api(`/reports/courses/${c.course_id}/weak-areas`).then(setW).catch(()=>{})},[])
   return <><Bar title={c.course} sub={c.program+' · '+c.semester} back={back}/><div className="main">
+    {w&&w.areas.length>0&&<><h3 style={{margin:'0 0 4px'}}>Topics the class finds hard</h3><p className="known" style={{margin:'0 0 8px'}}>From each student's latest quiz results, weakest first.</p>{w.areas.slice(0,8).map(a=><div className="row" key={a.topic_id||'u'+a.unit_id}><div>{a.title}<small>{a.percent}% right overall · {a.needs_study} of {a.students} students need another round of study</small><Bar2 v={a.percent}/></div></div>)}<h3 style={{margin:'24px 0 4px'}}>Students</h3></>}
     {d&&!d.students.length&&<p className="known">No students are enrolled for this course yet.</p>}
-    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off" style={{marginLeft:8}}>Disabled</span>}<small>{x.completion}% · {x.topics_read}/{x.topics} topics{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small><Bar2 v={x.completion}/></div></div>)}
+    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off" style={{marginLeft:8}}>Disabled</span>}<small>{x.completion}% · {x.topics_read}/{x.topics} topics{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&'Strong: '+x.strong.join(', ')}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&'Needs another round: '+x.needs_study.join(', ')}</small>}<Bar2 v={x.completion}/></div></div>)}
     {d?.students.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/reports/courses/${c.course_id}/students?format=csv`,'students-'+c.course.replace(/\s+/g,'_')+'.csv',toast)}>Download students CSV</button>}</div></>}
 function Reports({role,toast}){
   const [st,setSt]=useState({}),[r,setR]=useState(null),[open,setOpen]=useState(null)
