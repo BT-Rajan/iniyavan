@@ -41,3 +41,18 @@ def test_backup_makes_restorable_copies_and_prunes_old_ones(env, tmp_path):
     db = next(f for f in files if "-db." in f); restored = tmp_path / "r.db"; restored.write_bytes(gzip.open(db).read())
     assert sqlite3.connect(restored).execute("SELECT count(*) FROM users").fetchone()[0] == 3
     with tarfile.open(next(f for f in files if "uploads" in f)) as t: assert "uploads/a.png" in t.getnames()
+
+def test_upgrade_survives_an_old_semesters_table_without_semester_no(tmp_path):
+    url = f"sqlite:///{tmp_path}/old2.db"; e = create_engine(url)
+    with e.begin() as c:  # semesters exists but predates semester_no; migration 0007 reports orphans before 0010 adds the column
+        c.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, pw TEXT, role TEXT, active BOOLEAN)"))
+        c.execute(text("CREATE TABLE courses (id INTEGER PRIMARY KEY, name TEXT)"))
+        c.execute(text("CREATE TABLE semesters (id INTEGER PRIMARY KEY, name TEXT, program_id INTEGER)"))
+        c.execute(text("INSERT INTO courses (id, name) VALUES (1, 'Mech')"))
+        c.execute(text("INSERT INTO semesters (id, name, program_id) VALUES (1, 'Semester 1', 1)"))
+    old = main.engine; main.engine = e
+    try:
+        main.upgrade_schema()
+        assert main.applied_migrations() == sorted(m for m, _ in main.MIGRATIONS)
+        with e.connect() as c: assert c.execute(text("SELECT semester_no FROM semesters WHERE id = 1")).scalar() == 1
+    finally: main.engine = old

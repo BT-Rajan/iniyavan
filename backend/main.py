@@ -277,7 +277,8 @@ ORPHANS = {  # name -> query for the ids of rows whose parent is missing
     "topics without a unit": "SELECT t.id FROM topics t LEFT JOIN units un ON un.id = t.unit_id WHERE un.id IS NULL",
     "quizzes without a unit": "SELECT q.id FROM quizzes q LEFT JOIN units un ON un.id = q.unit_id WHERE un.id IS NULL"}
 def integrity_report(c):  # {problem: [ids]} for every hierarchy row whose parent is missing; nothing is changed
-    return {k: [r[0] for r in c.execute(text(q))] for k, q in ORPHANS.items()}
+    has_no = "semester_no" in [x["name"] for x in inspect(c).get_columns("semesters")]  # migration 0007 runs before 0010 adds the column on an old database
+    return {k: [r[0] for r in c.execute(text(q))] for k, q in ORPHANS.items() if has_no or "semester_no" not in q}
 def resync_parent_copies(c):  # returns rows changed per copied column
     fixed = {}
     for table, col, parent in REPAIRS:
