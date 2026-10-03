@@ -5,7 +5,7 @@ import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import 'katex/contrib/mhchem'
 const Md=({children})=><Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{children}</Markdown>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -270,9 +270,9 @@ function QuizEditor({id,unit_id,unitTopics,done,toast}){
     <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
     {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
 
-function Topic({id,back,toast,role}){
-  const [editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
-  const opened=useRef(false),learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
+function Topic({id:first,back,toast,role}){
+  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false)
+  const opened=useRef(false),jump=nid=>{opened.current=false;setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>toast(e.message))},[id,v])  // opening starts it, after the page has loaded
   const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
@@ -294,7 +294,10 @@ function Topic({id,back,toast,role}){
     <div className="tabs">{[['notes','Notes'],['explain','Explain'],['answer','Sample answer']].map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
     {tab==='notes'&&<div className="prose"><Md>{t.content||'No notes yet.'}</Md>{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
-    {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}</div></>}
+    {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
+    {t.nav&&t.nav.total>1&&<nav className="pager" aria-label="Topics in this unit"><button className="btn ghost" disabled={!t.nav.prev} onClick={()=>jump(t.nav.prev.id)} aria-label={t.nav.prev?'Previous topic: '+t.nav.prev.title:'No previous topic'}><ChevronLeft size={18}/><span>{t.nav.prev?t.nav.prev.title:'Previous'}</span></button>
+      <small>{t.nav.position} of {t.nav.total}</small>
+      <button className={'btn'+(t.nav.next?'':' ghost')} disabled={!t.nav.next} onClick={()=>jump(t.nav.next.id)} aria-label={t.nav.next?'Next topic: '+t.nav.next.title:'No next topic'}><span>{t.nav.next?t.nav.next.title:'Next'}</span><ChevronRight size={18}/></button></nav>}</div></>}
 
 function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a topic, or null for a new one in unitId
   const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null),[busy,setBusy]=useState(false)

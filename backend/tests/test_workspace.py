@@ -87,7 +87,7 @@ def test_order_persists_across_restart_and_keeps_ids_progress_and_quizzes(env):
     main.upgrade_schema(); main.boot()  # what a restart runs; migrations must not reset the order
     assert unit_ids(i["chem"]) == [u3, i["cu"], u2] and topic_ids(i["cu"]) == [c, water, b]                                            # 17-19
     assert sorted([u3, i["cu"], u2]) == sorted(unit_ids(i["chem"])) and {water, b, c} == set(topic_ids(i["cu"]))                        # 20
-    after = env.c.get(f"/api/topics/{water}", headers=env.admin).json(); assert {k: v for k, v in after.items()} == before
+    after = env.c.get(f"/api/topics/{water}", headers=env.admin).json(); assert {k: v for k, v in after.items() if k != "nav"} == {k: v for k, v in before.items() if k != "nav"}  # only its place among its neighbours changes
     with Session_() as s: assert s.query(Progress).filter_by(topic_id=water).count() == 1 and s.query(Attempt).filter_by(quiz_id=q).count() == 1 and s.get(Topic, c).published is False
     assert course_units(env, i["chem"], env.stu)[1] == ("U1", ["Water", "B"])  # students see the owner's order, without the draft
 

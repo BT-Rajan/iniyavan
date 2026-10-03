@@ -92,3 +92,15 @@ def test_tree_gives_a_student_the_time_each_topic_was_last_read(env):
     tid = topics()[0]["id"]; env.c.post(f"/api/topics/{tid}/read", headers=h)
     got = {t["id"]: t["last_read"] for t in topics()}
     assert got[tid] and got[tid].endswith("Z") and list(got.values()).count(None) == 1
+
+def test_topic_page_names_the_previous_and_next_topic_and_hides_drafts_from_students(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,One,1\n,,,,Two,2\n,,,,Three,3\n")
+    prog = env.c.get("/api/tree", headers=env.admin).json()[0]["id"]
+    env.add_user("nv@x.com", program=prog, semester=1); h = env.login("nv@x.com")
+    ts = env.c.get("/api/tree", headers=env.admin).json()[0]["semesters"][0]["courses"][0]["units"][0]["topics"]; a, b, c = [t["id"] for t in ts]
+    nav = lambda i, hd: env.c.get(f"/api/topics/{i}", headers=hd).json()["nav"]
+    assert nav(a, h) == {"prev": None, "next": {"id": b, "title": "Two"}, "position": 1, "total": 3}
+    assert nav(b, h)["prev"]["id"] == a and nav(b, h)["next"]["id"] == c and nav(c, h)["next"] is None
+    env.c.put(f"/api/topics/{b}/publish", headers=env.admin, json={"published": False})
+    assert nav(a, h)["next"]["id"] == c and nav(a, h)["total"] == 2  # a student skips the draft
+    assert nav(a, env.admin)["next"]["id"] == b and nav(a, env.admin)["total"] == 3  # the author still sees it

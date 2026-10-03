@@ -1242,13 +1242,20 @@ def full(t, s):
     return {"id": t.id, "title": t.title, "course_id": co.id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
             "semester": sem.name if sem else "", "program": (s.get(Program, sem.program_id if sem else co.program_id) or Program(name="")).name,
             "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
+def topic_neighbours(t, edit, s):  # the topics before and after this one in its unit, in the order the course shows them; drafts only for those who can edit
+    sibs = [x for x in s.query(Topic).filter(Topic.unit_id == t.unit_id).order_by(*ORDER.get(Topic, (Topic.id,))) if edit or x.published is not False] if t.unit_id else []
+    i = next((k for k, x in enumerate(sibs) if x.id == t.id), None)
+    if i is None: return {"prev": None, "next": None, "position": None, "total": len(sibs)}
+    pick = lambda x: {"id": x.id, "title": x.title}
+    return {"prev": pick(sibs[i - 1]) if i > 0 else None, "next": pick(sibs[i + 1]) if i + 1 < len(sibs) else None, "position": i + 1, "total": len(sibs)}
 @app.get("/api/topics/{tid}")
 def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
     p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
-    return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "can_edit": can_edit(u, topic_course_id(t, s), s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+    edit = can_edit(u, topic_course_id(t, s), s)
+    return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
