@@ -6,6 +6,11 @@ import 'katex/dist/katex.min.css'
 import 'katex/contrib/mhchem'
 const Md=({children})=><Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{children}</Markdown>
 import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp} from 'lucide-react'
+import '@fontsource/bricolage-grotesque/600.css'
+import '@fontsource/bricolage-grotesque/800.css'
+import '@fontsource/instrument-sans/400.css'
+import '@fontsource/instrument-sans/500.css'
+import '@fontsource/instrument-sans/600.css'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -91,7 +96,7 @@ function ChangePassword({forced,toast,msg,done,out}){
   return <><Bar title="Change password"/><div className="main">{form}</div></>}
 
 const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header className="bar">
-  {back?<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>:<button className="ic" aria-label="Open menu" onClick={menu}><Menu/></button>}
+  <button className="ic menu" aria-label="Open menu" onClick={menu}><Menu/></button>{back&&<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>}
   <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</header>}
 
 function Learn({user,toast,appName,start}){
@@ -526,7 +531,7 @@ function Activity(){
 const day=d=>d?new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short'}):'never'
 const fetchFile=async(url,name,toast)=>{try{const r=await fetch('/api'+url,{headers:{Authorization:'Bearer '+localStorage.t}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Download failed')
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=name;a.click();URL.revokeObjectURL(a.href)}catch(e){toast(e.message)}}
-const Bar2=({v})=><div className="bar"><i style={{width:Math.min(100,v||0)+'%'}}/></div>
+const Bar2=({v})=><div className="meter"><i style={{width:Math.min(100,v||0)+'%'}}/></div>
 function CourseReports({toast,onOpen}){
   const [f,setF]=useState({p:0,s:0}),[rows,setRows]=useState(null),[progs,setProgs]=useState([])
   useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name})))).catch(()=>{})},[])

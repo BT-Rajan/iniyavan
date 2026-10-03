@@ -91,8 +91,22 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .opt.sel{border-color:var(--vio)}.opt.ok{border-color:#22c55e}.opt.bad{border-color:#ef4444}.opt p{margin:0}
 .qopt{display:flex;gap:8px;align-items:center;margin:6px 0}.qopt input:not([type=radio]),.qopt select{flex:1;min-width:0}.qopt input[type=radio]{width:20px;height:20px;flex:none;accent-color:var(--vio)}
 .tool{padding:8px 14px;border-radius:14px;background:var(--s2);font-size:14px;margin:6px 8px 6px 0}
-.bar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(135deg,var(--vio),var(--pink))}
+.meter{height:6px;border-radius:3px;background:rgba(127,127,127,.25);margin-top:8px;overflow:hidden}.meter i{display:block;height:100%;border-radius:3px;background:linear-gradient(135deg,var(--vio),var(--pink))}
 .st{color:var(--mut);font-size:14px;min-width:16px;text-align:center}
 
 .area{margin:14px 0}.area.needs_study{border-left:4px solid #f59e0b}.area.strong{border-left:4px solid #22c55e}.area.getting_there{border-left:4px solid #38bdf8}
 .arow{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px solid #ffffff12}.arow:first-of-type{border-top:0}.arow>div{flex:1;min-width:0}.arow small{display:block;opacity:.75;font-size:13px}
+
+/* Desktop: the menu is a permanent sidebar and the content gets a comfortable reading width */
+@media (min-width:900px){
+  #root{max-width:none;margin:0;padding-left:264px;background:radial-gradient(70% 50% at 100% 0,#2a1552 0,transparent 60%),var(--ink)}
+  #root>.bar,#root>.main,#root>.login{max-width:880px;margin-left:auto;margin-right:auto}
+  .bar{padding-left:24px;padding-right:24px}.main{padding-left:24px;padding-right:24px}
+  .menu{display:none}
+  .drawer{left:0;width:264px;max-width:none;transform:none;pointer-events:auto;visibility:visible;overflow:visible}
+  .dscrim{display:none}.drawer .dhead .ic{display:none}
+  .panel{width:264px;transform:none;border-radius:0;box-shadow:none;border-right:1px solid #ffffff12}
+  .fab{right:32px}.nav{max-width:none;left:264px;transform:none;width:calc(100% - 264px)}
+  .toast{left:264px;right:0}
+  .stats{grid-template-columns:repeat(4,1fr)}
+}
