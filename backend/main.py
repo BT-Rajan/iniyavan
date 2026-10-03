@@ -206,7 +206,21 @@ async def secure_headers(request: Request, call_next):
     return r
 
 @app.get("/api/config")
-def config(): return {"name": APP_NAME, "version": VERSION, "email_reset": mail_on()}
+def config(s: Session = Depends(db)): return {"name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on()}
+class Branding(BaseModel): name: str | None = None; logo_url: str | None = None; remove_logo: bool = False
+LOGO_URL = re.compile(r"/api/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)")
+@app.put("/api/admin/branding")
+def put_branding(b: Branding, _: User = Depends(admin), s: Session = Depends(db)):  # the institution's name and logo; the logo is an image already uploaded here, never an outside address
+    if b.name is not None:
+        n = b.name.strip()
+        if len(n) > 60: raise HTTPException(400, "Keep the name under 60 characters")
+        if n: s.merge(Setting(k="app_name", v=n))
+        else: s.query(Setting).filter_by(k="app_name").delete()  # back to APP_NAME from .env
+    if b.remove_logo: s.query(Setting).filter_by(k="logo_url").delete()
+    elif b.logo_url:
+        if not LOGO_URL.fullmatch(b.logo_url): raise HTTPException(400, "Upload the logo image first, then save")
+        s.merge(Setting(k="logo_url", v=b.logo_url))
+    s.commit(); return {"ok": True}
 # ---- forgot password by email (needs SMTP_HOST, SMTP_FROM and APP_URL in .env) ----
 def mail_on(): return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM") and os.getenv("APP_URL"))  # APP_URL is fixed so a forged Host header can't poison reset links
 def send_mail(to, subject, body):

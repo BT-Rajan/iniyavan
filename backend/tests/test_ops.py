@@ -56,3 +56,17 @@ def test_upgrade_survives_an_old_semesters_table_without_semester_no(tmp_path):
         assert main.applied_migrations() == sorted(m for m, _ in main.MIGRATIONS)
         with e.connect() as c: assert c.execute(text("SELECT semester_no FROM semesters WHERE id = 1")).scalar() == 1
     finally: main.engine = old
+
+def test_admin_sets_the_institution_name_and_logo_and_only_an_uploaded_image_is_accepted(env):
+    assert env.c.get("/api/config").json()["logo"] is None
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+    url = env.c.post("/api/uploads", headers={**env.admin, "Content-Type": "image/png"}, content=png).json()["url"]
+    put = lambda hd, **b: env.c.put("/api/admin/branding", headers=hd, json=b)
+    assert put(env.stu, name="X").status_code == 403 and put(env.fac, name="X").status_code == 403
+    assert put(env.admin, logo_url="https://evil.example/x.png").status_code == 400  # outside addresses are refused
+    assert put(env.admin, logo_url="/api/uploads/../../etc/passwd").status_code == 400
+    assert put(env.admin, name="x" * 61).status_code == 400
+    assert put(env.admin, name="  Karkathar College ", logo_url=url).status_code == 200
+    cfg = env.c.get("/api/config").json(); assert cfg["name"] == "Karkathar College" and cfg["logo"] == url  # public: the sign-in page needs it
+    assert put(env.admin, remove_logo=True, name="").status_code == 200
+    cfg = env.c.get("/api/config").json(); assert cfg["logo"] is None and cfg["name"] == main.APP_NAME

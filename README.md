@@ -116,3 +116,8 @@ Authors tie each quiz question to the topic it tests (the "Topic this tests" men
 - **My progress** (students' drawer) lists strengths and the topics that need another round of study across all their courses, with whether they have opened or completed each topic.
 - **Staff** see, in Reports > a course, the topics the class finds hardest (with how many students need another round) and, under each student, their strong and weak topics; the students CSV gains "Strong areas" and "Needs another round of study" columns. Faculty see only their own courses.
 - A draft topic is never named to students (its questions count under the unit), and attempts made before this feature have no per-question detail, so they are ignored until the student retakes the quiz.
+
+## Look and branding
+- The app follows the device's light or dark setting. Each person can force Light or Dark (or go back to Auto) with the switch at the bottom of the menu; the choice is remembered in that browser.
+- Admins set the institution's name and logo under Settings. The logo is a PNG, JPG or WebP uploaded there (under 3 MB, square works best). It appears on the sign-in page and in the menu; without one, a neutral mark is shown. Clearing the name goes back to `APP_NAME` in `.env`.
+- Fonts are bundled with the app, so nothing is loaded from the internet.
