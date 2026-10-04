@@ -121,6 +121,11 @@ class Question(Base):
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); pos = Column(Integer, default=0)
     text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text)  # options is a JSON list
     topic_id = Column(Integer, nullable=True)  # the topic this question tests, chosen by the author; must be a topic of the quiz's unit
+class BankQuestion(Base):  # a reusable question any faculty member or admin can browse and add to their own quizzes; adding copies it, so later edits never change a live quiz
+    __tablename__ = "question_bank"
+    id = Column(Integer, primary_key=True); owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True); sig = Column(String(40), index=True)
+    text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text); tags = Column(String(200), default=""); source = Column(String(200), default="")
+    uses = Column(Integer, default=0); created_at = Column(DateTime, default=dt.datetime.utcnow)
 class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
@@ -1388,6 +1393,79 @@ def set_questions(qid: int, b: QuestionsIn, u: User = Depends(staff), s: Session
     for i, x in enumerate(b.questions):
         s.add(Question(quiz_id=qid, pos=i, text=x.text.strip(), options=json.dumps([o.strip() for o in x.options]), correct=x.correct, explanation=x.explanation.strip(), topic_id=x.topic_id))
     s.commit(); return {"ok": True, "count": len(b.questions)}
+# ---- shared question bank ----
+def q_sig(text, opts, correct): return hashlib.sha1(json.dumps([text.strip().lower(), [o.strip().lower() for o in opts], correct]).encode()).hexdigest()
+def check_question(x, label="Question"):
+    opts = [o.strip() for o in x.options]
+    if not x.text.strip(): raise HTTPException(400, f"{label} has no text")
+    if not 2 <= len(opts) <= 6 or not all(opts): raise HTTPException(400, f"{label} needs 2 to 6 answers, none empty")
+    if not 0 <= x.correct < len(opts): raise HTTPException(400, f"{label}: mark which answer is correct")
+    return opts
+def clean_tags(t): return ", ".join(dict.fromkeys(w.strip().lower()[:30] for w in (t or "").split(",") if w.strip()))[:200]
+class BankIn(BaseModel): text: str; options: list[str]; correct: int; explanation: str = ""; tags: str = ""; source: str = ""
+def bank_row(x, owners, u): return {"id": x.id, "text": x.text, "options": json.loads(x.options), "correct": x.correct, "explanation": x.explanation or "", "tags": [t for t in (x.tags or "").split(", ") if t],
+    "source": x.source or "", "uses": x.uses or 0, "owner": owners.get(x.owner_id, ""), "mine": x.owner_id == u.id, "can_edit": u.role == "admin" or x.owner_id == u.id}
+def add_to_bank(s, u, text, opts, correct, explanation, tags, source):
+    sig = q_sig(text, opts, correct)
+    if s.query(BankQuestion.id).filter_by(sig=sig).first(): return False
+    s.add(BankQuestion(owner_id=u.id, sig=sig, text=text.strip(), options=json.dumps(opts), correct=correct, explanation=(explanation or "").strip(), tags=clean_tags(tags), source=(source or "")[:200])); return True
+@app.get("/api/bank")
+def bank_list(q: str = "", tag: str = "", mine: bool = False, limit: int = 30, offset: int = 0, u: User = Depends(staff), s: Session = Depends(db)):
+    qs = s.query(BankQuestion)
+    if mine: qs = qs.filter(BankQuestion.owner_id == u.id)
+    if tag.strip(): qs = qs.filter(BankQuestion.tags.like("%" + tag.strip().lower().replace("%", "") + "%"))
+    for w in q.split()[:6]:
+        like = "%" + w.replace("%", "").replace("_", " ").strip() + "%"; qs = qs.filter(or_(BankQuestion.text.like(like), BankQuestion.tags.like(like), BankQuestion.source.like(like)))
+    total = qs.count(); rows = qs.order_by(BankQuestion.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    owners = {x.id: x.name for x in s.query(User).filter(User.id.in_({r.owner_id for r in rows if r.owner_id} or {0}))}
+    alltags = sorted({t for (v,) in s.query(BankQuestion.tags) for t in (v or "").split(", ") if t})[:200]
+    return {"total": total, "items": [bank_row(x, owners, u) for x in rows], "tags": alltags}
+@app.post("/api/bank")
+def bank_add(b: BankIn, u: User = Depends(staff), s: Session = Depends(db)):
+    opts = check_question(b); ok = add_to_bank(s, u, b.text, opts, b.correct, b.explanation, b.tags, b.source); s.commit()
+    if not ok: raise HTTPException(409, "That exact question is already in the bank")
+    return {"ok": True}
+def bank_or_404(bid, u, s):
+    x = s.get(BankQuestion, bid)
+    if not x: raise HTTPException(404, "Question not found")
+    return x
+@app.put("/api/bank/{bid}")
+def bank_edit(bid: int, b: BankIn, u: User = Depends(staff), s: Session = Depends(db)):
+    x = bank_or_404(bid, u, s)
+    if not (u.role == "admin" or x.owner_id == u.id): raise HTTPException(403, "Only the person who added a question, or an admin, can change it")
+    opts = check_question(b); sig = q_sig(b.text, opts, b.correct)
+    if s.query(BankQuestion.id).filter(BankQuestion.sig == sig, BankQuestion.id != bid).first(): raise HTTPException(409, "That exact question is already in the bank")
+    x.text, x.options, x.correct, x.explanation, x.tags, x.sig = b.text.strip(), json.dumps(opts), b.correct, b.explanation.strip(), clean_tags(b.tags), sig
+    if b.source.strip(): x.source = b.source.strip()[:200]
+    s.commit(); return {"ok": True}
+@app.delete("/api/bank/{bid}")
+def bank_delete(bid: int, u: User = Depends(staff), s: Session = Depends(db)):
+    x = bank_or_404(bid, u, s)
+    if not (u.role == "admin" or x.owner_id == u.id): raise HTTPException(403, "Only the person who added a question, or an admin, can delete it")
+    s.delete(x); s.commit(); return {"ok": True}
+class FromQuiz(BaseModel): tags: str = ""
+@app.post("/api/bank/from-quiz/{qid}")
+def bank_from_quiz(qid: int, b: FromQuiz, u: User = Depends(staff), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s); cid = quiz_course_id(q, s); need_edit(u, cid, s); course = s.get(Course, cid); added = skipped = 0
+    for x in s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id):
+        if add_to_bank(s, u, x.text, json.loads(x.options), x.correct, x.explanation, b.tags, (course.name if course else "") + " · " + q.title): added += 1
+        else: skipped += 1
+    s.commit(); return {"added": added, "skipped": skipped}
+class FromBank(BaseModel): ids: list[int]; topic_id: int | None = None
+@app.post("/api/quizzes/{qid}/questions/from-bank")
+def questions_from_bank(qid: int, b: FromBank, u: User = Depends(staff), s: Session = Depends(db)):
+    q = quiz_or_404(qid, s); need_edit(u, quiz_course_id(q, s), s)
+    ids = list(dict.fromkeys(b.ids))
+    if not ids: raise HTTPException(400, "Choose at least one question")
+    have = s.query(Question).filter_by(quiz_id=qid).count()
+    if have + len(ids) > 100: raise HTTPException(400, "A quiz can have up to 100 questions")
+    if b.topic_id is not None and not s.query(Topic.id).filter(Topic.id == b.topic_id, Topic.unit_id == q.unit_id).first(): raise HTTPException(400, "Pick a topic from this unit")
+    rows = {x.id: x for x in s.query(BankQuestion).filter(BankQuestion.id.in_(ids))}
+    if len(rows) != len(ids): raise HTTPException(404, "Some of those questions are no longer in the bank")
+    for i, bid in enumerate(ids):
+        x = rows[bid]; x.uses = (x.uses or 0) + 1
+        s.add(Question(quiz_id=qid, pos=have + i, text=x.text, options=x.options, correct=x.correct, explanation=x.explanation, topic_id=b.topic_id))
+    s.commit(); return {"ok": True, "count": have + len(ids)}
 @app.get("/api/quizzes/{qid}")
 def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
     q = quiz_or_404(qid, s); cid = quiz_course_id(q, s); staff_view = u.role == "admin" or (u.role == "faculty" and can_edit(u, cid, s))

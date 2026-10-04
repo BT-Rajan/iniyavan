@@ -336,7 +336,7 @@ const quizFromCsv=(text,topics)=>{const rows=parseCsv(text),head=(rows.shift()||
   return {questions,errors}}
 function QuizEditor({id,unit_id,unitTopics,done,toast}){
   const blank=()=>({text:'',options:['',''],correct:0,explanation:'',topic_id:null})
-  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),[csvMsg,setCsvMsg]=useState([])
+  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),[csvMsg,setCsvMsg]=useState([]),[bank,setBank]=useState(false),[btags,setBtags]=useState('')
   useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published});setTopics(d.topics||[]);setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id??null})):[blank()])}).catch(e=>{toast(e.message);done()})},[id])
   const upd=(i,p)=>setQs(qs.map((x,n)=>n===i?{...x,...p}:x))
   const setOpt=(i,k,v)=>upd(i,{options:qs[i].options.map((o,n)=>n===k?v:o)})
@@ -346,6 +346,10 @@ function QuizEditor({id,unit_id,unitTopics,done,toast}){
     await api(`/quizzes/${qid}/questions`,{method:'PUT',body:{questions:qs.filter(x=>x.text.trim())}});toast('Quiz saved');done()}catch(e){toast(e.message)}setBusy(false)}
   const importCsv=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const {questions,errors}=quizFromCsv(await f.text(),topics);setCsvMsg(errors)
     if(questions.length){setQs(cur=>[...cur.filter(x=>x.text.trim()),...questions]);toast(`${questions.length} questions added. Review them, then save.`)}else toast('No questions were added')}
+  const addFromBank=picked=>{setQs(cur=>[...cur.filter(x=>x.text.trim()),...picked.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||'',topic_id:null}))]);setBank(false);toast(`${pl(picked.length,'question')} added. Tie them to topics if you like, then save.`)}
+  const toBank=async()=>{const list=qs.filter(x=>x.text.trim());let added=0,skipped=0,bad=0;setBusy(true)
+    for(const x of list){try{await api('/bank',{method:'POST',body:{text:x.text,options:x.options,correct:x.correct,explanation:x.explanation,tags:btags,source:m.title}});added++}catch(e){/already in the bank/.test(e.message)?skipped++:bad++}}
+    setBusy(false);toast(`${added} saved to the bank${skipped?`, ${skipped} already there`:''}${bad?`, ${bad} skipped (incomplete)`:''}`)}
   const del=async()=>{if(!confirm('Delete this quiz and every student attempt?'))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Quiz deleted');done()}catch(e){toast(e.message)}}
   return <><Bar title={id?'Edit quiz':'New quiz'} back={done}/><div className="main">
     <label>Title</label><input value={m.title} onChange={e=>setM({...m,title:e.target.value})} placeholder="e.g. Water treatment check"/>
@@ -363,8 +367,24 @@ function QuizEditor({id,unit_id,unitTopics,done,toast}){
     <input ref={csvRef} type="file" accept=".csv,text/csv" hidden onChange={importCsv}/>
     <div className="two"><button className="btn ghost" onClick={()=>csvRef.current.click()}><Upload size={16}/> Import from CSV</button><button className="btn ghost" onClick={()=>download('quiz-template.csv',QUIZ_TEMPLATE)}>CSV template</button></div>
     {csvMsg.length>0&&<div className="qbox" role="alert"><b>{csvMsg.length} {csvMsg.length===1?'row needs':'rows need'} a look</b>{csvMsg.slice(0,8).map((m,i)=><p className="known" style={{margin:'4px 0'}} key={i}>{m}</p>)}{csvMsg.length>8&&<p className="known">…and {csvMsg.length-8} more.</p>}</div>}
-    <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
+    <button className="btn ghost" onClick={()=>setBank(true)}>Add from the question bank</button>
+    <label htmlFor="bt">Share these questions in the bank</label><div className="two"><input id="bt" value={btags} onChange={e=>setBtags(e.target.value)} placeholder="Tags, e.g. water, hardness (optional)"/><button className="btn ghost" disabled={busy||!qs.some(x=>x.text.trim())} onClick={toBank}>Save to bank</button></div>
+    <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>{bank&&<BankSheet close={()=>setBank(false)} onAdd={addFromBank} toast={toast}/>}
     {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
+
+function BankSheet({close,onAdd,toast}){
+  const [q,setQ]=useState(''),[tag,setTag]=useState(''),[mine,setMine]=useState(false),[d,setD]=useState(null),[sel,setSel]=useState({}),[n,setN]=useState(0)
+  useEffect(()=>{const t=setTimeout(()=>api('/bank?limit=30&q='+encodeURIComponent(q)+'&tag='+encodeURIComponent(tag)+(mine?'&mine=true':'')).then(setD).catch(e=>toast(e.message)),250);return()=>clearTimeout(t)},[q,tag,mine,n,toast])
+  const picked=Object.values(sel),more=async()=>{try{const r=await api('/bank?limit=30&offset='+d.items.length+'&q='+encodeURIComponent(q)+'&tag='+encodeURIComponent(tag)+(mine?'&mine=true':''));setD({...d,items:[...d.items,...r.items]})}catch(e){toast(e.message)}}
+  const flip=x=>{const c={...sel};c[x.id]?delete c[x.id]:c[x.id]=x;setSel(c)}
+  const del=async x=>{if(!confirm('Delete this question from the bank for everyone? Quizzes that already use it keep their copy.'))return;try{await api('/bank/'+x.id,{method:'DELETE'});const c={...sel};delete c[x.id];setSel(c);setN(n+1)}catch(e){toast(e.message)}}
+  return <Sheet close={close}><h3>Question bank</h3><p className="known">Questions shared by every teacher. Adding one puts a copy in this quiz, so later changes to the bank never alter a quiz students are taking.</p>
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search the bank" placeholder="Search questions, tags or source" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="filters"><select aria-label="Filter by tag" value={tag} onChange={e=>setTag(e.target.value)}><option value="">All tags</option>{(d?.tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</select>
+      <label className="chk" style={{padding:0}}><input type="checkbox" checked={mine} onChange={e=>setMine(e.target.checked)}/> Only mine</label></div>
+    {!d?<div className="sk"/>:!d.items.length?<p className="known">{q||tag||mine?'Nothing matches that.':'The bank is empty. Use “Save to bank” in any quiz to start it.'}</p>:d.items.map(x=><div key={x.id} className="row"><label className="chk" style={{alignItems:'flex-start',flex:1}}><input type="checkbox" checked={!!sel[x.id]} onChange={()=>flip(x)}/><span><span style={{display:'block'}}>{x.text.length>180?x.text.slice(0,180)+'…':x.text}</span><small>{x.options.length} answers{x.tags.length>0&&' · '+x.tags.join(', ')} · by {x.owner||'someone'}{x.uses>0&&' · used '+pl(x.uses,'time')}</small></span></label>{x.can_edit&&<button className="ic sm" aria-label="Delete from the bank" onClick={()=>del(x)}><Trash2 size={16}/></button>}</div>)}
+    {d&&d.items.length<d.total&&<button className="btn ghost" onClick={more}>Show more ({d.total-d.items.length} left)</button>}
+    <button className="btn" disabled={!picked.length} onClick={()=>onAdd(picked)}>{picked.length?`Add ${pl(picked.length,'question')}`:'Choose questions to add'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 
 function CopySheet({kind,id,title,close,toast}){
   const [tree,setTree]=useState(null),[cid,setCid]=useState(''),[uid,setUid]=useState(''),[wq,setWq]=useState(true),[busy,setBusy]=useState(false),[res,setRes]=useState(null)
