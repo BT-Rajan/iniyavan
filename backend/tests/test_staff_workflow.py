@@ -117,3 +117,47 @@ def test_history_is_capped_and_a_csv_reimport_is_recorded(env):
     for i in range(main.VERSIONS_KEPT + 5): env.c.put(f"/api/topics/{tid}", headers=env.admin, json={"title": "Water", "unit_id": un, "content": f"e{i}"})
     got = env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).json()
     assert len(got) == main.VERSIONS_KEPT and got[0]["current"]
+
+def make_two_courses(env):
+    env.csv("program,semester,course,unit,topic,content,sample_content\nMech,Semester 1,Chem,U1,Water,water notes,sample\n,,,,Fuel,fuel notes,\n,Semester 2,Physics,P1,Motion,m,\n")
+    sem = tree(env)[0]["semesters"]; chem = sem[0]["courses"][0]; phys = sem[1]["courses"][0]
+    return chem, phys
+
+def test_copy_topic_makes_a_draft_in_another_course_and_keeps_names_unique(env):
+    chem, phys = make_two_courses(env); water = chem["units"][0]["topics"][0]["id"]; pu = phys["units"][0]["id"]
+    cp = lambda hd, tid, **b: env.c.post(f"/api/topics/{tid}/copy", headers=hd, json=b)
+    r = cp(env.admin, water, unit_id=pu); assert r.status_code == 200 and r.json()["title"] == "Water"
+    new = env.c.get(f"/api/topics/{r.json()['id']}", headers=env.admin).json()
+    assert new["content"] == "water notes" and new["sample_content"] == "sample" and new["published"] is False and new["course"] == "Physics" and new["unit"] == "P1"
+    assert env.c.get(f"/api/topics/{r.json()['id']}/versions", headers=env.admin).json()[0]["note"].startswith("Copied from Chem › U1 › Water")
+    assert cp(env.admin, water, unit_id=pu).json()["title"] == "Water (copy)" and cp(env.admin, water, unit_id=pu).json()["title"] == "Water (copy 2)"
+    assert [t["title"] for t in tree(env)[0]["semesters"][1]["courses"][0]["units"][0]["topics"]] == ["Motion", "Water", "Water (copy)", "Water (copy 2)"]
+    assert cp(env.admin, water, unit_id=chem["units"][0]["id"]).json()["title"] == "Water (copy)"  # copying inside the same unit works too
+    assert cp(env.admin, water).status_code == 400 and cp(env.admin, water, unit_id=999).status_code == 400 and cp(env.admin, 999, unit_id=pu).status_code == 404
+    assert cp(env.stu, water, unit_id=pu).status_code == 403
+    assert cp(env.fac, water, unit_id=pu).status_code == 403  # faculty can only copy into a course they own
+    env.c.put(f"/api/courses/{phys['id']}/owner", headers=env.admin, json={"user_id": uid("fac@x.com")})
+    assert cp(env.fac, water, unit_id=pu).status_code == 200
+    env.c.put(f"/api/topics/{water}/publish", headers=env.admin, json={"published": False})  # someone else's draft is not copyable
+    env.c.put(f"/api/courses/{chem['id']}/owner", headers=env.admin, json={"user_id": None})
+    assert cp(env.fac, water, unit_id=pu).status_code == 404
+
+def test_copy_unit_takes_topics_and_quizzes_as_drafts_and_remaps_question_topics(env):
+    chem, phys = make_two_courses(env); u1 = chem["units"][0]; water, fuel = [t["id"] for t in u1["topics"]]
+    q = env.c.post("/api/quizzes", headers=env.admin, json={"unit_id": u1["id"], "title": "Check", "pass_percent": 60, "published": True}).json()["id"]
+    env.c.put(f"/api/quizzes/{q}/questions", headers=env.admin, json={"questions": [
+        {"text": "Q1", "options": ["a", "b"], "correct": 1, "topic_id": fuel}, {"text": "Q2", "options": ["a", "b", "c"], "correct": 0, "explanation": "why"}]})
+    env.c.put(f"/api/topics/{fuel}/publish", headers=env.admin, json={"published": False})
+    r = env.c.post(f"/api/units/{u1['id']}/copy", headers=env.admin, json={"course_id": phys["id"]}).json()
+    assert (r["name"], r["topics"], r["quizzes"]) == ("U1", 2, 1)
+    nu = next(x for x in tree(env)[0]["semesters"][1]["courses"][0]["units"] if x["id"] == r["id"])
+    assert [t["title"] for t in nu["topics"]] == ["Water", "Fuel"] and all(t["published"] is False for t in nu["topics"]) and nu["quizzes"][0]["published"] is False and nu["quizzes"][0]["questions"] == 2
+    got = env.c.get(f"/api/quizzes/{nu['quizzes'][0]['id']}", headers=env.admin).json()
+    assert [(x["text"], x["correct"], x["topic_id"]) for x in got["questions"]] == [("Q1", 1, nu["topics"][1]["id"]), ("Q2", 0, None)] and got["questions"][1]["explanation"] == "why"
+    again = env.c.post(f"/api/units/{u1['id']}/copy", headers=env.admin, json={"course_id": phys["id"], "with_quizzes": False}).json()
+    assert again["name"] == "U1 (copy)" and again["quizzes"] == 0
+    assert env.c.post(f"/api/units/{u1['id']}/copy", headers=env.admin, json={}).status_code == 400 and env.c.post("/api/units/999/copy", headers=env.admin, json={"course_id": 1}).status_code == 404
+    assert env.c.post(f"/api/units/{u1['id']}/copy", headers=env.fac, json={"course_id": phys["id"]}).status_code == 403
+    env.c.put(f"/api/courses/{phys['id']}/owner", headers=env.admin, json={"user_id": uid("fac@x.com")})  # faculty owns only the target: no draft topics, no quizzes of the original
+    fr = env.c.post(f"/api/units/{u1['id']}/copy", headers=env.fac, json={"course_id": phys["id"]}).json()
+    assert fr["topics"] == 1 and fr["quizzes"] == 0

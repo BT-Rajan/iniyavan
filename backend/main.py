@@ -1086,6 +1086,56 @@ def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depe
     before = topic_state(x)
     for k, v in f.items(): setattr(x, k, v)  # published only changes when it is sent: saving content never publishes a draft
     record_version(s, x, before, u.id, "Edited"); s.commit(); return {"ok": True}
+def free_name(taken, name, limit):  # "Water", then "Water (copy)", "Water (copy 2)" ... until the name is unused among its siblings
+    low = {x.lower() for x in taken}
+    if name.lower() not in low: return name
+    n = 1
+    while True:
+        tail = " (copy)" if n == 1 else f" (copy {n})"; cand = name[:limit - len(tail)] + tail
+        if cand.lower() not in low: return cand
+        n += 1
+class CopyIn(BaseModel): unit_id: int | None = None; course_id: int | None = None; with_quizzes: bool = True
+def where_is(t, s):
+    un = s.get(Unit, t.unit_id) if t.unit_id else None; co = s.get(Course, un.course_id) if un else None
+    return f"{co.name if co else '?'} › {un.name if un else '?'}"
+@app.post("/api/topics/{tid}/copy")
+def copy_topic(tid: int, b: CopyIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """A copy of a topic's text in a unit you can edit, as a draft at the end of that unit. Reading progress, bookmarks, deadlines and saved AI answers are not copied."""
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
+    un = s.get(Unit, b.unit_id) if b.unit_id else None
+    if not un: raise HTTPException(400, "Choose the unit to copy it into")
+    need_edit(u, un.course_id, s)
+    title = free_name([x for (x,) in s.query(Topic.title).filter_by(unit_id=un.id)], t.title, 200)
+    n = Topic(title=title, unit_id=un.id, course_id=un.course_id, content=t.content, sample_content=t.sample_content, question_pattern=t.question_pattern, guideline=t.guideline,
+              published=False, position=next_pos(s, Topic, unit_id=un.id)); n.created_by = u.id; s.add(n); s.flush()
+    record_version(s, n, None, u.id, f"Copied from {where_is(t, s)} › {t.title}"[:200]); s.commit()
+    return {"id": n.id, "title": n.title, "unit_id": un.id}
+@app.post("/api/units/{uid}/copy")
+def copy_unit(uid: int, b: CopyIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """A copy of a unit with its topics (and, if you can edit the original course, its quizzes) in a course you can edit. Everything arrives as a draft."""
+    src = s.get(Unit, uid)
+    if not src: raise HTTPException(404, "Unit not found")
+    co = s.get(Course, b.course_id) if b.course_id else None
+    if not co: raise HTTPException(400, "Choose the course to copy it into")
+    need_edit(u, co.id, s); mine = can_edit(u, src.course_id, s)
+    name = free_name([x for (x,) in s.query(Unit.name).filter_by(course_id=co.id)], src.name, 150)
+    nu = Unit(name=name, course_id=co.id, position=next_pos(s, Unit, course_id=co.id)); nu.created_by = u.id; s.add(nu); s.flush()
+    ids, made = {}, 0
+    for t in s.query(Topic).filter_by(unit_id=src.id).order_by(*ORDER.get(Topic, (Topic.id,))):
+        if t.published is False and not mine: continue  # someone else's drafts are not yours to take
+        n = Topic(title=t.title, unit_id=nu.id, course_id=co.id, content=t.content, sample_content=t.sample_content, question_pattern=t.question_pattern, guideline=t.guideline,
+                  published=False, position=next_pos(s, Topic, unit_id=nu.id)); n.created_by = u.id; s.add(n); s.flush(); ids[t.id] = n.id; made += 1
+        record_version(s, n, None, u.id, f"Copied from {where_is(t, s)}"[:200])
+    quizzes = 0
+    if b.with_quizzes and mine:
+        for q in s.query(Quiz).filter_by(unit_id=src.id).order_by(Quiz.id):
+            nq = Quiz(unit_id=nu.id, course_id=co.id, title=q.title, pass_percent=q.pass_percent, published=False); s.add(nq); s.flush(); quizzes += 1
+            for x in s.query(Question).filter_by(quiz_id=q.id).order_by(Question.pos, Question.id):
+                s.add(Question(quiz_id=nq.id, pos=x.pos, text=x.text, options=x.options, correct=x.correct, explanation=x.explanation, topic_id=ids.get(x.topic_id)))
+    s.commit()
+    return {"id": nu.id, "name": nu.name, "topics": made, "quizzes": quizzes}
 class OrderIn(BaseModel): ids: list[int]
 def reorder(rows, ids):
     if len(ids) != len(set(ids)) or set(ids) != {r.id for r in rows}: raise HTTPException(400, "Send every item exactly once, in the new order")
