@@ -1105,7 +1105,7 @@ M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Uni
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
     mine_p = {p.topic_id: p for p in s.query(Progress).filter_by(user_id=u.id)}; read = set(mine_p); now = dt.datetime.utcnow()
-    marked = {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}
+    marked = set() if u.role == "admin" else {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}  # admins have no bookmarks, even old ones
     def g(model, k):
         d = defaultdict(list)
         for r in s.query(model).order_by(*ORDER.get(model, (model.id,))): d[getattr(r, k)].append(r)
@@ -1730,6 +1730,7 @@ def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    if u.role == "admin": raise HTTPException(403, "Bookmarks are for students and faculty")  # admins manage content; they have no study list
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
