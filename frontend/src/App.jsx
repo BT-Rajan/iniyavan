@@ -321,8 +321,33 @@ function QuizEditor({id,unit_id,unitTopics,done,toast}){
     <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>
     {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
 
+const FIELD_LABEL={title:'Title',content:'Notes',sample_content:'Sample answer',question_pattern:'Question pattern',guideline:'Answer guideline'}
+const lineDiff=(a,b)=>{const x=a.split('\n'),y=b.split('\n'),n=x.length,m=y.length
+  if(n*m>250000)return [...x.map(t=>({k:'del',t})),...y.map(t=>({k:'add',t}))]  // very long texts: show both rather than spend the time
+  const L=Array.from({length:n+1},()=>new Uint16Array(m+1))
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)L[i][j]=x[i]===y[j]?L[i+1][j+1]+1:Math.max(L[i+1][j],L[i][j+1])
+  const out=[];let i=0,j=0
+  while(i<n&&j<m){if(x[i]===y[j]){out.push({k:'same',t:x[i]});i++;j++}else if(L[i+1][j]>=L[i][j+1])out.push({k:'del',t:x[i++]});else out.push({k:'add',t:y[j++]})}
+  while(i<n)out.push({k:'del',t:x[i++]});while(j<m)out.push({k:'add',t:y[j++]});return out}
+function HistorySheet({tid,close,done,toast}){
+  const [list,setList]=useState(null),[v,setV]=useState(null),[busy,setBusy]=useState(false)
+  useEffect(()=>{api(`/topics/${tid}/versions`).then(setList).catch(e=>{toast(e.message);close()})},[tid,toast,close])
+  const open=async x=>{try{setV({...(await api('/topic-versions/'+x.id)),current:x.current})}catch(e){toast(e.message)}}
+  const restore=async()=>{if(!confirm('Put this version back? What is there now stays in the history, so you can undo it.'))return;setBusy(true)
+    try{await api(`/topic-versions/${v.id}/restore`,{method:'POST'});toast('Version restored');done()}catch(e){toast(e.message);setBusy(false)}}
+  if(v){const changed=Object.keys(FIELD_LABEL).filter(k=>v[k]!==v.now[k])
+    return <Sheet close={close}><button className="link" onClick={()=>setV(null)}><ChevronLeft size={16}/> All versions</button>
+      <h3>{v.saved_at?when(v.saved_at):'Earlier version'}</h3><p className="known">{v.note}{v.current?' · this is the current text':''}</p>
+      {!changed.length&&<p className="known">Same as the current text.</p>}
+      {changed.map(k=><div key={k} className="qbox"><b>{FIELD_LABEL[k]}</b><p className="known" style={{margin:'2px 0 8px'}}>Red lines are in this version only. Green lines are in the current text.</p>
+        <div className="diff">{lineDiff(v[k],v.now[k]).map((l,i)=><div key={i} className={'dl '+l.k}>{l.t||'\u00a0'}</div>)}</div></div>)}
+      {!v.current&&<button className="btn" disabled={busy} onClick={restore}>Restore this version</button>}<button className="btn ghost" onClick={close}>Close</button></Sheet>}
+  return <Sheet close={close}><h3>Version history</h3><p className="known">Every save is kept (the latest {100}). Pick one to compare it with the current text.</p>
+    {!list?<div className="sk"/>:!list.length?<p className="known">No versions recorded yet. They appear the next time this topic is saved.</p>
+      :list.map(x=><button key={x.id} className="row" style={{width:'100%',textAlign:'left',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):'Before history began'}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">Current</span>}<ChevronRight size={16}/></button>)}
+    <button className="btn ghost" onClick={close}>Close</button></Sheet>}
 function Topic({id:first,back,toast,role}){
-  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false)
+  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false)
   const opened=useRef(false),jump=nid=>{opened.current=false;setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>toast(e.message))},[id,v])  // opening starts it, after the page has loaded
@@ -342,7 +367,8 @@ function Topic({id:first,back,toast,role}){
     <div className="qbox" style={{marginTop:0}}><div className="row"><div>{t.learning_due_at?when(t.learning_due_at):'No deadline'}<small>Learn by</small></div>{t.overdue&&role==='student'&&<span className="pill off">Overdue</span>}</div>
       {role==='student'&&<><div className="row"><div>{STATUS[t.status]}{t.status==='completed'&&t.completed_at&&' on '+when(t.completed_at)+(t.late?', after the deadline':'')}<small>Your status</small></div></div>
         {t.status==='completed'?<button className="btn ghost" onClick={()=>setDone(false)}>Mark as not completed</button>:<button className="btn" onClick={()=>setDone(true)}><Check size={16}/> Mark as completed</button>}</>}</div>
-    {t.can_edit&&!pv&&<button className="tool" onClick={()=>setPv(true)}><Eye size={14}/> Preview as student</button>}
+    {t.can_edit&&!pv&&<><button className="tool" onClick={()=>setPv(true)}><Eye size={14}/> Preview as student</button><button className="tool" onClick={()=>setHist(true)}><History size={14}/> Version history</button></>}
+    {hist&&<HistorySheet tid={id} toast={toast} close={()=>setHist(false)} done={()=>{setHist(false);setV(v+1)}}/>}
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
     <div className="tabs">{[['notes','Notes'],['explain','Explain'],['answer','Sample answer']].map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}

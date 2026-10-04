@@ -98,6 +98,11 @@ class Topic(Base):
     published = Column(Boolean, default=True)  # drafts are visible to admins and the course's owner only
     position = Column(Integer, nullable=True)  # order within the unit, set by the course's owner
     learning_due_at = Column(DateTime, nullable=True)  # learn-by deadline, a UTC instant like every timestamp here; null = no deadline
+class TopicVersion(Base):  # a snapshot of a topic's text each time it is saved, so an earlier version can be read and restored
+    __tablename__ = "topic_versions"
+    id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
+    title = Column(String(200)); content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
+    saved_by = Column(Integer, nullable=True); saved_at = Column(DateTime, default=dt.datetime.utcnow); note = Column(String(200), default="")
 class Quiz(Base):  # a multiple-choice quiz attached to a unit
     __tablename__ = "quizzes"
     id = Column(Integer, primary_key=True); unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), index=True); course_id = Column(Integer, index=True)
@@ -975,6 +980,21 @@ def course_fields(b, s):
     sem = s.get(Semester, b.semester_id)
     if not sem: raise HTTPException(400, "Choose a semester for this course")
     return {"name": b.name, "semester_id": sem.id, "program_id": sem.program_id}
+VFIELDS = ("title", "content", "sample_content", "question_pattern", "guideline")
+VERSIONS_KEPT = 100
+def topic_state(t): return {k: getattr(t, k) or "" for k in VFIELDS}
+def record_version(s, t, before, user_id, note=""):
+    """Call after a topic's text changed. before = topic_state() from before the change, or None for a new topic. Nothing is stored when the text did not change.
+    A topic that predates version history first gets its old text kept as the baseline, so the first edit can be undone too."""
+    now = topic_state(t)
+    if before is not None and before == now: return False
+    if t.id is None: s.flush()
+    if before is not None and not s.query(TopicVersion.id).filter_by(topic_id=t.id).first():
+        s.add(TopicVersion(topic_id=t.id, saved_by=None, saved_at=dt.datetime.utcnow() - dt.timedelta(seconds=1), note="Before the first recorded edit", **before))
+    s.add(TopicVersion(topic_id=t.id, saved_by=user_id, note=note[:200], **now)); s.flush()
+    old = [i for (i,) in s.query(TopicVersion.id).filter_by(topic_id=t.id).order_by(TopicVersion.id.desc()).offset(VERSIONS_KEPT)]
+    if old: s.query(TopicVersion).filter(TopicVersion.id.in_(old)).delete(synchronize_session=False)
+    return True
 def topic_fields(b, s):
     un = s.get(Unit, b.unit_id)
     if not un: raise HTTPException(400, "Choose a unit for this topic")
@@ -1023,7 +1043,8 @@ def new_unit(b: UnitIn, u: User = Depends(staff), s: Session = Depends(db)):
 @app.post("/api/topics")
 def new_topic(b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
     f = topic_fields(b, s); need_edit(u, f["course_id"], s)
-    return save_row(Topic(**{**f, "published": b.published, "position": next_pos(s, Topic, unit_id=b.unit_id)}), u, s)
+    t = Topic(**{**f, "published": b.published, "position": next_pos(s, Topic, unit_id=b.unit_id)}); t.created_by = u.id; s.add(t); s.flush()
+    record_version(s, t, None, u.id, "Created"); s.commit(); return {"id": t.id}
 @app.put("/api/programs/{rid}")
 def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), {"name": program_name(b.name, s, rid)}, s)
 @app.put("/api/semesters/{rid}")
@@ -1062,7 +1083,9 @@ def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depe
     f = topic_fields(b, s); need_edit(u, f["course_id"], s)
     if f["course_id"] != old and u.role != "admin": raise HTTPException(403, "A topic can only move to another unit of the same course")
     if f["unit_id"] != x.unit_id: f["position"] = next_pos(s, Topic, unit_id=f["unit_id"])
-    return update(x, f, s)  # published only changes when it is sent: saving content never publishes a draft
+    before = topic_state(x)
+    for k, v in f.items(): setattr(x, k, v)  # published only changes when it is sent: saving content never publishes a draft
+    record_version(s, x, before, u.id, "Edited"); s.commit(); return {"ok": True}
 class OrderIn(BaseModel): ids: list[int]
 def reorder(rows, ids):
     if len(ids) != len(set(ids)) or set(ids) != {r.id for r in rows}: raise HTTPException(400, "Send every item exactly once, in the new order")
@@ -1223,7 +1246,7 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
 def drop_topics(s, cond):  # topics with their reading progress, bookmarks and saved AI answers (SQLite would not cascade them)
     ids = [i for (i,) in s.query(Topic.id).filter(cond)]
     if ids:
-        for m in (Progress, Bookmark, AICache): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
+        for m in (Progress, Bookmark, AICache, TopicVersion): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
         s.query(Topic).filter(Topic.id.in_(ids)).delete(synchronize_session=False)
 def drop_quizzes(s, cond):
     ids = [q.id for q in s.query(Quiz).filter(cond)]
@@ -1319,10 +1342,12 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
             vals = {k: v[k] for k in TEXT_COLS if v.get(k)}
             t = cache["topic"].get((un.id, v["topic"].lower()))
             if t:
+                before = topic_state(t)
                 for k, val in vals.items(): setattr(t, k, val)
-                updated += bool(vals)
+                updated += bool(vals); record_version(s, t, before, a.id, "Imported from CSV")
             else:
-                get("topic", (un.id, v["topic"].lower()), lambda: Topic(title=v["topic"], unit_id=un.id, course_id=co.id, position=next_pos(s, Topic, unit_id=un.id), **vals))
+                nt = get("topic", (un.id, v["topic"].lower()), lambda: Topic(title=v["topic"], unit_id=un.id, course_id=co.id, position=next_pos(s, Topic, unit_id=un.id), **vals))
+                record_version(s, nt, None, a.id, "Imported from CSV")
             valid += 1
         s.rollback() if b.dry_run else s.commit()
     except Exception:
@@ -1336,6 +1361,31 @@ def full(t, s):
     return {"id": t.id, "title": t.title, "course_id": co.id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
             "semester": sem.name if sem else "", "program": (s.get(Program, sem.program_id if sem else co.program_id) or Program(name="")).name,
             "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
+def version_row(v, names, cur): return {"id": v.id, "saved_at": (v.saved_at.isoformat() + "Z") if v.saved_at else None, "by": names.get(v.saved_by) if v.saved_by else None, "note": v.note or "",
+                                          "current": all((getattr(v, k) or "") == cur[k] for k in VFIELDS)}
+@app.get("/api/topics/{tid}/versions")
+def topic_versions(tid: int, u: User = Depends(staff), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    need_edit(u, topic_course_id(t, s), s)
+    rows = s.query(TopicVersion).filter_by(topic_id=tid).order_by(TopicVersion.id.desc()).limit(VERSIONS_KEPT).all()
+    names = {x.id: x.name for x in s.query(User).filter(User.id.in_({r.saved_by for r in rows if r.saved_by} or {0}))}; cur = topic_state(t)
+    return [version_row(v, names, cur) for v in rows]
+def version_or_404(vid, u, s):
+    v = s.get(TopicVersion, vid); t = s.get(Topic, v.topic_id) if v else None
+    if not t: raise HTTPException(404, "Version not found")
+    need_edit(u, topic_course_id(t, s), s); return v, t
+@app.get("/api/topic-versions/{vid}")
+def topic_version(vid: int, u: User = Depends(staff), s: Session = Depends(db)):
+    v, t = version_or_404(vid, u, s)
+    return {"id": v.id, "topic_id": t.id, "saved_at": (v.saved_at.isoformat() + "Z") if v.saved_at else None, "note": v.note or "", **{k: getattr(v, k) or "" for k in VFIELDS}, "now": topic_state(t)}
+@app.post("/api/topic-versions/{vid}/restore")
+def restore_topic_version(vid: int, u: User = Depends(staff), s: Session = Depends(db)):  # puts an old text back as the newest version; nothing is lost, the text it replaces stays in the history
+    v, t = version_or_404(vid, u, s); before = topic_state(t)
+    for k in VFIELDS: setattr(t, k, getattr(v, k) or "")
+    if not t.title.strip(): raise HTTPException(400, "That version has no title")
+    record_version(s, t, before, u.id, f"Restored the version of {v.saved_at.strftime('%d %b %Y %H:%M') if v.saved_at else 'earlier'} UTC"); s.commit()
+    return {"ok": True}
 def topic_neighbours(t, edit, s):  # the topics before and after this one in its unit, in the order the course shows them; drafts only for those who can edit
     sibs = [x for x in s.query(Topic).filter(Topic.unit_id == t.unit_id).order_by(*ORDER.get(Topic, (Topic.id,))) if edit or x.published is not False] if t.unit_id else []
     i = next((k for k, x in enumerate(sibs) if x.id == t.id), None)

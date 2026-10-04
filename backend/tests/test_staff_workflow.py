@@ -1,3 +1,4 @@
+import main
 from main import Session_, User
 
 def tree(env): return env.c.get("/api/tree", headers=env.admin).json()
@@ -68,3 +69,51 @@ def test_bulk_disable_of_faculty_reports_courses_left_without_an_owner(env):
     assert env.c.put(f"/api/courses/{cid}/owner", headers=env.admin, json={"user_id": uid("fac@x.com")}).status_code == 200
     r = env.c.post("/api/admin/users/bulk", headers=env.admin, json={"ids": [uid("fac@x.com")], "action": "disable"}).json()
     assert r["changed"] == 1 and r["courses_needing_owner"] == 1
+
+def first_topic(env):
+    return tree(env)[0]["semesters"][0]["courses"][0]["units"][0]["topics"][0]["id"]
+
+def test_topic_versions_record_edits_keep_a_baseline_and_restore_without_losing_anything(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,original\n")
+    tid = first_topic(env); un = tree(env)[0]["semesters"][0]["courses"][0]["units"][0]["id"]
+    body = lambda **k: {"title": "Water", "unit_id": un, "content": "original", **k}
+    vs = lambda: env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).json()
+    assert [v["note"] for v in vs()] == ["Imported from CSV"] and vs()[0]["current"]
+    assert env.c.put(f"/api/topics/{tid}", headers=env.admin, json=body()).status_code == 200 and len(vs()) == 1  # saving unchanged text adds nothing
+    env.c.put(f"/api/topics/{tid}", headers=env.admin, json=body(content="second draft"))
+    env.c.put(f"/api/topics/{tid}", headers=env.admin, json=body(content="third draft", guideline="g"))
+    got = vs(); assert [v["note"] for v in got] == ["Edited", "Edited", "Imported from CSV"] and got[0]["current"] and not got[1]["current"] and got[0]["by"] == "admin@x.com"
+    old = env.c.get(f"/api/topic-versions/{got[2]['id']}", headers=env.admin).json()
+    assert old["content"] == "original" and old["now"]["content"] == "third draft" and old["topic_id"] == tid
+    assert env.c.post(f"/api/topic-versions/{got[2]['id']}/restore", headers=env.admin).status_code == 200
+    assert env.c.get(f"/api/topics/{tid}", headers=env.admin).json()["content"] == "original" and env.c.get(f"/api/topics/{tid}", headers=env.admin).json()["guideline"] == ""
+    after = vs(); assert len(after) == 4 and after[0]["note"].startswith("Restored") and after[0]["current"]
+    assert any(env.c.get(f"/api/topic-versions/{v['id']}", headers=env.admin).json()["content"] == "third draft" for v in after)  # what it replaced is still there
+
+def test_old_topic_gets_a_baseline_on_first_edit_and_permissions_and_deletes_hold(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,w\n")
+    tid = first_topic(env); un = tree(env)[0]["semesters"][0]["courses"][0]["units"][0]["id"]
+    with Session_() as s: s.query(main.TopicVersion).delete(); s.commit()  # as if the topic predates version history
+    assert env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).json() == []
+    env.c.put(f"/api/topics/{tid}", headers=env.admin, json={"title": "Water", "unit_id": un, "content": "changed"})
+    got = env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).json()
+    assert [v["note"] for v in got] == ["Edited", "Before the first recorded edit"] and got[1]["by"] is None
+    assert env.c.get(f"/api/topic-versions/{got[1]['id']}", headers=env.admin).json()["content"] == "w"
+    for hd in (env.stu, env.fac):  # students never; faculty only for courses they own
+        assert env.c.get(f"/api/topics/{tid}/versions", headers=hd).status_code == 403
+        assert env.c.get(f"/api/topic-versions/{got[0]['id']}", headers=hd).status_code == 403
+        assert env.c.post(f"/api/topic-versions/{got[0]['id']}/restore", headers=hd).status_code == 403
+    assert env.c.get("/api/topic-versions/9999", headers=env.admin).status_code == 404
+    assert env.c.delete(f"/api/topics/{tid}", headers=env.admin).status_code == 200
+    with Session_() as s: assert s.query(main.TopicVersion).count() == 0
+    assert env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).status_code == 404
+
+def test_history_is_capped_and_a_csv_reimport_is_recorded(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,v0\n")
+    tid = first_topic(env)
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,v1\n")
+    assert [v["note"] for v in env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).json()] == ["Imported from CSV", "Imported from CSV"]
+    un = tree(env)[0]["semesters"][0]["courses"][0]["units"][0]["id"]
+    for i in range(main.VERSIONS_KEPT + 5): env.c.put(f"/api/topics/{tid}", headers=env.admin, json={"title": "Water", "unit_id": un, "content": f"e{i}"})
+    got = env.c.get(f"/api/topics/{tid}/versions", headers=env.admin).json()
+    assert len(got) == main.VERSIONS_KEPT and got[0]["current"]

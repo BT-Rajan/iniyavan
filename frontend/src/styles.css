@@ -140,3 +140,6 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .actbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom));z-index:7;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:var(--s1);border:1px solid var(--line);box-shadow:0 8px 30px rgba(0,0,0,.25);max-width:min(92vw,520px);width:max-content}
 .actbar b{margin-right:4px}.actbar .tool{margin:0}
 @media (min-width:900px){.actbar{left:calc(264px + (100vw - 264px)/2)}}
+.diff{font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;border-radius:8px;overflow:auto;max-height:34vh;border:1px solid var(--line);background:var(--s1)}
+.dl{padding:1px 8px;white-space:pre-wrap;overflow-wrap:anywhere}.dl.del{background:var(--badbg);color:var(--bad)}.dl.add{background:var(--okbg);color:var(--ok)}.dl.same{color:var(--mut)}
+.dl.del::before{content:"− "}.dl.add::before{content:"+ "}.dl.same::before{content:"  "}
