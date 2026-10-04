@@ -110,6 +110,17 @@ Set `SMTP_HOST`, `SMTP_FROM` and `APP_URL` in `.env` (plus `SMTP_PORT`, `SMTP_TL
 - Limits: 3 emails an hour per account and 20 requests an hour per address.
 - Without SMTP settings the sign-in page says "Ask your admin to reset it", and the admin Reset button still works. **AI & email** (admin) shows whether email is on and can send a test email to you.
 
+## Self-registration
+
+Off by default. Turn it on under Settings > Self-registration. It also needs email set up (`SMTP_HOST`, `SMTP_FROM`, `APP_URL`, see the forgot-password section); without that it stays closed.
+
+- The sign-in page shows "Create an account". People give full name, institution, ID number, email, phone and a password.
+- A 6-digit code is emailed (valid 10 minutes, 5 tries, resend after 30 seconds, at most 8 codes per email). **No account exists until the code is verified.** Then they are signed in as students.
+- The sign-up form gives the same answer whether or not an email already has an account (an existing address gets a notice by email), and an institution + ID number can only be used once.
+- Optional "only these email domains" (for example `college.edu`) limits who can register.
+- They arrive with no program or semester. Find them in Users (marked "Self-registered"; search by name, email, ID or phone), then use Select several > Move.
+- **AI uses their own key.** Self-registered people never use the shared admin key. They add a DeepSeek key under "My AI key"; it is checked with DeepSeek, then stored encrypted (derived from `JWT_SECRET`, so changing that secret means they add their key again). Until they do, AI shows as off for them.
+
 ## Strengths and weak areas
 Authors tie each quiz question to the topic it tests (the "Topic this tests" menu in the quiz editor; untied questions count under their unit). From each student's **latest** result in each published quiz the app works out, per topic, what share they got right: **80% or more is a strength**, **below 60% needs another round of study**, and in between is "getting there" (`STRONG` and `WEAK` in `backend/main.py`). A retake replaces the earlier result, so improving moves a topic up.
 - **After a quiz** the student sees "How you did by topic" with the weakest first and a **Study again** button that opens the topic. They still don't get the answer key.

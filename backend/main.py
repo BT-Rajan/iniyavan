@@ -1,5 +1,5 @@
 from collections import defaultdict
-import csv, io, json, logging, os, re, smtplib, hashlib, hmac, secrets, datetime as dt, httpx, jwt
+import base64, csv, io, json, logging, os, re, smtplib, hashlib, hmac, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -37,6 +37,15 @@ class User(Base):
     must_change = Column(Boolean, default=False)  # set when an admin chose the password; cleared once the user picks their own
     program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
     semester = Column(Integer, nullable=True)  # current semester, 1 to 8
+    institution = Column(String(150), nullable=True); id_number = Column(String(60), nullable=True); phone = Column(String(30), nullable=True)  # given at self-registration
+    self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email; they use their own AI key, never the shared one
+    ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
+class PendingRegistration(Base):  # someone who has asked for an account but has not yet entered the emailed code; becomes a User only when they do
+    __tablename__ = "pending_registrations"
+    id = Column(Integer, primary_key=True); email = Column(String(190), unique=True, index=True)
+    name = Column(String(100)); institution = Column(String(150)); id_number = Column(String(60)); phone = Column(String(30)); pw = Column(String(200))
+    code_hash = Column(String(64)); attempts = Column(Integer, default=0); sends = Column(Integer, default=1)
+    ip = Column(String(64), index=True); created_at = Column(DateTime, default=dt.datetime.utcnow); last_sent_at = Column(DateTime, default=dt.datetime.utcnow); expires_at = Column(DateTime)
 class CourseFaculty(Base):  # legacy faculty-course assignments from before course owners; kept for reference, grants nothing
     __tablename__ = "course_faculty"
     id = Column(Integer, primary_key=True)
@@ -211,7 +220,7 @@ async def secure_headers(request: Request, call_next):
     return r
 
 @app.get("/api/config")
-def config(s: Session = Depends(db)): return {"name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on()}
+def config(s: Session = Depends(db)): return {"self_registration": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on()}
 class Branding(BaseModel): name: str | None = None; logo_url: str | None = None; remove_logo: bool = False
 LOGO_URL = re.compile(r"/api/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)")
 @app.put("/api/admin/branding")
@@ -270,6 +279,85 @@ def reset_password(b: ResetIn, s: Session = Depends(db)):
     u.pw = hp(b.new_password); u.must_change = False; r.used = True  # ends every old session and any older reset links
     s.query(PasswordReset).filter(PasswordReset.user_id == u.id, PasswordReset.id != r.id).delete(); s.query(LoginFail).filter_by(email=u.email).delete(); s.commit()
     return {"token": make_token(u), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": False}}
+# ---- self-registration with an emailed one-time code ----
+from cryptography.fernet import Fernet, InvalidToken
+def _fernet(): return Fernet(base64.urlsafe_b64encode(hashlib.sha256(b"user-ai-key|" + SECRET.encode()).digest()))
+def seal(v): return _fernet().encrypt(v.encode()).decode()  # a user's own AI key is stored encrypted; changing JWT_SECRET makes saved keys unreadable, so people simply enter them again
+def unseal(v):
+    try: return _fernet().decrypt(v.encode()).decode()
+    except (InvalidToken, ValueError, TypeError): return ""
+OTP_MINUTES, OTP_MAX_TRIES, OTP_MAX_SENDS, OTP_COOLDOWN = 10, 5, 8, 30
+def otp_hash(email, code): return hmac.new(SECRET.encode(), f"{email}|{code}".encode(), hashlib.sha256).hexdigest()
+def reg_open(s): return setting(s, "self_registration") == "1" and mail_on()
+def allowed_domains(s): return [d for d in re.split(r"[,\s]+", setting(s, "allowed_domains").lower()) if d]
+PHONE = re.compile(r"\+?[0-9][0-9 ()\-]{5,24}[0-9]")
+IDNUM = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ./_\-]{0,58}[A-Za-z0-9]|[A-Za-z0-9]")
+def deliver_otp(email, name, code, exists=False):
+    try:
+        if exists: send_mail(email, f"Your {APP_NAME} account", f"Hi {name},\n\nSomeone tried to register {email} on {APP_NAME}, but that email already has an account. If it was you, sign in, or use \"Forgot your password?\" on the sign-in page. If it was not you, ignore this message.")
+        else: send_mail(email, f"Your {APP_NAME} verification code: {code}", f"Hi {name},\n\nYour verification code is {code}. It works for {OTP_MINUTES} minutes. Enter it in the app to finish creating your {APP_NAME} account.\n\nIf you did not ask for this, ignore this message; no account is created without the code.")
+    except Exception as e: log.warning("registration email failed: %s", type(e).__name__)
+class RegisterIn(BaseModel): name: str; institution: str; id_number: str; email: str; phone: str; password: str
+def clean_registration(b, s):
+    name, inst, idn, email, phone = " ".join(b.name.split()), " ".join(b.institution.split()), " ".join(b.id_number.split()), b.email.strip().lower(), b.phone.strip()
+    if not 2 <= len(name) <= 100: raise HTTPException(400, "Enter your full name")
+    if not 2 <= len(inst) <= 150: raise HTTPException(400, "Enter your institution")
+    if not IDNUM.fullmatch(idn): raise HTTPException(400, "Enter your ID number (letters, numbers, spaces and - / . _ only)")
+    if not EMAIL.match(email) or len(email) > 190: raise HTTPException(400, "Enter a valid email")
+    if not PHONE.fullmatch(phone) or not 7 <= sum(ch.isdigit() for ch in phone) <= 15: raise HTTPException(400, "Enter a valid phone number, for example +91 98765 43210")
+    if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters for the password")
+    if b.password.strip().lower() == email: raise HTTPException(400, "Password can't be your email")
+    doms = allowed_domains(s)
+    if doms and not any(email.endswith("@" + d) or email.endswith("." + d) for d in doms): raise HTTPException(400, "Use your institution email address (" + ", ".join("@" + d for d in doms) + ")")
+    return name, inst, idn, email, phone
+def same_id(s, inst, idn):
+    return s.query(User.id).filter(func.lower(User.institution) == inst.lower(), func.lower(User.id_number) == idn.lower()).first() is not None
+@app.get("/api/register/status")
+def register_status(s: Session = Depends(db)): return {"open": reg_open(s), "domains": allowed_domains(s)}
+@app.post("/api/register/start")
+def register_start(b: RegisterIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
+    if not reg_open(s): raise HTTPException(403, "Self-registration is not open here. Ask your admin for an account.")
+    name, inst, idn, email, phone = clean_registration(b, s); ip, now = client_ip(request), dt.datetime.utcnow()
+    if s.query(func.count(PendingRegistration.id)).filter(PendingRegistration.ip == ip, PendingRegistration.last_sent_at >= now - dt.timedelta(hours=1)).scalar() >= 15:
+        raise HTTPException(429, "Too many attempts from this network. Please try again in an hour.")
+    reply = {"ok": True, "email": email, "message": f"We sent a 6-digit code to {email}. It works for {OTP_MINUTES} minutes."}
+    if s.query(User.id).filter_by(email=email).first():  # the same answer as a new address, so nobody can use this form to find out who has an account
+        if s.query(func.count(PendingRegistration.id)).filter(PendingRegistration.ip == ip, PendingRegistration.last_sent_at >= now - dt.timedelta(minutes=1)).scalar() < 3: bg.add_task(deliver_otp, email, name, "", True)
+        return reply
+    if same_id(s, inst, idn): raise HTTPException(400, "An account already exists for that institution ID. Sign in, or ask your admin.")
+    code = f"{secrets.randbelow(10 ** 6):06d}"; p = s.query(PendingRegistration).filter_by(email=email).first()
+    if p:
+        if p.last_sent_at and (now - p.last_sent_at).total_seconds() < OTP_COOLDOWN: raise HTTPException(429, "Wait a moment before asking for another code.")
+        if p.sends >= OTP_MAX_SENDS: raise HTTPException(429, "Too many codes were requested for this email. Please try again tomorrow.")
+        p.sends += 1
+    else: p = PendingRegistration(email=email, sends=1, created_at=now); s.add(p)
+    p.name, p.institution, p.id_number, p.phone, p.pw = name, inst, idn, phone, hp(b.password); p.code_hash = otp_hash(email, code); p.attempts = 0; p.ip = ip; p.last_sent_at = now
+    p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit(); bg.add_task(deliver_otp, email, name, code)
+    return reply
+class VerifyIn(BaseModel): email: str; code: str
+@app.post("/api/register/verify")
+def register_verify(b: VerifyIn, s: Session = Depends(db)):
+    email, code, now = b.email.strip().lower()[:190], "".join(ch for ch in b.code if ch.isdigit()), dt.datetime.utcnow()
+    p = s.query(PendingRegistration).filter_by(email=email).first(); bad = HTTPException(400, "That code has expired or is not valid. Ask for a new one.")
+    if not p or p.expires_at < now or p.attempts >= OTP_MAX_TRIES: raise bad
+    if not hmac.compare_digest(p.code_hash, otp_hash(email, code)):
+        p.attempts += 1; left = OTP_MAX_TRIES - p.attempts; s.commit()
+        raise HTTPException(400, f"That code is not right. {left} {'try' if left == 1 else 'tries'} left." if left else "Too many wrong codes. Ask for a new one.")
+    if s.query(User.id).filter_by(email=email).first() or same_id(s, p.institution, p.id_number): s.delete(p); s.commit(); raise bad
+    u = User(name=p.name, email=email, pw=p.pw, role="student", active=True, must_change=False, institution=p.institution, id_number=p.id_number, phone=p.phone, self_registered=True)
+    s.add(u); s.delete(p)
+    try: s.commit()
+    except IntegrityError: s.rollback(); raise bad
+    return {"token": make_token(u), "user": me_json(u)}
+@app.post("/api/register/resend")
+def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
+    email, now = b.email.strip().lower()[:190], dt.datetime.utcnow(); p = s.query(PendingRegistration).filter_by(email=email).first()
+    reply = {"ok": True, "message": f"If a registration is waiting for {email}, a new code is on its way."}
+    if not reg_open(s) or not p: return reply
+    if (now - p.last_sent_at).total_seconds() < OTP_COOLDOWN: raise HTTPException(429, "Wait a moment before asking for another code.")
+    if p.sends >= OTP_MAX_SENDS: raise HTTPException(429, "Too many codes were requested for this email. Please try again tomorrow.")
+    code = f"{secrets.randbelow(10 ** 6):06d}"; p.code_hash = otp_hash(email, code); p.attempts = 0; p.sends += 1; p.last_sent_at = now; p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit()
+    bg.add_task(deliver_otp, email, p.name, code); return reply
 @app.get("/manifest.json")  # served dynamically so the installed app carries APP_NAME
 def manifest():
     icons = [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
@@ -370,6 +458,9 @@ def learning_state_columns(c):  # topics.learning_due_at and progress.completed_
         dups = c.execute(text("SELECT user_id, topic_id FROM progress GROUP BY user_id, topic_id HAVING COUNT(*) > 1")).all()
         if dups: log.warning("progress has %d duplicated student/topic pairs; the unique key was not added", len(dups))
         else: c.execute(text("CREATE UNIQUE INDEX uq_progress_user_topic ON progress (user_id, topic_id)"))
+def registration_columns(c):  # users.institution, id_number, phone, self_registered, ai_key; nobody is marked self-registered retroactively
+    for col, typ in (("institution", "VARCHAR(150) NULL"), ("id_number", "VARCHAR(60) NULL"), ("phone", "VARCHAR(30) NULL"), ("self_registered", "TINYINT(1) NOT NULL DEFAULT 0"), ("ai_key", "TEXT NULL")):
+        _addcol("users", col, typ)(c)
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
@@ -377,7 +468,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0007_repair_parent_copies", repair_parent_copies), ("0008_subjects_faculty_owner_id", add_faculty_owner),
               ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers),
               ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns),
-              ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL"))]
+              ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL")),
+              ("0015_users_self_registration", registration_columns)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -392,6 +484,7 @@ def boot():
     require_secret()
     upgrade_schema()
     with Session_() as s: s.query(PasswordReset).filter(PasswordReset.created_at < dt.datetime.utcnow() - dt.timedelta(days=2)).delete(); s.commit()
+    with Session_() as s: s.query(PendingRegistration).filter(PendingRegistration.created_at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
     with Session_() as s: s.query(AuditLog).filter(AuditLog.at < dt.datetime.utcnow() - dt.timedelta(days=400)).delete(); s.commit()
     with Session_() as s:
         for co in s.query(Course).all():  # topics without a unit go into "General"
@@ -416,6 +509,7 @@ def throttle(s, email, ip):  # 5 misses per account from one address, 20 per acc
 def note_fail(s, email, ip):
     s.add(LoginFail(email=email, ip=ip)); s.query(LoginFail).filter(LoginFail.at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
 def clear_fails(s, email, ip): s.query(LoginFail).filter_by(email=email, ip=ip).delete(); s.commit()
+def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": u.role != "student" or bool(u.program_id)}
 @app.post("/api/login")
 def login(b: Login, request: Request, s: Session = Depends(db)):
     global DUMMY
@@ -426,7 +520,7 @@ def login(b: Login, request: Request, s: Session = Depends(db)):
     if not u.active: raise HTTPException(403, "Account disabled. Ask your admin.")
     clear_fails(s, email, ip)
     if stale(u.pw) and not u.must_change: u.pw = hp(b.password); s.commit()  # quietly upgrade old hashes
-    return {"token": make_token(u), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}}
+    return {"token": make_token(u), "user": me_json(u)}
 @app.get("/api/admin/audit")
 def audit_list(q: str = "", limit: int = 100, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
     qy = s.query(AuditLog, User).outerjoin(User, User.id == AuditLog.user_id)
@@ -442,7 +536,7 @@ def health():
     except Exception: return JSONResponse({"ok": False, "db": False}, status_code=503)
     return {"ok": True, "db": True}
 @app.get("/api/me")
-def whoami(u: User = Depends(me)): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change)}
+def whoami(u: User = Depends(me)): return me_json(u)
 class PwChange(BaseModel): current: str; new_password: str
 @app.post("/api/me/password")
 def change_password(b: PwChange, request: Request, u: User = Depends(me), s: Session = Depends(db)):
@@ -531,13 +625,15 @@ class UserPatch(BaseModel):
     program_id: int | None = None; semester: int | None = None  # send null to clear
 USORT = {"name": (func.lower(User.name),), "role": (User.role, func.lower(User.name)), "program": (func.lower(func.coalesce(Program.name, "~")), User.semester, func.lower(User.name)),
          "semester": (func.coalesce(User.semester, 99), func.lower(User.name)), "newest": (User.id.desc(),)}
-def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester}
+def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester,
+                           "self_registered": bool(u.self_registered), "institution": u.institution, "id_number": u.id_number, "phone": u.phone, "own_ai_key": bool(u.ai_key)}
 @app.get("/api/admin/users")
 def users(q: str = "", program_id: int | None = None, semester: int | None = None, role: str = "", order: str = "role", limit: int = 50, offset: int = 0,
           _: User = Depends(admin), s: Session = Depends(db)):
     qs = s.query(User, Program.name).outerjoin(Program, Program.id == User.program_id)
     if q.strip():
-        like = f"%{q.strip().lower()}%"; conds = [func.lower(User.name).like(like), func.lower(User.email).like(like), func.lower(User.role).like(like), func.lower(Program.name).like(like)]
+        like = f"%{q.strip().lower()}%"; conds = [func.lower(User.name).like(like), func.lower(User.email).like(like), func.lower(User.role).like(like), func.lower(Program.name).like(like),
+                                                                       func.lower(func.coalesce(User.institution, "")).like(like), func.lower(func.coalesce(User.id_number, "")).like(like), func.coalesce(User.phone, "").like(like)]
         m = SEM.match(q.strip())
         if m: conds.append(User.semester == int(m.group(1)))  # "3", "sem 3" and "semester 3" find semester-3 students
         qs = qs.filter(or_(*conds))
@@ -750,18 +846,45 @@ async def deepseek(key, model, messages, max_tokens=None, timeout=45):
     return text, j.get("usage", {}).get("total_tokens", 0)
 def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
     return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
+def key_for(u, s):  # self-registered people use their own key and never the shared one; everyone else uses the admin's
+    return unseal(u.ai_key) if u.self_registered and u.ai_key else "" if u.self_registered else ai_key(s)
+NEEDS_OWN_KEY = "Add your own DeepSeek API key under AI key in the menu to use AI help."
 @app.get("/api/ai/status")
-def ai_status(u: User = Depends(me), s: Session = Depends(db)): return {"available": bool(ai_key(s))}
-class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False
+def ai_status(u: User = Depends(me), s: Session = Depends(db)): return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered)}
+class OwnKey(BaseModel): key: str
+@app.get("/api/me/ai-key")
+def my_ai_key(u: User = Depends(me)):
+    k = unseal(u.ai_key) if u.ai_key else ""
+    return {"own_key": bool(u.self_registered), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else ""}
+@app.put("/api/me/ai-key")
+async def set_my_ai_key(b: OwnKey, u: User = Depends(me), s: Session = Depends(db)):
+    if not u.self_registered: raise HTTPException(403, "Your account uses the key your admin saved. You do not need your own.")
+    k = b.key.strip()
+    if not 20 <= len(k) <= 200 or any(ch.isspace() for ch in k): raise HTTPException(400, "That does not look like a DeepSeek API key. Copy the whole key from your DeepSeek account.")
+    try: await deepseek(k, setting(s, "model", "deepseek-chat"), [{"role": "user", "content": "Reply with the word OK."}], max_tokens=5, timeout=20)
+    except httpx.HTTPStatusError as e: raise HTTPException(400, "DeepSeek rejected this key (" + str(e.response.status_code) + ")." + (" Check that you copied it correctly." if e.response.status_code in (401, 403) else " Check your DeepSeek balance."))
+    except Exception: raise HTTPException(400, "Could not reach DeepSeek to check the key. Try again in a moment.")
+    me_row = s.get(User, u.id); me_row.ai_key = seal(k); s.commit()
+    return {"ok": True, "key_hint": "…" + k[-4:]}
+@app.delete("/api/me/ai-key")
+def delete_my_ai_key(u: User = Depends(me), s: Session = Depends(db)):
+    s.get(User, u.id).ai_key = None; s.commit(); return {"ok": True}
+class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False; self_registration: bool | None = None; allowed_domains: str | None = None
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
-    return {"mail_on": mail_on(), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat")}
+    return {"mail_on": mail_on(), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
+            "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count()}
 @app.put("/api/admin/settings")
 def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
     for k, v in (("deepseek_key", b.deepseek_key), ("model", b.model)):
         if v and v.strip() and not (k == "deepseek_key" and b.remove_key): s.merge(Setting(k=k, v=v.strip()))
+    if b.self_registration is not None: s.merge(Setting(k="self_registration", v="1" if b.self_registration else "0"))
+    if b.allowed_domains is not None:
+        doms = [d.lstrip("@") for d in re.split(r"[,\s]+", b.allowed_domains.lower()) if d]
+        if not all(re.fullmatch(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}", d) for d in doms): raise HTTPException(400, "Enter email domains such as college.edu, separated by commas")
+        s.merge(Setting(k="allowed_domains", v=", ".join(doms)))
     s.commit(); return {"ok": True}
 @app.post("/api/admin/ai/test")
 async def test_ai(_: User = Depends(admin), s: Session = Depends(db)):
@@ -1518,7 +1641,8 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     check_topic_access(u, t, s)
     f = full(t, s)
     ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or ""]).encode()).hexdigest()
-    key = ai_key(s)
+    key = key_for(u, s)
+    if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
     if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")  # without a key AI is off, even for saved answers
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
@@ -1527,9 +1651,12 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     try: text, tokens = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": PROMPTS[kind]}, {"role": "user", "content": msg}], timeout=60)
     except httpx.HTTPStatusError as e:
         log.warning("DeepSeek answered %s", e.response.status_code)
+        if u.self_registered: raise HTTPException(503, f"DeepSeek refused your key ({e.response.status_code}). Check it, or your DeepSeek balance, under AI key in the menu.")
         raise ai_down(u, "DeepSeek refused the request (" + str(e.response.status_code) + "). Check the key, model name and balance under AI config.")
     except Exception as e:
-        log.warning("DeepSeek call failed: %s", type(e).__name__); raise ai_down(u, "DeepSeek did not answer.")
+        log.warning("DeepSeek call failed: %s", type(e).__name__)
+        if u.self_registered: raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
+        raise ai_down(u, "DeepSeek did not answer.")
     try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
     except Exception: s.rollback()
     return {"text": text, "cached": False}

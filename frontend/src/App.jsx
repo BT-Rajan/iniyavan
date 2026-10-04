@@ -38,19 +38,19 @@ const Logo=({src,size=40})=>src?<img className="logo" src={src} alt="" width={si
 const Lockup=({logo,name,size=40})=><div className="lockup"><Logo src={logo} size={size}/><b>{name}</b></div>
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme)
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
-  useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
+  useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
   useEffect(()=>{applyTheme(theme);if(theme!=='system')return;const m=matchMedia('(prefers-color-scheme: dark)'),f=()=>applyTheme('system');m.addEventListener('change',f);return()=>m.removeEventListener('change',f)},[theme])
   const pickTheme=t=>{setTheme(t);try{t==='system'?localStorage.removeItem('theme'):localStorage.theme=t}catch{/* private mode: the choice lasts until the page closes */}}
   useEffect(()=>{const k=e=>e.key==='Escape'&&setOpen(false);addEventListener('keydown',k);return()=>removeEventListener('keydown',k)},[])
   useEffect(()=>{document.body.style.overflow=open?'hidden':''},[open])
   if(!ready)return null
   if(resetTok)return <ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/>
-  if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset}/>
+  if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
-  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} go={go}/>}
@@ -58,7 +58,7 @@ export default function App(){
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
-    {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
+    {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
         <div className="dhead"><Logo src={logo} size={36}/><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
@@ -69,10 +69,11 @@ export default function App(){
     {msg&&<div className="toast" role="status">{msg}</div>}
   </Ctx.Provider>}
 
-function Login({onIn,toast,msg,appName,logo,canReset}){
+function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
   const [f,setF]=useState({email:'',password:''}),[b,setB]=useState(false),[mode,setMode]=useState('in'),[sent,setSent]=useState('')
   const go=async()=>{setB(true);try{const r=await api('/login',{method:'POST',body:f});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
   const forgot=async()=>{setB(true);try{setSent((await api('/forgot',{method:'POST',body:{email:f.email}})).message)}catch(e){toast(e.message)}setB(false)}
+  if(mode==='register')return <Register onIn={onIn} toast={toast} msg={msg} appName={appName} logo={logo} back={()=>setMode('in')}/>
   if(mode==='forgot')return <div className="login"><Lockup logo={logo} name={appName}/><h1>Forgot your password?</h1>{sent?<p>{sent}</p>:<><p>Enter your account email and we will send a link to choose a new one.</p>
     <label>Email</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
     <button className="btn" disabled={b||!f.email} onClick={forgot}>Send reset link</button></>}
@@ -81,7 +82,49 @@ function Login({onIn,toast,msg,appName,logo,canReset}){
     <label>Email</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
     <label>Password</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>Sign in</button>
-    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>Forgot password?</button>:<p className="known">Forgot your password? Ask your admin to reset it.</p>}{msg&&<div className="toast">{msg}</div>}</div>}
+    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>Forgot password?</button>:<p className="known">Forgot your password? Ask your admin to reset it.</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>Create an account</button>}{msg&&<div className="toast">{msg}</div>}</div>}
+
+function Register({onIn,toast,msg,appName,logo,back}){
+  const [f,setF]=useState({name:'',institution:'',id_number:'',email:'',phone:'',password:''}),[stage,setStage]=useState('form'),[code,setCode]=useState(''),[b,setB]=useState(false),[wait,setWait]=useState(0),[info,setInfo]=useState(''),[st,setSt]=useState({domains:[]})
+  useEffect(()=>{api('/register/status').then(setSt).catch(()=>{})},[])
+  useEffect(()=>{if(wait<=0)return;const t=setTimeout(()=>setWait(wait-1),1000);return()=>clearTimeout(t)},[wait])
+  const set=k=>e=>setF({...f,[k]:e.target.value}),ok=Object.values(f).every(v=>v.trim())
+  const start=async()=>{setB(true);try{const r=await api('/register/start',{method:'POST',body:f});setInfo(r.message);setStage('code');setWait(30)}catch(e){toast(e.message)}setB(false)}
+  const verify=async()=>{setB(true);try{const r=await api('/register/verify',{method:'POST',body:{email:f.email,code}});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
+  const resend=async()=>{try{await api('/register/resend',{method:'POST',body:{email:f.email}});toast('A new code is on its way');setWait(30);setCode('')}catch(e){toast(e.message)}}
+  if(stage==='code')return <div className="login"><Lockup logo={logo} name={appName}/><h1>Enter the code</h1><p>{info}</p>
+    <label htmlFor="otp">6-digit code</label><input id="otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} onKeyDown={e=>e.key==='Enter'&&code.length===6&&verify()} style={{letterSpacing:'.4em',fontSize:22,textAlign:'center'}}/>
+    <button className="btn" disabled={b||code.length!==6} onClick={verify}>Verify and create my account</button>
+    <button className="btn ghost" disabled={wait>0} onClick={resend}>{wait>0?`Send a new code in ${wait}s`:'Send a new code'}</button>
+    <button className="btn ghost" onClick={()=>{setStage('form');setCode('')}}>Change my details</button>{msg&&<div className="toast">{msg}</div>}</div>
+  return <div className="login"><Lockup logo={logo} name={appName}/><h1>Create an account</h1><p>We will email you a code to confirm your address.{st.domains.length>0&&' Use your institution email ('+st.domains.map(d=>'@'+d).join(', ')+').'}</p>
+    <label htmlFor="rn">Full name</label><input id="rn" autoComplete="name" value={f.name} onChange={set('name')}/>
+    <label htmlFor="ri">Institution</label><input id="ri" autoComplete="organization" value={f.institution} onChange={set('institution')}/>
+    <label htmlFor="rid">ID number</label><input id="rid" value={f.id_number} onChange={set('id_number')} placeholder="Roll or employee number"/>
+    <label htmlFor="re">Email</label><input id="re" type="email" autoComplete="email" value={f.email} onChange={set('email')}/>
+    <label htmlFor="rp">Phone</label><input id="rp" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} placeholder="+91 98765 43210"/>
+    <label htmlFor="rw">Password</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} onKeyDown={e=>e.key==='Enter'&&ok&&start()}/>
+    <p className="known">At least 8 characters. AI help on this account uses your own DeepSeek API key, which you add after signing in.</p>
+    <button className="btn" disabled={b||!ok} onClick={start}>Send me a code</button><button className="btn ghost" onClick={back}>Back to sign in</button>{msg&&<div className="toast">{msg}</div>}</div>}
+
+function MyAiKey({toast}){
+  const [d,setD]=useState(null),[key,setKey]=useState(''),[b,setB]=useState(false)
+  const load=()=>api('/me/ai-key').then(setD).catch(e=>toast(e.message));useEffect(()=>{load()},[])
+  const save=async()=>{setB(true);try{await api('/me/ai-key',{method:'PUT',body:{key}});setKey('');toast('Key saved. AI help is on.');load()}catch(e){toast(e.message)}setB(false)}
+  const del=async()=>{if(!confirm('Remove your key? AI help turns off for you until you add one again.'))return;try{await api('/me/ai-key',{method:'DELETE'});toast('Key removed');load()}catch(e){toast(e.message)}}
+  return <><Bar title="My AI key" sub={d?.key_set?'AI is on · key '+d.key_hint:'AI is off · no key yet'}/><div className="main">
+    <p className="known">AI explanations on your account use your own DeepSeek API key, so any usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.</p>
+    <label htmlFor="k">DeepSeek API key</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?'Paste a new key to replace the current one':'sk-…'}/>
+    <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?'Checking the key…':'Save key'}</button>
+    {d?.key_set&&<button className="btn ghost" onClick={del}>Remove my key</button>}</div></>}
+
+function SelfReg({cfg,run}){
+  const [dom,setDom]=useState(null);const on=!!cfg.self_registration,shown=dom??cfg.allowed_domains??''
+  return <><p className="known">{on?'On. The sign-in page shows “Create an account”. People confirm their email with a code, then you place them in a program and semester from Users (they show as Self-registered).':'Off. Only admins can create accounts.'} {!cfg.mail_on&&'Emailing codes needs SMTP set up first (see the email section below), so registration stays closed until it is.'} {cfg.self_registered_users>0&&`${cfg.self_registered_users} people have registered themselves so far.`}</p>
+    <label className="chk"><input type="checkbox" checked={on} onChange={e=>run(()=>api('/admin/settings',{method:'PUT',body:{self_registration:e.target.checked}}),e.target.checked?'Self-registration is on':'Self-registration is off')}/> Allow people to register themselves</label>
+    <label htmlFor="dom">Only these email domains (optional)</label><input id="dom" value={shown} onChange={e=>setDom(e.target.value)} placeholder="college.edu, mail.college.edu"/>
+    <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{allowed_domains:shown}}).then(()=>setDom(null)),'Domains saved')}>Save domains</button>
+    <p className="known">Self-registered people always use their own DeepSeek key, never yours.</p></>}
 
 function ResetPassword({token,toast,msg,done,leave,canReset,appName,logo}){
   const [ok,setOk]=useState(null),[f,setF]=useState({password:'',again:''}),[b,setB]=useState(false)
@@ -232,7 +275,7 @@ function Dashboard({user,toast,onOpen}){
   const need=ins?.needs_study.slice(0,3)||[]
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub="Here is where you are today"/><div className="main">
     {!tree&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
-    {tree&&!courses.length&&<p className="known">You are not enrolled in a course yet. Ask your admin to add you to one.</p>}
+    {tree&&!courses.length&&<p className="known">{user.self_registered&&!user.placed?'Your account is ready. An admin will place you in your program and semester, and your courses will appear here.':'You are not enrolled in a course yet. Ask your admin to add you to one.'}</p>}
     {resume&&<div className="hero"><small>{resume.status==='in_progress'?'Continue where you left off':'Start your first topic'}</small><h2 style={{fontSize:24}}>{resume.title}</h2><p>{resume.x.c.name} · {resume.unit.name}</p>
       <button className="btn inv" style={{marginTop:14}} onClick={()=>setTopic(resume.id)}>{resume.status==='in_progress'?'Continue':'Start'}</button></div>}
     {courses.length>0&&<><h3 style={{margin:'8px 0'}}>My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0
@@ -362,18 +405,18 @@ function HistorySheet({tid,close,done,toast}){
       :list.map(x=><button key={x.id} className="row" style={{width:'100%',textAlign:'left',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):'Before history began'}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">Current</span>}<ChevronRight size={16}/></button>)}
     <button className="btn ghost" onClick={close}>Close</button></Sheet>}
 function Topic({id:first,back,toast,role}){
-  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false)
+  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false)
   const opened=useRef(false),jump=nid=>{opened.current=false;setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>toast(e.message))},[id,v])  // opening starts it, after the page has loaded
   const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
-  useEffect(()=>{api('/ai/status').then(r=>setAiOk(r.available)).catch(()=>{})},[id])
+  useEffect(()=>{api('/ai/status').then(r=>{setAiOk(r.available);setOwnKey(!!r.own_key)}).catch(()=>{})},[id])
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
   if(editing)return <TopicEditor role={role} toast={toast} edit={{id}} done={()=>{setEditing(false);setV(v+1)}} cancel={()=>setEditing(false)}/>
   if(!t)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const flip=async()=>{const on=!bm;setBm(on);try{await api(`/topics/${id}/bookmark`,{method:on?'PUT':'DELETE'});toast(on?'Bookmarked':'Bookmark removed')}catch(e){setBm(!on);toast(e.message)}}
   const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai[k].text}</Md></div>
-    :aiOk===false?<p className="known">AI unavailable. Try again later.</p>
+    :aiOk===false?<p className="known">{ownKey?'Add your own DeepSeek API key under “My AI key” in the menu to use AI help.':'AI unavailable. Try again later.'}</p>
     :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?'Thinking…':k==='explain'?'Explain it to me':'Show a sample answer'}</button>{aiMsg&&<p className="known">{aiMsg}</p>}</>
   return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={<button className={'ic'+(bm?' on':'')} aria-label={bm?'Remove bookmark':'Bookmark this topic'} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
     {t.can_edit&&pv&&<div className="qbox" style={{marginTop:0}}><b>Previewing as a student</b><p className="known" style={{margin:'4px 0 8px'}}>This is what students see: no editing buttons, and drafts show as unavailable to them.</p><button className="btn ghost" style={{marginTop:0}} onClick={()=>setPv(false)}>Back to editing</button></div>}
@@ -500,7 +543,7 @@ function Users({toast,me}){
   const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem
   if(view)return <UserDetail id={view} me={me} progs={progs} toast={toast} back={()=>{setView(null);load()}}/>
   return <><Bar title="Users" sub={total+(filtered?' matches':' accounts')}/><div className="main">
-    <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search name, email, program or semester" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search name, email, ID, program or semester" value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters">
       <select aria-label="Filter by program" value={prog} onChange={e=>setProg(e.target.value)}><option value="">All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
       <select aria-label="Filter by semester" value={sem} onChange={e=>setSem(e.target.value)}><option value="">All semesters</option>{SEMS.map(n=><option key={n} value={n}>Semester {n}</option>)}</select>
@@ -511,7 +554,7 @@ function Users({toast,me}){
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead" aria-hidden="true"><span>Name</span><span>Program</span><span>Sem</span></div>}
     {items.map(u=><button key={u.id} className={'utr'+(selMode?' sel':'')+(sel.includes(u.id)?' on':'')} onClick={()=>selMode?setSel(sel.includes(u.id)?sel.filter(i=>i!==u.id):[...sel,u.id]):setView(u.id)} aria-label={(selMode?(sel.includes(u.id)?'Deselect ':'Select '):'Open ')+u.name} aria-pressed={selMode?sel.includes(u.id):undefined}>
-      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?'Admin':'Faculty'}</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
+      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active||u.self_registered)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?'Admin':'Faculty'}</span>}{u.self_registered&&<span className="pill">Self-registered</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
       <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
     {!items.length&&<p className="known">{filtered?'No one matches that search.':'No users yet.'}</p>}
     {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
@@ -544,7 +587,7 @@ function UserDetail({id,me,progs,back,toast}){
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>Topics read</div><div className="stat"><b>{u.reads}</b>Total reads</div></div>
     <h3 style={{margin:'24px 0 4px'}}>Profile</h3>
-    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set','Semester')}{row(day(u.last_active),'Last active')}
+    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set','Semester')}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(u.own_ai_key?'Has added their own key':'No key yet · AI is off for them','AI (self-registered, uses their own key)')}</>}{row(day(u.last_active),'Last active')}
     {u.role==='faculty'&&<><h3 style={{margin:'28px 0 4px'}}>Courses they own</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">None yet. They can read published content but edit nothing until they own a course.</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>Assign courses</button></>}
     <h3 style={{margin:'28px 0 4px'}}>Recently read</h3>
     {u.recent.length?u.recent.map((x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads} reads, last {day(x.last_read)}</small></div></div>):<p className="known">No reading activity yet.</p>}
@@ -683,7 +726,8 @@ function AiConfig({toast,onBrand}){
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key,model}}).then(()=>setKey('')),'AI settings saved')}>Save</button>
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Test the key</button>
       <button className="btn ghost" onClick={()=>confirm('Turn AI off for everyone? Students will see "AI unavailable" until you save a key again.')&&run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}>Remove the key (turn AI off)</button></>}
-    <p className="known" style={{marginTop:20}}>One key serves every student. Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
+    <p className="known" style={{marginTop:20}}>One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
+    <h3 style={{margin:'28px 0 4px'}}>Self-registration</h3><SelfReg cfg={cfg} run={run}/>
     <h3 style={{margin:'28px 0 4px'}}>Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
     {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</div></>}
 

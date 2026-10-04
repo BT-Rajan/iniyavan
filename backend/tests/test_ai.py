@@ -24,13 +24,13 @@ def ask(env, h, t): return env.c.get(f"/api/topics/{t}/ai/explain", headers=h)
 
 def test_without_a_key_everyone_sees_ai_unavailable(env, monkeypatch):
     t = setup(env, monkeypatch)
-    assert env.c.get("/api/ai/status", headers=env.stu).json() == {"available": False}
+    assert env.c.get("/api/ai/status", headers=env.stu).json() == {"available": False, "own_key": False}
     r = ask(env, env.stu, t); assert r.status_code == 503 and r.json()["detail"] == "AI unavailable. Try again later." and FakeClient.calls == 0
     assert "Admin" in ask(env, env.admin, t).json()["detail"]  # admins also learn how to fix it
 
 def test_with_a_key_it_works_and_answers_are_shared(env, monkeypatch):
     t = setup(env, monkeypatch, "sk-test-1234")
-    assert env.c.get("/api/ai/status", headers=env.stu).json() == {"available": True}
+    assert env.c.get("/api/ai/status", headers=env.stu).json() == {"available": True, "own_key": False}
     a = ask(env, env.stu, t).json(); assert a == {"text": "Hard water explained.", "cached": False}
     assert ask(env, env.admin, t).json()["cached"] is True and FakeClient.calls == 1
     with Session_() as s: assert s.query(AICache).count() == 1
