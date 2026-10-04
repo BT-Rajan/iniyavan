@@ -131,6 +131,15 @@ A pool of questions every faculty member and admin can browse, so a good questio
 - Everyone on staff sees every bank question. Only the person who added a question, or an admin, can edit or delete it. Students never see the bank.
 - API: `GET/POST /api/bank`, `PUT/DELETE /api/bank/{id}`, `POST /api/bank/from-quiz/{quiz_id}`, `POST /api/quizzes/{quiz_id}/questions/from-bank`.
 
+## Semester or year programs
+
+Each program is either a **semester** program (B.E., B.Tech, M.E.) or an **annual** program (M.B.B.S, B.Sc, law). Choose it when you create the program under Programs > New program.
+
+- The terms are created for you: Semester 1 to 8 (default for semester programs) or Year 1 to 4 (default for annual programs). Pick 0 to 8, so M.B.B.S can start with 5 years. You can go straight to adding courses.
+- Everything then speaks the program's own word: the program page, adding a term, Users (placing a student, bulk Move, a student's "Year 2"), and starting a new term ("moves up one year").
+- Edit a program to change its pattern. Terms still named "Semester n" or "Year n" are renamed to match; terms you named yourself keep their names.
+- Existing programs stay semester programs. The CSV import creates an annual program when its terms are called "Year 1", "Year 2" and so on. Students' year or semester is a number from 1 to 8 either way, and a student sees every term up to their current one.
+
 ## Strengths and weak areas
 Authors tie each quiz question to the topic it tests (the "Topic this tests" menu in the quiz editor; untied questions count under their unit). From each student's **latest** result in each published quiz the app works out, per topic, what share they got right: **80% or more is a strength**, **below 60% needs another round of study**, and in between is "getting there" (`STRONG` and `WEAK` in `backend/main.py`). A retake replaces the earlier result, so improving moves a topic up.
 - **After a quiz** the student sees "How you did by topic" with the weakest first and a **Study again** button that opens the topic. They still don't get the answer key.

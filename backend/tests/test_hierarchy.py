@@ -5,7 +5,7 @@ from tests.test_access import CSV, ids, enrol
 
 def uid(email):
     with Session_() as s: return s.query(User).filter_by(email=email).first().id
-def program(env, name, h=None): return env.c.post("/api/programs", headers=h or env.admin, json={"name": name})
+def program(env, name, h=None): return env.c.post("/api/programs", headers=h or env.admin, json={"name": name, "terms": 0})
 def semester(env, pid, name, no, h=None): return env.c.post(f"/api/programs/{pid}/semesters", headers=h or env.admin, json={"name": name, "semester_no": no})
 def course(env, pid, sid, name, owner=None, h=None):
     return env.c.post(f"/api/programs/{pid}/semesters/{sid}/courses", headers=h or env.admin, json={"name": name, **({"faculty_owner_id": owner} if owner else {})})

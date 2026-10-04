@@ -60,6 +60,7 @@ class Setting(Base):
 class Program(Base):
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
+    pattern = Column(String(10), default="semester")  # "semester" (B.E., B.Tech) or "year" (annual programs such as M.B.B.S); the terms below are Semester n or Year n
 class Semester(Base):
     __tablename__ = "semesters"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
@@ -463,6 +464,8 @@ def learning_state_columns(c):  # topics.learning_due_at and progress.completed_
         dups = c.execute(text("SELECT user_id, topic_id FROM progress GROUP BY user_id, topic_id HAVING COUNT(*) > 1")).all()
         if dups: log.warning("progress has %d duplicated student/topic pairs; the unique key was not added", len(dups))
         else: c.execute(text("CREATE UNIQUE INDEX uq_progress_user_topic ON progress (user_id, topic_id)"))
+def program_pattern(c):  # courses.pattern; every existing program is a semester program
+    _addcol("courses", "pattern", "VARCHAR(10) DEFAULT 'semester'")(c); c.execute(text("UPDATE courses SET pattern = 'semester' WHERE pattern IS NULL"))
 def registration_columns(c):  # users.institution, id_number, phone, self_registered, ai_key; nobody is marked self-registered retroactively
     for col, typ in (("institution", "VARCHAR(150) NULL"), ("id_number", "VARCHAR(60) NULL"), ("phone", "VARCHAR(30) NULL"), ("self_registered", "TINYINT(1) NOT NULL DEFAULT 0"), ("ai_key", "TEXT NULL")):
         _addcol("users", col, typ)(c)
@@ -474,7 +477,7 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers),
               ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns),
               ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL")),
-              ("0015_users_self_registration", registration_columns)]
+              ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -556,12 +559,14 @@ def change_password(b: PwChange, request: Request, u: User = Depends(me), s: Ses
 ROLES = ("student", "faculty", "admin")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PWCHARS = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
-SEM = re.compile(r"^(?:s|sem|semester)?\s*([1-8])$", re.I)
+SEM = re.compile(r"^(?:s|sem|semester|y|yr|year)?\s*([1-8])$", re.I)
+PATTERNS = {"semester": "Semester", "year": "Year"}; DEFAULT_TERMS = {"semester": 8, "year": 4}
+def term_label(p): return PATTERNS.get(getattr(p, "pattern", None) or "semester", "Semester")
 def gen_pw(): return "".join(secrets.choice(PWCHARS) for _ in range(10))
 def to_sem(v):  # 3, "3", "Semester 3", "S3" -> 3; blank -> None; anything else -> error
     if v is None or str(v).strip() == "": return None
     m = SEM.match(str(v).strip())
-    if not m: raise HTTPException(400, "Semester must be a number from 1 to 8")
+    if not m: raise HTTPException(400, "Semester or year must be a number from 1 to 8")
     return int(m.group(1))
 ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8}
 def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number. Only used to fill semesters.semester_no once (migration 0010, CSV import)
@@ -593,9 +598,10 @@ def check_topic_access(u, t, s):  # drafts are for admins and the faculty assign
     if t.published is False and not can_edit(u, cid, s): raise HTTPException(404, "Topic not found")
     check_course_access(u, cid, s)
 def sem_number(s, program_id, n, keep=None):  # a semester number is 1 to 8 and unique within its program
-    if n is None or not 1 <= n <= 8: raise HTTPException(400, "Semester number must be from 1 to 8")
+    lab = term_label(s.get(Program, program_id)).lower()
+    if n is None or not 1 <= n <= 8: raise HTTPException(400, f"The {lab} number must be from 1 to 8")
     dup = s.query(Semester).filter(Semester.program_id == program_id, Semester.semester_no == n, Semester.id != (keep or 0)).first()
-    if dup: raise HTTPException(400, f"This program already has semester {n} ({dup.name})")
+    if dup: raise HTTPException(400, f"This program already has {lab} {n} ({dup.name})")
     return n
 def item_name(v, what):
     n = (v or "").strip()
@@ -825,7 +831,7 @@ def admin_programs(q: str = "", order: str = "name", limit: int = 50, offset: in
             Program.id.in_(s.query(Course.program_id).filter(func.lower(Course.name).like(like)))))
     rows = qs.order_by(*PSORT.get(order, PSORT["name"])(stu), Program.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     c = counts(s, [p.id for p in rows])
-    return {"total": qs.count(), "items": [{"id": p.id, "name": p.name, **c[p.id]} for p in rows]}
+    return {"total": qs.count(), "items": [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), **c[p.id]} for p in rows]}
 @app.get("/api/admin/programs/{pid}")
 def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     p = s.get(Program, pid)
@@ -837,7 +843,7 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     cl = defaultdict(list)
     for co, ow in s.query(Course, User).outerjoin(User, User.id == Course.faculty_owner_id).filter(Course.semester_id.in_([x.id for x in sems] or [0])).order_by(Course.id):
         cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow)})
-    return {"id": p.id, "name": p.name, **counts(s, [pid])[pid],
+    return {"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), **counts(s, [pid])[pid],
             "semester_list": [{"id": x.id, "name": x.name, "number": x.semester_no, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0), "course_list": cl[x.id]} for x in sems],
             "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
 AI_DOWN = "AI unavailable. Try again later."
@@ -1031,9 +1037,9 @@ def rollover(pid: int, b: RolloverIn, _: User = Depends(admin), s: Session = Dep
             for x in finishing: x.active = False
         s.commit()
     names = lambda L: [x.name for x in L[:20]]
-    return {"program": p.name, "dry_run": b.dry_run, "last_semester": top, "moved": len(moving), "finishing": len(finishing), "finishing_action": b.finishing, "unplaced": len(unplaced),
+    return {"program": p.name, "dry_run": b.dry_run, "last_semester": top, "term": term_label(p), "moved": len(moving), "finishing": len(finishing), "finishing_action": b.finishing, "unplaced": len(unplaced),
             "finishing_names": names(finishing), "unplaced_names": names(unplaced)}
-class ProgramIn(BaseModel): name: str
+class ProgramIn(BaseModel): name: str; pattern: str | None = None; terms: int | None = None  # pattern: semester or year; terms: how many to create now (new programs only)
 class SemesterIn(BaseModel): name: str; program_id: int; semester_no: int | None = None  # on edit, leave out to keep the number
 class NewSemesterIn(BaseModel): name: str; semester_no: int
 class NewCourseIn(BaseModel): name: str; faculty_owner_id: int | None = None
@@ -1077,7 +1083,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
                          **learning_state(t.learning_due_at, mine_p.get(t.id), now)} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]; d["owner_id"] = c.faculty_owner_id; d["owner_problem"] = owner_problem(owners.get(c.faculty_owner_id))
         return d
-    return [{"id": p.id, "name": p.name, "semesters": [{"id": sm.id, "name": sm.name, "number": sm.semester_no, "current": scoped(u) and u.semester is not None and sm.semester_no == u.semester,
+    return [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), "semesters": [{"id": sm.id, "name": sm.name, "number": sm.semester_no, "current": scoped(u) and u.semester is not None and sm.semester_no == u.semester,
         "courses": [cj(c, sm) for c in co[sm.id] + links[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
 class PublishIn(BaseModel): published: bool
 @app.put("/api/topics/{rid}/publish")
@@ -1143,7 +1149,14 @@ def program_name(name, s, keep=None):  # names must be unique: the users CSV imp
     if dup: raise HTTPException(400, "A program with that name already exists")
     return n
 @app.post("/api/programs")
-def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)): return save_row(Program(name=program_name(b.name, s)), u, s)
+def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)):
+    pat = (b.pattern or "semester").strip().lower()
+    if pat not in PATTERNS: raise HTTPException(400, "Choose semester or year")
+    n = DEFAULT_TERMS[pat] if b.terms is None else b.terms
+    if not 0 <= n <= 8: raise HTTPException(400, f"A program can start with 0 to 8 {PATTERNS[pat].lower()}s")
+    p = Program(name=program_name(b.name, s), pattern=pat, created_by=u.id); s.add(p); s.flush()
+    for i in range(1, n + 1): s.add(Semester(name=f"{PATTERNS[pat]} {i}", program_id=p.id, semester_no=i, created_by=u.id))  # the terms exist from the start, so the admin only has to add courses
+    s.commit(); return {"id": p.id, "pattern": pat, "terms": n}
 @app.post("/api/semesters")
 def new_semester(b: SemesterIn, u: User = Depends(admin), s: Session = Depends(db)):  # older flat form of POST /api/programs/{id}/semesters
     if not s.get(Program, b.program_id): raise HTTPException(400, "Choose a program for this semester")
@@ -1174,7 +1187,18 @@ def new_topic(b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
     t = Topic(**{**f, "published": b.published, "position": next_pos(s, Topic, unit_id=b.unit_id)}); t.created_by = u.id; s.add(t); s.flush()
     record_version(s, t, None, u.id, "Created"); s.commit(); return {"id": t.id}
 @app.put("/api/programs/{rid}")
-def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)): return update(s.get(Program, rid), {"name": program_name(b.name, s, rid)}, s)
+def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)):
+    p = s.get(Program, rid)
+    if not p: raise HTTPException(404, "Not found")
+    vals = {"name": program_name(b.name, s, rid)}
+    if b.pattern is not None:
+        pat = b.pattern.strip().lower()
+        if pat not in PATTERNS: raise HTTPException(400, "Choose semester or year")
+        if pat != (p.pattern or "semester"):  # terms still carrying the standard name follow the change; custom names are left alone
+            for x in s.query(Semester).filter_by(program_id=rid):
+                if re.fullmatch(r"(Semester|Year) \d+", x.name or ""): x.name = f"{PATTERNS[pat]} {x.semester_no}" if x.semester_no else x.name
+            vals["pattern"] = pat
+    return update(p, vals, s)
 @app.put("/api/semesters/{rid}")
 def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)):
     x = s.get(Semester, rid)
@@ -1580,7 +1604,7 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
                 errors.append({"row": n, "error": "A name is too long (150 characters, topics 200)"}); continue
             given = v.get("semester_no", "")
             if given and not (given.isdigit() and 1 <= int(given) <= 8): errors.append({"row": n, "error": "semester_no must be a number from 1 to 8"}); continue
-            p = get("program", v["program"].lower(), lambda: Program(name=v["program"]))
+            p = get("program", v["program"].lower(), lambda: Program(name=v["program"], pattern="year" if re.match(r"\s*(year|yr)\b", v["semester"], re.I) else "semester"))
             if (p.id, v["semester"].lower()) not in cache["semester"]:  # a new semester gets semester_no, or else the number in its name, if that is free
                 no = int(given) if given else sem_no(v["semester"])
                 if given and no in used[p.id]: errors.append({"row": n, "error": f"{v['program']} already has semester {no}"}); continue

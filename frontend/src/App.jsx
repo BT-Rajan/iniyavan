@@ -174,8 +174,8 @@ function Learn({user,toast,appName,start}){
   const list=unit?unit.topics.map(x=>({id:x.id,n:x.title,s:x.status,b:x.bookmarked,kind:'topics',sub:tsub(x),late:x.overdue,draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
     :co?co.units.map(x=>({...row(x,'units','unit',staff?x.topics.length+' topics'+(mayEdit&&drafts(x.topics)?' · '+drafts(x.topics)+' draft':''):doneOf(x.topics)+' topics completed'),edit:()=>setSheet({type:'unit',un:x,cid:co.id})}))
     :sem?sem.courses.map(x=>({...row(x,'courses','course',(staff?x.units.length+' units':doneOf(x.units.flatMap(n=>n.topics))+' topics completed')+(x.shared?' · shared from '+x.home:x.shared_with?' · shared with '+x.shared_with+' more':'')+(staff?' · '+ownerLine(x):'')),edit:()=>setSheet({type:'course',c:x,pid:prog.id,sid:x.semester_id}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
-    :prog?prog.semesters.map(x=>({...row(x,'semesters','semester',(isAdmin?(x.number?'Semester no. '+x.number:'No semester number set')+' · ':'')+x.courses.length+' courses'),edit:()=>setSheet({type:'semester',sem:x,pid:prog.id})}))
-    :tree.map(x=>({...row(x,'programs','program',x.semesters.length+' semesters'),edit:()=>setSheet({type:'program',p:x})}))
+    :prog?prog.semesters.map(x=>({...row(x,'semesters','semester',(isAdmin?(x.number?prog.term+' no. '+x.number:'No '+prog.term.toLowerCase()+' number set')+' · ':'')+x.courses.length+' courses'),edit:()=>setSheet({type:'semester',sem:x,pid:prog.id})}))
+    :tree.map(x=>({...row(x,'programs','program',x.semesters.length+' '+x.term.toLowerCase()+(x.semesters.length===1?'':'s')),edit:()=>setSheet({type:'program',p:x})}))
   const cur=unit||co||sem||prog,crumbs=[prog,sem,co,unit].filter(Boolean).slice(0,-1).map(x=>x.name).join(' › ')
   const allSems=tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))
   const myCourses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>c.mine&&!c.shared).map(c=>({p,s,c}))))
@@ -183,10 +183,10 @@ function Learn({user,toast,appName,start}){
   const remove=async()=>{try{if(del.unlink)await api(`/courses/${del.unlink.id}/links`,{method:'PUT',body:{semester_ids:del.unlink.keep}});else await api(`/${del.kind}/${del.id}`,{method:'DELETE'});toast('Deleted');setDel(null);load()}catch(e){toast(e.message)}}
   return <><Bar title={cur?.name||appName} sub={nav.length?crumbs:'Hi '+user.name} back={nav.length>0&&(()=>setNav(nav.slice(0,-1)))}/>
    <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&<div className="hero"><h2>Choose a program</h2></div>}
-     {isAdmin&&!sem&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add semester to '+prog.name:'New program'}</button>}
+     {isAdmin&&!sem&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add '+prog.term.toLowerCase()+' to '+prog.name:'New program'}</button>}
      {isAdmin&&sem&&!co&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
      {co&&!unit&&!staff&&<p className="known" style={{marginTop:0}}>{doneOf(co.units.flatMap(n=>n.topics))} topics completed</p>}
-     {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],['Semester',sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
+     {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],[prog.term,sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
        {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
      {!nav.length&&user.role==='faculty'&&<><h3 style={{margin:'0 0 8px'}}>My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}</b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
        :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 style={{margin:'20px 0 8px'}}>All programs</h3></>}
@@ -204,11 +204,11 @@ function Learn({user,toast,appName,start}){
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this semester':''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this semester. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
      <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Keep it</button></div></div>}
-   {sh&&<div className="scrim" onClick={()=>setSh(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Share “{sh.name}”</h3><p className="known">Tick every semester that should also show this course. You still edit it in one place.</p>
+   {sh&&<div className="scrim" onClick={()=>setSh(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Share “{sh.name}”</h3><p className="known">Tick every semester or year that should also show this course. You still edit it in one place.</p>
      {allSems.filter(x=>x.id!==sh.home).map(x=><label key={x.id} className="chk"><input type="checkbox" checked={sh.sel.includes(x.id)} onChange={e=>setSh({...sh,sel:e.target.checked?[...sh.sel,x.id]:sh.sel.filter(i=>i!==x.id)})}/> {x.label}</label>)}
      <button className="btn" onClick={saveShare}>Save</button><button className="btn ghost" onClick={()=>setSh(null)}>Cancel</button></div></div>}
    {sheet?.type==='program'&&<ProgramSheet p={sheet.p} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
-   {sheet?.type==='semester'&&<SemesterSheet sem={sheet.sem} pid={sheet.pid} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
+   {sheet?.type==='semester'&&<SemesterSheet sem={sheet.sem} pid={sheet.pid} term={prog?.term} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='course'&&<CourseSheet c={sheet.c} pid={sheet.pid} sid={sheet.sid} sems={tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='unit'&&<UnitSheet un={sheet.un} cid={sheet.cid} courses={isAdmin?tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>!c.shared).map(c=>({id:c.id,label:`${p.name} › ${s.name} › ${c.name}`})))):null} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='owner'&&<OwnerSheet c={sheet.c} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
@@ -218,15 +218,15 @@ const DELETES={programs:"This deletes its semesters and courses with their units
   courses:"This deletes its units, topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them. The owner keeps their account.",
   units:"This deletes its topics and quizzes, and the students' reading progress, bookmarks and quiz attempts in them.",
   topics:"This deletes the topic, its saved AI answers, and the students' reading progress and bookmarks for it."}
-function SemesterSheet({sem,pid,close,done,toast}){
+function SemesterSheet({sem,pid,term='Semester',close,done,toast}){
   const isNew=!sem.id,[f,setF]=useState({name:sem.name||'',no:sem.number||''}),[busy,setBusy]=useState(false)
-  const pickNo=e=>{const no=e.target.value;setF({no,name:!f.name||/^Semester \d+$/.test(f.name)?(no?'Semester '+no:''):f.name})}
-  const save=async()=>{setBusy(true);try{const body={name:f.name,semester_no:f.no?+f.no:null};await api(isNew?`/programs/${pid}/semesters`:'/semesters/'+sem.id,{method:isNew?'POST':'PUT',body:isNew?body:{...body,program_id:pid}});toast(isNew?'Semester added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
-  return <Sheet close={close}><h3>{isNew?'New semester':'Edit semester'}</h3>
-    <label>Semester number</label><select value={f.no} onChange={pickNo}><option value="">Choose…</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
-    <label>Name</label><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="Semester 3"/>
-    <p className="known" style={{marginTop:10}}>The number sets the order and which students see it: a student in semester 3 sees semesters 1 to 3. Each number is used once per program.</p>
-    <button className="btn" disabled={busy||!f.no||!f.name.trim()} onClick={save}>{isNew?'Add semester':'Save changes'}</button></Sheet>}
+  const pickNo=e=>{const no=e.target.value;setF({no,name:!f.name||/^(Semester|Year) \d+$/.test(f.name)?(no?term+' '+no:''):f.name})}
+  const save=async()=>{setBusy(true);try{const body={name:f.name,semester_no:f.no?+f.no:null};await api(isNew?`/programs/${pid}/semesters`:'/semesters/'+sem.id,{method:isNew?'POST':'PUT',body:isNew?body:{...body,program_id:pid}});toast(isNew?term+' added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New '+term.toLowerCase():'Edit '+term.toLowerCase()}</h3>
+    <label>{term} number</label><select value={f.no} onChange={pickNo}><option value="">Choose…</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
+    <label>Name</label><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder={term+" 3"}/>
+    <p className="known" style={{marginTop:10}}>The number sets the order and which students see it: a student in {term.toLowerCase()} 3 sees {term.toLowerCase()}s 1 to 3. Each number is used once per program.</p>
+    <button className="btn" disabled={busy||!f.no||!f.name.trim()} onClick={save}>{isNew?'Add '+term.toLowerCase():'Save changes'}</button></Sheet>}
 function CourseSheet({c,pid,sid,sems,close,done,toast}){
   const isNew=!c.id,faculty=useFaculty(true),[f,setF]=useState({name:c.name||'',sem:sid,owner:c.owner_id||''}),[busy,setBusy]=useState(false)
   const save=async()=>{setBusy(true);try{const owner=String(f.owner)!==String(c.owner_id||'')?{faculty_owner_id:f.owner?+f.owner:null}:{}  // unchanged owners are left alone
@@ -530,7 +530,7 @@ const USER_TEMPLATE=`name,email,password,role,program,semester
 Asha Kumar,asha@example.com,,student,B.E. Mechanical Engineering,3
 Ravi S,ravi@example.com,Welcome#2026,student,B.E. Mechanical Engineering,1
 `
-const SEMS=[1,2,3,4,5,6,7,8]
+const SEMS=[1,2,3,4,5,6,7,8],termOf=(progs,id)=>progs.find(p=>String(p.id)===String(id))?.term||'Semester'
 
 const BULK_TEXT={disable:['Disable these accounts?','They can no longer sign in. Their progress and quiz results are kept, and you can enable them again.','Disable'],
   enable:['Enable these accounts?','They can sign in again.','Enable'],reset_passwords:['Reset these passwords?','Each person gets a new one-time password and must choose their own at next sign-in. Anyone signed in is signed out. You download the list once; it is not shown again.','Reset passwords']}
@@ -543,9 +543,9 @@ function BulkSheet({act,ids,progs,toast,close,done}){
       {r.credentials&&<button className="btn" onClick={()=>download('new-passwords.csv','name,email,password\n'+r.credentials.map(c=>[c.name,c.email,c.password].map(cell).join(',')).join('\n')+'\n')}>Download the new passwords</button>}
       <button className="btn ghost" onClick={close}>Close</button></Sheet>}
   const run=async()=>{setBusy(true);try{done(await api('/admin/users/bulk',{method:'POST',body:{ids,action:act.kind,...(act.kind==='set_placement'?{program_id:+p,semester:s?+s:null}:{})}}))}catch(e){toast(e.message);setBusy(false)}}
-  if(act.kind==='set_placement')return <Sheet close={close}><h3>Move {pl(ids.length,'user')}</h3><p className="known">Sets the program and semester of the selected students. Faculty and admins in the selection are skipped.</p>
+  if(act.kind==='set_placement')return <Sheet close={close}><h3>Move {pl(ids.length,'user')}</h3><p className="known">Sets the program and semester or year of the selected students. Faculty and admins in the selection are skipped.</p>
     <label htmlFor="bp">Program</label><select id="bp" value={p} onChange={e=>setP(e.target.value)}><option value="">Choose a program</option>{progs.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
-    <label htmlFor="bs">Semester</label><select id="bs" value={s} onChange={e=>setS(e.target.value)}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>Semester {n}</option>)}</select>
+    <label htmlFor="bs">{termOf(progs,p)}</label><select id="bs" value={s} onChange={e=>setS(e.target.value)}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>{termOf(progs,p)} {n}</option>)}</select>
     <button className="btn" disabled={busy||!p} onClick={run}>{busy?'Working…':'Move'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>
   const [t,d,l]=BULK_TEXT[act.kind]
   return <Sheet close={close}><h3>{t.replace('these',ids.length===1?'this':'these')}</h3><p className="known">{pl(ids.length,'account')} selected. {d}</p>
@@ -556,17 +556,17 @@ function Users({toast,me}){
   const url=offset=>`/admin/users?q=${encodeURIComponent(q)}&order=${order}&limit=50&offset=${offset}`+(prog?'&program_id='+prog:'')+(sem?'&semester='+sem:'')
   const load=()=>api(url(0)).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
   useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q,prog,sem,order])
-  useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name})))).catch(()=>{})},[])
+  useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[])
   const more=()=>api(url(items.length)).then(r=>{setItems([...items,...r.items]);setTotal(r.total)}).catch(e=>toast(e.message))
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/users/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/users/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
-  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem
+  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem,lab=prog?termOf(progs,prog):progs.every(x=>x.term==='Semester')?'Semester':'Term'
   if(view)return <UserDetail id={view} me={me} progs={progs} toast={toast} back={()=>{setView(null);load()}}/>
   return <><Bar title="Users" sub={total+(filtered?' matches':' accounts')}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search name, email, ID, program or semester" value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters">
       <select aria-label="Filter by program" value={prog} onChange={e=>setProg(e.target.value)}><option value="">All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
-      <select aria-label="Filter by semester" value={sem} onChange={e=>setSem(e.target.value)}><option value="">All semesters</option>{SEMS.map(n=><option key={n} value={n}>Semester {n}</option>)}</select>
+      <select aria-label="Filter by semester or year" value={sem} onChange={e=>setSem(e.target.value)}><option value="">{lab==='Term'?'All terms':'All '+lab.toLowerCase()+'s'}</option>{SEMS.map(n=><option key={n} value={n}>{lab} {n}</option>)}</select>
       <select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="role">Sort: role, then name</option><option value="name">Sort: name</option><option value="program">Sort: program</option><option value="semester">Sort: semester</option><option value="newest">Sort: newest first</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>New user</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
     <button className="btn ghost" style={{marginTop:10}} aria-pressed={selMode} onClick={()=>{setSelMode(!selMode);setSel([])}}>{selMode?'Done selecting':'Select several users'}</button>
@@ -607,7 +607,7 @@ function UserDetail({id,me,progs,back,toast}){
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>Topics read</div><div className="stat"><b>{u.reads}</b>Total reads</div></div>
     <h3 style={{margin:'24px 0 4px'}}>Profile</h3>
-    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set','Semester')}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(u.own_ai_key?'Has added their own key':'No key yet · AI is off for them','AI (self-registered, uses their own key)')}</>}{row(day(u.last_active),'Last active')}
+    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(u.own_ai_key?'Has added their own key':'No key yet · AI is off for them','AI (self-registered, uses their own key)')}</>}{row(day(u.last_active),'Last active')}
     {u.role==='faculty'&&<><h3 style={{margin:'28px 0 4px'}}>Courses they own</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">None yet. They can read published content but edit nothing until they own a course.</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>Assign courses</button></>}
     <h3 style={{margin:'28px 0 4px'}}>Recently read</h3>
     {u.recent.length?u.recent.map((x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads} reads, last {day(x.last_read)}</small></div></div>):<p className="known">No reading activity yet.</p>}
@@ -630,7 +630,7 @@ function UserSheet({u,me,progs,close,done,toast}){
   return <Sheet close={close}><h3>{isNew?'New user':'Edit user'}</h3>
     <label>Name</label><input value={f.name} onChange={set('name')}/><label>Email</label><input type="email" value={f.email} onChange={set('email')}/>
     <label>Program</label><select value={f.program_id} onChange={set('program_id')}><option value="">Not set</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
-    <label>Semester</label><select value={f.semester} onChange={set('semester')}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
+    <label>{termOf(progs,f.program_id)}</label><select value={f.semester} onChange={set('semester')}><option value="">Not set</option>{SEMS.map(n=><option key={n} value={n}>{n}</option>)}</select>
     <label>Role</label><select disabled={self} value={f.role} onChange={set('role')}><option value="student">Student</option><option value="faculty">Faculty</option><option value="admin">Admin</option></select>
     <label>Status</label><select disabled={self} value={f.active?'1':'0'} onChange={e=>setF({...f,active:e.target.value==='1'})}><option value="1">Active</option><option value="0">Disabled</option></select>
     {isNew?<><label>Password (8+ characters)</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/></>
@@ -656,7 +656,7 @@ function Programs({toast,onOpen}){
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead p" aria-hidden="true"><span>Program</span><span>Courses</span><span>Students</span></div>}
     {items.map(x=><button key={x.id} className="utr p" onClick={()=>setView(x.id)} aria-label={'Open '+x.name}>
-      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}</b><small className="sub">{x.semesters} semesters, {x.topics} topics</small></span></span>
+      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}</b><small className="sub">{pl(x.semesters,x.term.toLowerCase())}, {x.topics} topics</small></span></span>
       <span className="sn">{x.courses}</span><span className="sn">{x.students}</span></button>)}
     {!items.length&&<p className="known">{q?'No program matches that search.':'No programs yet. Add one or bulk upload a CSV.'}</p>}
     {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
@@ -677,11 +677,11 @@ function RolloverSheet({p,close,done,toast}){
   const url=`/admin/programs/${p.id}/rollover`
   useEffect(()=>{setR(null);api(url,{method:'POST',body:{dry_run:true,finishing:fin}}).then(setR).catch(e=>{toast(e.message);close()})},[fin]) 
   const go=async()=>{setBusy(true);try{const x=await api(url,{method:'POST',body:{dry_run:false,finishing:fin}});toast(`${x.moved} students moved up`+(fin==='deactivate'&&x.finishing?`, ${x.finishing} accounts switched off`:''));done()}catch(e){toast(e.message);setBusy(false)}}
-  return <Sheet close={close}><h3>Start a new term</h3><p className="known">Moves every active student of {p.name} up one semester. Do this once, when the new term begins.</p>
+  return <Sheet close={close}><h3>Start a new term</h3><p className="known">Moves every active student of {p.name} up one {p.term?.toLowerCase()||'semester'}. Do this once, when the new term begins.</p>
     {!r?<div className="sk"/>:<div className="qbox" style={{marginTop:0}}>
-      <div className="row"><div>{pl(r.moved,'student')}<small>{r.moved===1?'moves':'move'} up one semester</small></div></div>
-      <div className="row"><div>{pl(r.finishing,'student')}<small>{r.finishing===1?'is':'are'} in the last semester (Semester {r.last_semester}){r.finishing_names.length?': '+r.finishing_names.join(', ')+(r.finishing>r.finishing_names.length?'…':''):''}</small></div></div>
-      {r.unplaced>0&&<div className="row"><div>{pl(r.unplaced,'student')}<small>{r.unplaced===1?'has':'have'} no semester set and are left alone: {r.unplaced_names.join(', ')}</small></div></div>}</div>}
+      <div className="row"><div>{pl(r.moved,'student')}<small>{r.moved===1?'moves':'move'} up one {r.term.toLowerCase()}</small></div></div>
+      <div className="row"><div>{pl(r.finishing,'student')}<small>{r.finishing===1?'is':'are'} in the last {r.term.toLowerCase()} ({r.term} {r.last_semester}){r.finishing_names.length?': '+r.finishing_names.join(', ')+(r.finishing>r.finishing_names.length?'…':''):''}</small></div></div>
+      {r.unplaced>0&&<div className="row"><div>{pl(r.unplaced,'student')}<small>{r.unplaced===1?'has':'have'} no {r.term.toLowerCase()} set and are left alone: {r.unplaced_names.join(', ')}</small></div></div>}</div>}
     <label htmlFor="fin">Students finishing the program</label><select id="fin" value={fin} onChange={e=>setFin(e.target.value)}><option value="keep">Leave them as they are</option><option value="deactivate">Switch their accounts off</option></select>
     <button className="btn" disabled={busy||!r||(!r.moved&&!(fin==='deactivate'&&r.finishing))} onClick={go}>{busy?'Working…':'Apply'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 function ProgramDetail({id,back,onOpen,toast}){
@@ -691,21 +691,21 @@ function ProgramDetail({id,back,onOpen,toast}){
   if(!p)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const del=async()=>{setBusy(true);try{await api('/programs/'+p.id,{method:'DELETE'});toast('Program deleted');back()}catch(e){toast(e.message);setBusy(false)}}
   const row=(v,l,k)=><div className="row" key={k}><div>{v}<small>{l}</small></div></div>
-  return <><Bar title={p.name} sub={pl(p.semesters,'semester')} back={back}/><div className="main">
-    <div className="stats">{[['semesters','Semesters'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
-    <h3 style={{margin:'24px 0 4px'}}>Semesters</h3>
-    {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}</b><span>{(x.number?'':'No semester number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button></div>):<p className="known">No semesters yet.</p>}
-    <button className="btn ghost" onClick={()=>setAddSem(true)}>Add semester</button>
+  return <><Bar title={p.name} sub={pl(p.semesters,p.term.toLowerCase())+(p.pattern==='year'?' · annual':'')} back={back}/><div className="main">
+    <div className="stats">{[['semesters',p.term+'s'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
+    <h3 style={{margin:'24px 0 4px'}}>{p.term}s</h3>
+    {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}</b><span>{(x.number?'':'No '+p.term.toLowerCase()+' number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button></div>):<p className="known">No {p.term.toLowerCase()}s yet.</p>}
+    <button className="btn ghost" onClick={()=>setAddSem(true)}>Add {p.term.toLowerCase()}</button>
     <h3 style={{margin:'28px 0 4px'}}>Students</h3>
-    {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?'Semester '+u.semester:'Semester not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
+    {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?p.term+' '+u.semester:p.term+' not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
     {p.students>p.student_list.length&&<p className="known">Showing {p.student_list.length} of {p.students}. Use Users to see everyone.</p>}
     {p.students>0&&<button className="btn ghost" onClick={()=>setTerm(true)}>Start a new term (move students up)</button>}
-    <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Rename</button><button className="btn danger" onClick={()=>setAsk(true)}>Delete</button></div>
-    <button className="btn ghost" onClick={()=>onOpen([p.id])}>Open semesters and courses</button></div>
+    <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Edit</button><button className="btn danger" onClick={()=>setAsk(true)}>Delete</button></div>
+    <button className="btn ghost" onClick={()=>onOpen([p.id])}>Open {p.term.toLowerCase()}s and courses</button></div>
     {term&&<RolloverSheet p={p} toast={toast} close={()=>setTerm(false)} done={()=>{setTerm(false);load()}}/>}
     {ed&&<ProgramSheet p={p} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
-    {addSem&&<SemesterSheet sem={{}} pid={p.id} toast={toast} close={()=>setAddSem(false)} done={()=>{setAddSem(false);load()}}/>}
-    {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {p.semesters} semesters, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
+    {addSem&&<SemesterSheet sem={{}} pid={p.id} term={p.term} toast={toast} close={()=>setAddSem(false)} done={()=>{setAddSem(false);load()}}/>}
+    {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {pl(p.semesters,p.term.toLowerCase())}, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
       <button className="btn danger" disabled={busy} onClick={del}>Delete program</button><button className="btn ghost" onClick={()=>setAsk(false)}>Keep it</button></Sheet>}</>}
 
 function OwnerSheet({c,close,done,toast}){
@@ -716,11 +716,17 @@ function OwnerSheet({c,close,done,toast}){
     <button className="btn" disabled={busy} onClick={save}>Save</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 
 function ProgramSheet({p,close,done,toast}){
-  const isNew=!p.id,[name,setName]=useState(p.name||''),[busy,setBusy]=useState(false)
-  const save=async()=>{setBusy(true);try{await api(isNew?'/programs':'/programs/'+p.id,{method:isNew?'POST':'PUT',body:{name}});toast(isNew?'Program added':'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
-  return <Sheet close={close}><h3>{isNew?'New program':'Rename program'}</h3>
+  const isNew=!p.id,[name,setName]=useState(p.name||''),[pat,setPat]=useState(p.pattern||'semester'),[terms,setTerms]=useState(pat==='year'?4:8),[touched,setTouched]=useState(false),[busy,setBusy]=useState(false)
+  const lab=pat==='year'?'Year':'Semester',pick=k=>{setPat(k);if(!touched)setTerms(k==='year'?4:8)}
+  const save=async()=>{setBusy(true);try{const r=await api(isNew?'/programs':'/programs/'+p.id,{method:isNew?'POST':'PUT',body:{name,pattern:pat,...(isNew?{terms}:{})}});toast(isNew?(r.terms?`Program added with ${r.terms} ${lab.toLowerCase()}${r.terms===1?'':'s'}`:'Program added'):'Changes saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{isNew?'New program':'Edit program'}</h3>
     <label>Name</label><input value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&save()} placeholder="B.E. Mechanical Engineering" autoFocus/>
     <p className="known" style={{marginTop:10}}>Names must be unique. The users CSV import matches programs by name.</p>
+    <label id="pat">How is the program divided?</label><div role="group" aria-labelledby="pat" className="seg" style={{marginTop:0}}>{[['semester','Semesters','B.E., B.Tech, M.E.'],['year','Years','M.B.B.S, B.Sc, annual courses']].map(([k,l])=><button key={k} className={pat===k?'on':''} aria-pressed={pat===k} onClick={()=>pick(k)}>{l}</button>)}</div>
+    <p className="known" style={{marginTop:6}}>{pat==='year'?'Annual pattern, for example M.B.B.S, B.Sc or law degrees. Students move up one year at a time.':'Semester pattern, for example B.E., B.Tech or M.E. Students move up one semester at a time.'}</p>
+    {isNew?<><label htmlFor="nt">How many {lab.toLowerCase()}s?</label><select id="nt" value={terms} onChange={e=>{setTerms(+e.target.value);setTouched(true)}}>{[0,1,2,3,4,5,6,7,8].map(n=><option key={n} value={n}>{n===0?'None yet, I will add them myself':n}</option>)}</select>
+      <p className="known" style={{marginTop:6}}>{terms?`${lab} 1${terms>1?` to ${lab} ${terms}`:''} ${terms>1?'are':'is'} created for you, so you can go straight to adding courses.`:'You can add them one by one later.'}</p></>
+      :p.pattern&&pat!==p.pattern&&<p className="known" style={{marginTop:6}}>Terms still named “{p.pattern==='year'?'Year':'Semester'} n” are renamed to “{lab} n”. Terms you named yourself keep their names.</p>}
     <button className="btn" disabled={busy||!name.trim()} onClick={save}>{isNew?'Add program':'Save changes'}</button></Sheet>}
 
 function Branding({toast,onSaved}){
@@ -771,7 +777,7 @@ const fetchFile=async(url,name,toast)=>{try{const r=await fetch('/api'+url,{head
 const Bar2=({v})=><div className="meter"><i style={{width:Math.min(100,v||0)+'%'}}/></div>
 function CourseReports({toast,onOpen}){
   const [f,setF]=useState({p:0,s:0}),[rows,setRows]=useState(null),[progs,setProgs]=useState([])
-  useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name})))).catch(()=>{})},[])
+  useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[])
   const qs=`?program_id=${f.p}&semester=${f.s}`
   useEffect(()=>{setRows(null);api('/reports/courses'+qs).then(setRows).catch(e=>toast(e.message))},[f.p,f.s])
   return <><div className="qopt"><select value={f.p} onChange={e=>setF({...f,p:+e.target.value})}><option value={0}>All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
