@@ -41,7 +41,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .nav button i{width:60px;height:32px;border-radius:10px;display:grid;place-items:center;transition:.2s}
 .nav .on{color:var(--tx)}.nav .on i{background:var(--accbg)}
 .toast{position:fixed;left:16px;right:16px;bottom:calc(88px + env(safe-area-inset-bottom));max-width:488px;margin:auto;background:var(--tx);color:var(--bg);padding:14px 16px;border-radius:10px;font-weight:500;z-index:9}
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{background:var(--s1);border-radius:12px;padding:14px}.stat b{font:800 26px 'Bricolage Grotesque';display:block}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{background:var(--s1);border-radius:12px;padding:14px}.stat b{font:800 26px 'Bricolage Grotesque';display:block}button.stat{border:1px solid var(--line);color:inherit;font:inherit;cursor:pointer}button.stat:active{opacity:.7}button.stat:focus-visible{outline:2px solid var(--vio)}
 .login{padding:15vh 24px 24px}.login h1{font-size:30px;line-height:1.15}.login p{color:var(--mut)}
 .row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}.row div{flex:1}.row small{color:var(--mut);display:block}
 .pill{padding:6px 12px;border-radius:99px;background:var(--s2);font-size:13px}
