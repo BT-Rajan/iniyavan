@@ -563,6 +563,7 @@ SEM = re.compile(r"^(?:s|sem|semester|y|yr|year)?\s*([1-8])$", re.I)
 PATTERNS = {"semester": "Semester", "year": "Year"}; DEFAULT_TERMS = {"semester": 8, "year": 4}
 def term_label(p): return PATTERNS.get(getattr(p, "pattern", None) or "semester", "Semester")
 def gen_pw(): return "".join(secrets.choice(PWCHARS) for _ in range(10))
+def term_header(terms): return next(iter(terms)) if len(terms) == 1 else "Semester or year"  # CSV column title: Semester or Year when every row shares it
 def to_sem(v):  # 3, "3", "Semester 3", "S3" -> 3; blank -> None; anything else -> error
     if v is None or str(v).strip() == "": return None
     m = SEM.match(str(v).strip())
@@ -787,7 +788,7 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
         prog = progs.get(v.get("program", "").lower()) if v.get("program") else None
         if v.get("program") and not prog: bad("Unknown program '" + v["program"][:40] + "'. Names must match the Programs tab"); continue
         try: sem = to_sem(v.get("semester"))
-        except HTTPException: bad("Semester must be a number from 1 to 8"); continue
+        except HTTPException: bad("Semester or year must be a number from 1 to 8"); continue
         seen.add(e); u = existing.get(e)
         if u:
             if u.id == a.id and role and role != u.role: bad("You can't change your own role"); continue
@@ -958,19 +959,19 @@ def my_courses(u, s):
 @app.get("/api/reports/courses")
 def report_courses(program_id: int = 0, semester: int = 0, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
     students = s.query(User).filter_by(role="student", active=True).all(); sems = {x.id: x for x in s.query(Semester)}; pn = {p.id: p.name for p in s.query(Program)}
-    links = defaultdict(list)
+    links = defaultdict(list); pt = {p.id: term_label(p) for p in s.query(Program)}; used = set()
     for l in s.query(CourseLink): links[l.course_id].append(l.semester_id)
     out = []
     for c in my_courses(u, s):
         sm = sems.get(c.semester_id)
         if program_id and c.program_id != program_id: continue
         if semester and (not sm or sm.semester_no != semester): continue
-        aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
+        used.add(pt.get(c.program_id, "Semester")); aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
         comp = [100 * reads[x.id] / len(tids) for x in aud] if tids else []; qb = [b for x in aud for b in bests[x.id].values()]
         out.append({"course_id": c.id, "course": c.name, "program": pn.get(c.program_id, ""), "semester": sm.name if sm else "", "students": len(aud), "topics": len(tids),
                     "avg_completion": round(sum(comp) / len(comp)) if comp else 0, "quizzes": len(qids), "quiz_attempts": s.query(func.count(Attempt.id)).filter(Attempt.quiz_id.in_(qids or [0])).scalar(),
                     "avg_quiz_percent": round(sum(qb) / len(qb)) if qb else None})
-    if format == "csv": return csv_response("courses.csv", ["Program", "Semester", "Course", "Students", "Topics", "Average completion %", "Quizzes", "Quiz attempts", "Average best quiz %"],
+    if format == "csv": return csv_response("courses.csv", ["Program", term_header(used), "Course", "Students", "Topics", "Average completion %", "Quizzes", "Quiz attempts", "Average best quiz %"],
                                            [[r["program"], r["semester"], r["course"], r["students"], r["topics"], r["avg_completion"], r["quizzes"], r["quiz_attempts"], r["avg_quiz_percent"]] for r in out])
     return out
 @app.get("/api/reports/courses/{cid}/students")
@@ -982,6 +983,7 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
     links = defaultdict(list)
     for l in s.query(CourseLink).filter_by(course_id=cid): links[cid].append(l.semester_id)
     aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
+    pt = {p.id: term_label(p) for p in s.query(Program)}; used = {pt.get(x.program_id, "Semester") for x in aud}
     batches = latest_batches(s, [x.id for x in aud], course_quiz_ids(cid, s)); ctx = area_context(batches, s); per = defaultdict(list)
     for b in batches: per[b[0]].append(b)
     mine = {uid: tally(bs, ctx, True) for uid, bs in per.items()}
@@ -990,7 +992,7 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
              "completion": round(100 * reads[x.id] / len(tids)) if tids else 0, "quizzes_taken": len(bests[x.id]), "quizzes": len(qids),
              "avg_quiz_percent": round(sum(bests[x.id].values()) / len(bests[x.id])) if bests[x.id] else None, "last_active": (last[x.id].isoformat() + "Z") if last.get(x.id) else None}
             for x in sorted(aud, key=lambda x: (x.name or "").lower())]
-    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", "Semester", "Active", "Topics read", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active", "Strong areas", "Needs another round of study"],
+    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", term_header(used), "Active", "Topics read", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active", "Strong areas", "Needs another round of study"],
                                            [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"], "; ".join(r["strong"]), "; ".join(r["needs_study"])] for r in rows])
     return {"course": c.name, "students": rows}
 
@@ -1014,7 +1016,7 @@ def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs 
         noown = [c for c in mine if c.faculty_owner_id is None]
         add("unowned", len(noown), f"{len(noown)} course{'s have' if len(noown) != 1 else ' has'} no owner, so only admins can edit: " + ", ".join(c.name for c in noown[:5]))
         unplaced = stu.filter(or_(User.program_id.is_(None), User.semester.is_(None))).count()
-        add("unenrolled", unplaced, f"{unplaced} active student{'s are' if unplaced != 1 else ' is'} not placed in a program and semester, so they see nothing")
+        add("unenrolled", unplaced, f"{unplaced} active student{'s are' if unplaced != 1 else ' is'} not placed in a program and semester or year, so they see nothing")
         nonum = s.query(Semester).filter(Semester.semester_no.is_(None)).count()
         add("semester_numbers", nonum, f"{nonum} semester{'s have' if nonum != 1 else ' has'} no semester number (set it under Programs)")
         quiet = stu.filter(User.id.notin_(s.query(Progress.user_id))).count()
