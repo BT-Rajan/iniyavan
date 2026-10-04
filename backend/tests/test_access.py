@@ -62,3 +62,13 @@ def test_drafts_are_hidden_from_students(env):
     assert env.c.put(f"/api/units/{u}/publish", headers=env.fac, json={"published": True}).json()["changed"] == 1
     assert "Draft1" in titles(env, env.stu)
     assert env.c.put(f"/api/topics/{i['topic']['Tools']}/publish", headers=env.fac, json={"published": False}).status_code == 403
+
+def test_bookmarks_are_per_topic_and_admins_do_not_have_them(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,w\n,,,,Fuel,f\n")
+    t = env.c.get("/api/tree", headers=env.admin).json()[0]["semesters"][0]["courses"][0]["units"][0]["topics"]
+    a, b = t[0]["id"], t[1]["id"]
+    assert env.c.put(f"/api/topics/{a}/bookmark", headers=env.admin).status_code == 403
+    marked = lambda h: [x["id"] for u in env.c.get("/api/tree", headers=h).json()[0]["semesters"][0]["courses"][0]["units"] for x in u["topics"] if x["bookmarked"]]
+    assert marked(env.admin) == []
+    assert env.c.put(f"/api/topics/{a}/bookmark", headers=env.fac).status_code == 200  # faculty may read published content, so they may save it
+    assert marked(env.fac) == [a] and b not in marked(env.fac)  # only that topic, not its unit or course

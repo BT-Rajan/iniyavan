@@ -62,13 +62,13 @@ export default function App(){
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
-  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
     {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
-    {page==='bookmarks'&&<Bookmarks toast={toast} role={user.role}/>}
+    {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
@@ -475,7 +475,7 @@ function Topic({id:first,back,toast,role}){
   const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai[k].text}</Md></div>
     :aiOk===false?<p className="known">{ownKey?'Add your own DeepSeek API key under “My AI key” in the menu to use AI help.':'AI unavailable. Try again later.'}</p>
     :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?'Thinking…':k==='explain'?'Explain it to me':'Show a sample answer'}</button>{aiMsg&&<p className="known">{aiMsg}</p>}</>
-  return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={<button className={'ic'+(bm?' on':'')} aria-label={bm?'Remove bookmark':'Bookmark this topic'} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
+  return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={role!=='admin'&&<button className={'ic'+(bm?' on':'')} aria-label={bm?'Remove bookmark':'Bookmark this topic'} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
     {t.can_edit&&pv&&<div className="qbox" style={{marginTop:0}}><b>Previewing as a student</b><p className="known" style={{margin:'4px 0 8px'}}>This is what students see: no editing buttons, and drafts show as unavailable to them.</p><button className="btn ghost" style={{marginTop:0}} onClick={()=>setPv(false)}>Back to editing</button></div>}
     {t.can_edit&&!pv&&<div className="two" style={{marginBottom:12}}><button className="btn ghost" style={{marginTop:0}} onClick={()=>setEditing(true)}><Pencil size={16}/> Edit topic</button>
       <button className="btn ghost" style={{marginTop:0}} onClick={async()=>{try{await api(`/topics/${id}/publish`,{method:'PUT',body:{published:!t.published}});toast(t.published?'Moved to drafts':'Published');setV(v+1)}catch(e){toast(e.message)}}}>{t.published?<><EyeOff size={16}/> Unpublish</>:<><Eye size={16}/> Publish</>}</button></div>}
@@ -532,7 +532,7 @@ const unmarked=(tree,id)=>tree.map(p=>({...p,semesters:p.semesters.map(s=>({...s
 const tabTo=e=>e.currentTarget.scrollIntoView?.({inline:'center',block:'nearest'})
 
 function Bookmarks({toast,role}){
-  const [tree,setTree]=useState(null),[sem,setSem]=useState(null),[course,setCourse]=useState(null),[unit,setUnit]=useState(null),[t,setT]=useState(null)
+  const [tree,setTree]=useState(null),[sem,setSem]=useState(null),[course,setCourse]=useState(null),[t,setT]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t])
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role={role}/>
   if(!tree)return <><Bar title="Bookmarks"/><div className="main"><div className="sk"/><div className="sk"/></div></>
@@ -540,23 +540,18 @@ function Bookmarks({toast,role}){
   const sems=tree.flatMap(p=>p.semesters.map(sm=>({...sm,prog:p.name,courses:sm.courses.filter(c=>cnt(c)>0)}))).filter(sm=>sm.courses.length)
     .sort((a,b)=>a.prog.localeCompare(b.prog)||(a.number??99)-(b.number??99)||a.id-b.id)
   const multi=new Set(sems.map(x=>x.prog)).size>1,total=sems.reduce((n,x)=>n+x.courses.reduce((m,c)=>m+cnt(c),0),0)
-  const sm=sems.find(x=>x.id===sem)||sems[0],co=sm?.courses.find(x=>x.id===course)||sm?.courses[0],un=co?.units.find(x=>x.id===unit)
+  const sm=sems.find(x=>x.id===sem)||sems[0],co=sm?.courses.find(x=>x.id===course)||sm?.courses[0]
   const drop=async id=>{try{await api(`/topics/${id}/bookmark`,{method:'DELETE'});setTree(unmarked(tree,id));toast('Bookmark removed')}catch(e){toast(e.message)}}
   return <><Bar title="Bookmarks" sub={total?total+(total===1?' topic saved':' topics saved'):'Nothing saved yet'}/><div className="main">
-    {!sm&&<p className="known">Open any topic and tap the bookmark icon to save it here. Your list is arranged by semester or year, course and unit.</p>}
+    {!sm&&<p className="known">Open any topic and tap the bookmark icon to save it here. It shows only the topics you saved, grouped by semester or year, course and unit.</p>}
     {sm&&<>
-      <div className="chips" role="group" aria-label="Semester or year">{sems.map(x=><button key={x.id} className={'sbtn'+(x.id===sm.id?' on':'')} aria-pressed={x.id===sm.id} onClick={e=>{setSem(x.id);setCourse(null);setUnit(null);tabTo(e)}}>
+      <div className="chips" role="group" aria-label="Semester or year">{sems.map(x=><button key={x.id} className={'sbtn'+(x.id===sm.id?' on':'')} aria-pressed={x.id===sm.id} onClick={e=>{setSem(x.id);setCourse(null);tabTo(e)}}>
         <span className="lbl">{multi&&x.prog+' · '}{x.name}</span><em>{x.courses.reduce((n,c)=>n+cnt(c),0)}</em></button>)}</div>
-      <div className="tabs scroll" role="tablist" aria-label="Course">{sm.courses.map(c=><button key={c.id} role="tab" aria-selected={c.id===co.id} className={c.id===co.id?'on':''} onClick={e=>{setCourse(c.id);setUnit(null);tabTo(e)}}>
+      <div className="tabs scroll" role="tablist" aria-label="Course">{sm.courses.map(c=><button key={c.id} role="tab" aria-selected={c.id===co.id} className={c.id===co.id?'on':''} onClick={e=>{setCourse(c.id);tabTo(e)}}>
         <span className="lbl">{c.name}</span><em>{cnt(c)}</em></button>)}</div>
-      {!un&&co.units.map((u,i)=><div key={u.id} className="card"><button className="hit" onClick={()=>setUnit(u.id)}><span className="dot" style={{background:COL[i%5]}}>{i+1}</span>
-        <div><b>{u.name}</b><span>{marks(u).length?marks(u).length+(marks(u).length===1?' bookmarked topic':' bookmarked topics'):'Nothing bookmarked'}</span></div></button></div>)}
-      {un&&<><button className="link" onClick={()=>setUnit(null)}><ChevronLeft size={16}/>All units in {co.name}</button>
-        <div className="tabs scroll" role="tablist" aria-label="Unit">{co.units.map(u=><button key={u.id} role="tab" aria-selected={u.id===un.id} className={u.id===un.id?'on':''} onClick={e=>{setUnit(u.id);tabTo(e)}}>
-          <span className="lbl">{u.name}</span><em>{marks(u).length}</em></button>)}</div>
-        {marks(un).map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>setT(x.id)}><span className="dot" style={{background:COL[i%5]}}>{x.title[0]}</span><div><b>{x.title}</b></div><Mark s={x.status}/></button>
-          <button className="ic sm on" aria-label={'Remove bookmark: '+x.title} onClick={()=>drop(x.id)}><Bookmark size={16} fill="currentColor"/></button></div>)}
-        {!marks(un).length&&<p className="known">No bookmarked topics in this unit.</p>}</>}
+      {co.units.filter(u=>marks(u).length).map(u=><div key={u.id}><h3 style={{margin:'18px 0 8px'}}>{u.name}</h3>
+        {marks(u).map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>setT(x.id)}><span className="dot" style={{background:COL[i%5]}}>{x.title[0]}</span><div><b>{x.title}</b></div><Mark s={x.status}/></button>
+          <button className="ic sm on" aria-label={'Remove bookmark: '+x.title} onClick={()=>drop(x.id)}><Bookmark size={16} fill="currentColor"/></button></div>)}</div>)}
     </>}</div></>}
 
 const Sheet=({close,children})=><div className="scrim" onClick={close}><div className="sheet" onClick={e=>e.stopPropagation()}>{children}</div></div>
