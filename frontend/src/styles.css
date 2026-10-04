@@ -143,3 +143,10 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .diff{font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;border-radius:8px;overflow:auto;max-height:34vh;border:1px solid var(--line);background:var(--s1)}
 .dl{padding:1px 8px;white-space:pre-wrap;overflow-wrap:anywhere}.dl.del{background:var(--badbg);color:var(--bad)}.dl.add{background:var(--okbg);color:var(--ok)}.dl.same{color:var(--mut)}
 .dl.del::before{content:"− "}.dl.add::before{content:"+ "}.dl.same::before{content:"  "}
+
+/* Markdown tables (topic notes and AI answers): scroll sideways on a phone instead of squeezing */
+.prose table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:14px 0;font-size:.95em}
+.prose th,.prose td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+.prose th{background:var(--s2);font-weight:600}
+.prose tr:nth-child(even) td{background:rgba(128,128,128,.05)}
+.prose th,.prose td{overflow-wrap:normal;word-break:normal;min-width:110px}.prose th:first-child,.prose td:first-child{min-width:130px}

@@ -1,10 +1,22 @@
 import {useState,useEffect,useCallback,useRef,createContext,useContext} from 'react'
 import Markdown from 'react-markdown'
 import remarkMath from 'remark-math'
+import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import 'katex/contrib/mhchem'
-const Md=({children})=><Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{children}</Markdown>
+// AI answers sometimes arrive with a whole table squeezed onto one line ("| A | B | |---|---| | x | y |"). Put the rows back on their own lines so it renders as a table.
+export function fixTables(text){
+  return String(text||'').split('\n').map(line=>{
+    const t=line.trim(),sep=t.match(/\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|/)
+    if(!t.startsWith('|')||!sep||t.replace(/[|\s:-]/g,'')==='')return line
+    const n=sep[0].split('|').filter(c=>c.trim()).length,cells=t.split('|').slice(1,-1),rows=[];let i=0
+    while(i<cells.length){rows.push(cells.slice(i,i+n));i+=n;if(i<cells.length&&cells[i].trim()==='')i++}  // a blank cell marks the end of a row
+    if(!n||rows.length<3||rows[1].length!==n||rows[1].some(c=>!/^\s*:?-{3,}:?\s*$/.test(c))||rows.slice(2).some(r=>r.length!==n))return line  // not a squeezed table
+    return '\n'+rows.map(r=>'|'+r.join('|')+'|').join('\n')+'\n'
+  }).join('\n')
+}
+const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'

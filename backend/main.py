@@ -1732,9 +1732,10 @@ def course_progress(cid: int, u: User = Depends(staff), s: Session = Depends(db)
 
 PROMPTS = {
  "explain": ("You are a warm, sharp engineering tutor for a teenage student. Explain the topic clearly with a hook, an everyday analogy, "
-             "the core idea step by step, one worked example, and 3 quick recap bullets. Use Markdown, be concise, stay accurate."),
+             "the core idea step by step, one worked example, and 3 quick recap bullets. Use Markdown, be concise, stay accurate. "
+             "Show comparisons, classifications and families of related items as a Markdown table: a header row, a separator row, and every row on its own line."),
  "answer": ("You are an engineering exam coach. Write a model answer that follows the given answer guideline and question pattern exactly "
-            "(structure, length, marks split, diagrams to sketch, keywords). Use Markdown. Mirror the style of the sample content."),
+            "(structure, length, marks split, diagrams to sketch, keywords). Use Markdown (tables, when you use them, with every row on its own line). Mirror the style of the sample content."),
 }
 @app.get("/api/topics/{tid}/ai/{kind}")
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
