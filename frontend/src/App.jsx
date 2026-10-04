@@ -65,7 +65,7 @@ export default function App(){
   const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),['bookmarks',Bookmark,'Bookmarks'],...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn}/>}
-    {page==='home'&&!student&&<StaffHome user={user} toast={toast} go={go}/>}
+    {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
     {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='bookmarks'&&<Bookmarks toast={toast} role={user.role}/>}
@@ -257,21 +257,46 @@ function AreaList({areas,onStudy,staff}){
     return <div className={'qbox area '+k} key={k}><b>{title} ({L.length})</b>{hint&&!staff&&<p className="known" style={{margin:'4px 0 8px'}}>{hint}</p>}
       {L.map(a=><div className="arow" key={a.topic_id||'u'+a.unit_id}><div><span>{a.title}</span><small>{a.correct} of {a.total} right · {a.percent}%{a.study&&!staff?' · '+STUDY[a.study]:''}{a.course?' · '+a.course:''}</small><Bar2 v={a.percent}/></div>
         {a.topic_id&&onStudy&&<button className="tool" onClick={()=>onStudy(a.topic_id)}>{k==='strong'?'Review':'Study again'}</button>}</div>)}</div>})}</>}
-const ATTN_GO={drafts:'learn',empty_courses:'learn',unowned:'programs',unenrolled:'users',semester_numbers:'programs',never_opened:'users'}
-function StaffHome({user,toast,go}){
-  const [o,setO]=useState(null),[open,setOpen]=useState(null)
-  useEffect(()=>{api('/overview').then(setO).catch(e=>toast(e.message))},[toast])
-  if(open)return <StudentReport c={open} back={()=>setOpen(null)} toast={toast}/>
+const ATTN_GO={drafts:'drafts',empty_courses:'empty_courses',unowned:'unowned',unenrolled:'unenrolled',semester_numbers:'semester_numbers',never_opened:'never_opened'}
+const RS_PAGE=5
+function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard card: search, sort, 5 per page, and a tap on a row opens its details
+  const [q,setQ]=useState(''),[order,setOrder]=useState('name'),[page,setPage]=useState(0),[d,setD]=useState(null),[view,setView]=useState(null),[progs,setProgs]=useState([])
+  useEffect(()=>{setPage(0)},[q,order])
+  useEffect(()=>{if(view)return;let live=true;const t=setTimeout(()=>api(`/overview/list?kind=${kind}&q=${encodeURIComponent(q)}&order=${order}&limit=${RS_PAGE}&offset=${page*RS_PAGE}`).then(r=>{if(!live)return;if(!r.items.length&&r.total&&page>0)setPage(Math.max(0,Math.ceil(r.total/RS_PAGE)-1));else setD(r)}).catch(e=>toast(e.message)),q?250:0);return()=>{live=false;clearTimeout(t)}},[kind,q,order,page,view])
+  useEffect(()=>{if(view?.target.type==='user')api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[view])
+  const shut=()=>setView(null)
+  if(view){const t=view.target
+    if(t.type==='user')return <UserDetail id={t.id} me={user} progs={progs} back={shut} toast={toast}/>
+    if(t.type==='topic')return <Topic id={t.id} back={shut} toast={toast} role={user.role}/>
+    if(t.type==='course'&&kind==='courses'){const [p='',sm='']=(view.sub||'').split(' · ');return <StudentReport c={{course_id:t.id,course:view.title,program:p,semester:sm}} back={shut} toast={toast}/>}
+    open(t.type==='program'?[t.id]:[t.program_id,t.semester_id,t.id].filter(x=>x!=null));return null}
+  const total=d?.total??0,pages=Math.max(1,Math.ceil(total/RS_PAGE)),title=d?.title||'Loading'
+  return <><Bar title={title} sub={d?(total+(q?' match'+(total===1?'':'es'):' in total')):''} back={back}/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label={'Search '+title.toLowerCase()} placeholder="Search" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="qopt"><select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="name">Sort: A to Z</option><option value="name_desc">Sort: Z to A</option><option value="detail">Sort: by details</option><option value="newest">Sort: newest first</option>{d?.can_recent&&<option value="recent">Sort: last active</option>}</select></div>
+    {!d&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
+    {d&&d.items.length>0&&<div className="uhead" aria-hidden="true"><span>Name</span><span>Details</span><span/></div>}
+    {d?.items.map(x=><button key={x.id} className="utr" onClick={()=>setView(x)} aria-label={'Open '+x.title}>
+      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.title||'?')[0]}</span><span className="tx"><b>{x.title}</b><small className="sub">{x.sub}</small></span></span>
+      <span className="pg">{x.detail||'—'}</span><span className="sn"><ChevronRight size={16}/></span></button>)}
+    {d&&!d.items.length&&<p className="known">{q?'Nothing matches that search.':'Nothing here. All clear.'}</p>}
+    {d&&total>RS_PAGE&&<nav className="pager" aria-label="Pages"><button className="btn ghost" disabled={page===0} onClick={()=>setPage(page-1)}><ChevronLeft size={18}/><span>Previous</span></button><small>Page {page+1} of {pages}</small><button className="btn ghost" disabled={page+1>=pages} onClick={()=>setPage(page+1)}><span>Next</span><ChevronRight size={18}/></button></nav>}
+  </div></>}
+function StaffHome({user,toast,open}){
+  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null)
+  useEffect(()=>{if(!list&&!rep)api('/overview').then(setO).catch(e=>toast(e.message))},[toast,list,rep])
+  if(rep)return <StudentReport c={rep} back={()=>setRep(null)} toast={toast}/>
+  if(list)return <ResultSet kind={list} user={user} back={()=>setList(null)} toast={toast} open={open}/>
   const admin=user.role==='admin',hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
-  const stats=o?(admin?[[o.people.students,'Active students'],[o.people.active_week,'Studied this week'],[o.people.faculty,'Faculty'],[o.courses,'Courses']]:[[o.courses,'Your courses'],[o.topics,'Topics'],[o.drafts,'Drafts']]):[]
+  const stats=o?(admin?[[o.people.students,'Active students','students'],[o.people.active_week,'Studied this week','active_week'],[o.people.faculty,'Faculty','faculty'],[o.courses,'Courses','courses']]:[[o.courses,'Your courses','courses'],[o.topics,'Topics','topics'],[o.drafts,'Drafts','drafts']]):[]
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={admin?'Across the whole college':'Your courses'}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
-    {o&&<div className="stats">{stats.map(([n,l])=><div className="stat" key={l}><b>{(n??0).toLocaleString()}</b>{l}</div>)}</div>}
+    {o&&<div className="stats">{stats.map(([n,l,k])=><button className="stat" key={l} style={{textAlign:'left',width:'100%'}} onClick={()=>setList(k)} aria-label={`${(n??0).toLocaleString()} ${l}. Show the list`}><b>{(n??0).toLocaleString()}</b>{l}</button>)}</div>}
     {o&&<><h3 style={{margin:'24px 0 8px'}}>Needs attention</h3>
-      {o.attention.length?o.attention.map(x=><button key={x.kind} className="card" style={{textAlign:'left'}} onClick={()=>go(ATTN_GO[x.kind]||'learn')}><div style={{flex:1}}><b>{x.text}</b></div><ChevronRight size={18}/></button>)
+      {o.attention.length?o.attention.map(x=><button key={x.kind} className="card" style={{textAlign:'left'}} onClick={()=>setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{x.text}</b></div><ChevronRight size={18}/></button>)
         :<p className="known">Nothing needs your attention right now.</p>}</>}
     {o&&!o.courses&&!admin&&<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}
-    {o?.courses>0&&<><h3 style={{margin:'28px 0 4px'}}>{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setOpen}/></>}
+    {o?.courses>0&&<><h3 style={{margin:'28px 0 4px'}}>{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
 function Dashboard({user,toast,onOpen}){
   const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[topic,setTopic]=useState(null)

@@ -161,3 +161,20 @@ def test_copy_unit_takes_topics_and_quizzes_as_drafts_and_remaps_question_topics
     env.c.put(f"/api/courses/{phys['id']}/owner", headers=env.admin, json={"user_id": uid("fac@x.com")})  # faculty owns only the target: no draft topics, no quizzes of the original
     fr = env.c.post(f"/api/units/{u1['id']}/copy", headers=env.fac, json={"course_id": phys["id"]}).json()
     assert fr["topics"] == 1 and fr["quizzes"] == 0
+
+def test_dashboard_card_lists_search_sort_page_and_point_at_details(env):
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water,w\n,,,,Fuel,f\n,,,,Air,a\n")
+    t = tree(env)[0]; course = t["semesters"][0]["courses"][0]; topics = course["units"][0]["topics"]
+    for x in topics[:2]: env.c.put(f"/api/topics/{x['id']}/publish", headers=env.admin, json={"published": False})
+    for i in range(7): env.add_user(f"stud{i}@x.com")  # active students with no program: all unplaced and never opened
+    get = lambda kind, h=None, **kw: env.c.get("/api/overview/list", headers=h or env.admin, params={"kind": kind, **kw})
+    page1 = get("unenrolled").json(); assert page1["total"] >= 7 and len(page1["items"]) == 5 and page1["items"][0]["target"]["type"] == "user"
+    page2 = get("unenrolled", offset=5).json(); assert page2["items"] and not {i["id"] for i in page1["items"]} & {i["id"] for i in page2["items"]}
+    names = [i["title"] for i in get("students", order="name", limit=50).json()["items"]]; assert names == sorted(names, key=str.lower)
+    assert [i["title"] for i in get("students", order="name_desc", limit=50).json()["items"]] == names[::-1]
+    hit = get("students", q="stud3@x.com").json(); assert hit["total"] == 1 and hit["items"][0]["sub"] == "stud3@x.com"
+    d = get("drafts").json(); assert d["total"] == 2 and d["items"][0]["target"]["type"] == "topic"
+    assert get("topics").json()["total"] == 3 and get("courses").json()["items"][0]["target"]["type"] == "course"
+    assert get("unowned").json()["total"] == 1 and get("empty_courses").json()["total"] == 0
+    assert get("nope").status_code == 404 and get("students", h=env.fac).status_code == 403 and get("courses", h=env.stu).status_code == 403
+    assert get("courses", h=env.fac).json()["total"] == 0 and get("drafts", h=env.fac).json()["total"] == 0  # faculty see only their own courses

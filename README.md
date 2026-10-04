@@ -154,6 +154,7 @@ Authors tie each quiz question to the topic it tests (the "Topic this tests" men
 
 ## Staff workflow
 - **Home** for admins and faculty lists what needs attention (courses with no owner, students not placed in a program and semester, draft topics, semesters without a number, students who have never opened a topic) and the course table with completion. Faculty see only their own courses.
+- **Dashboard cards open their list**: tap any number (Active students, Studied this week, Faculty, Courses, Topics, Drafts) or any "Needs attention" item to see the rows behind it. The list has search, sorting and 5 rows per page; tap a row to open that user, course, topic or program.
 - **Start a new term**: Programs > a program > "Start a new term". It previews, then moves every active student up one semester. Students already in the program's last semester are left alone or have their accounts switched off, as you choose. Run it once per term.
 - **Quizzes from a CSV**: in the quiz editor, "Import from CSV" adds questions from a file with the columns `question, a, b, c, d, correct, explanation, topic` (`correct` is a letter or number; `topic` is matched to a topic title in the unit). Problem rows are listed and skipped; nothing is saved until you press Save quiz. "CSV template" downloads an example.
 - **Preview as student**: on a topic page, staff can hide the editing buttons to see what students see.

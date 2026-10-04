@@ -996,6 +996,57 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
                                            [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"], "; ".join(r["strong"]), "; ".join(r["needs_study"])] for r in rows])
     return {"course": c.name, "students": rows}
 
+# ---- dashboard cards: the list behind each number ----
+LIST_TITLES = {"students": "Active students", "active_week": "Studied this week", "faculty": "Faculty", "courses": "Courses", "topics": "Topics", "drafts": "Draft topics",
+               "empty_courses": "Courses with no units", "unowned": "Courses with no owner", "unenrolled": "Students not placed", "semester_numbers": "Terms with no number",
+               "never_opened": "Students who never opened a topic"}
+ADMIN_LISTS = {"students", "active_week", "faculty", "unowned", "unenrolled", "semester_numbers", "never_opened"}
+@app.get("/api/overview/list")
+def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, offset: int = 0, u: User = Depends(staff), s: Session = Depends(db)):
+    """The rows behind one dashboard card, with search, sorting and paging. Each item says where its details page is (target). Faculty see only their own courses."""
+    if kind not in LIST_TITLES: raise HTTPException(404, "Unknown list")
+    if kind in ADMIN_LISTS and u.role != "admin": raise HTTPException(403, "Admins only")
+    mine = my_courses(u, s); pn = {p.id: p for p in s.query(Program)}; sems = {x.id: x for x in s.query(Semester)}; items = []
+    def person(x, extra=""):
+        p = pn.get(x.program_id); t = term_label(p) if p else "Semester"
+        place = (p.name + (f" · {t} {x.semester}" if x.semester else "")) if p else "No program"
+        return {"id": x.id, "title": x.name, "sub": x.email, "detail": place + extra, "sort": (x.name or "").lower(), "target": {"type": "user", "id": x.id}}
+    def course(c, extra=""):
+        sm = sems.get(c.semester_id); p = pn.get(c.program_id)
+        return {"id": c.id, "title": c.name, "sub": " · ".join(x for x in [p.name if p else "", sm.name if sm else ""] if x), "detail": extra, "sort": (c.name or "").lower(),
+                "target": {"type": "course", "program_id": c.program_id, "semester_id": c.semester_id, "id": c.id}}
+    stu = s.query(User).filter_by(role="student", active=True)
+    if kind == "students": items = [person(x) for x in stu]
+    elif kind == "faculty": items = [{**person(x), "detail": "Active", "sub": x.email} for x in s.query(User).filter_by(role="faculty", active=True)]
+    elif kind == "active_week":
+        last = dict(s.query(Progress.user_id, func.max(Progress.last_read)).group_by(Progress.user_id).all()); week = dt.datetime.utcnow() - dt.timedelta(days=7)
+        items = [{**person(x, f" · last read {last[x.id]:%d %b %Y}"), "recent": last[x.id].isoformat()} for x in stu if last.get(x.id) and last[x.id] >= week]
+    elif kind == "unenrolled": items = [person(x) for x in stu.filter(or_(User.program_id.is_(None), User.semester.is_(None)))]
+    elif kind == "never_opened": items = [person(x) for x in stu.filter(User.id.notin_(s.query(Progress.user_id)))]
+    elif kind == "courses": items = [course(c, f"Owner: {u2.name}" if (u2 := s.get(User, c.faculty_owner_id) if c.faculty_owner_id else None) else "No owner") for c in mine]
+    elif kind == "unowned": items = [course(c, "No owner") for c in mine if c.faculty_owner_id is None]
+    elif kind == "empty_courses": items = [course(c, "No units yet") for c in mine if not s.query(Unit.id).filter_by(course_id=c.id).first()]
+    elif kind == "semester_numbers":
+        for x in s.query(Semester).filter(Semester.semester_no.is_(None)):
+            p = pn.get(x.program_id); items.append({"id": x.id, "title": x.name, "sub": p.name if p else "", "detail": "No number set", "sort": (x.name or "").lower(), "target": {"type": "program", "id": x.program_id}})
+    else:  # topics, drafts
+        cids = [c.id for c in mine]; cn = {c.id: c for c in mine}; un = {x.id: x for x in s.query(Unit).filter(Unit.course_id.in_(cids or [0]))}
+        tq = s.query(Topic).filter(Topic.unit_id.in_(list(un) or [0]))
+        if kind == "drafts": tq = tq.filter(Topic.published == False)  # noqa: E712
+        for t in tq:
+            un_ = un.get(t.unit_id); c = cn.get(un_.course_id) if un_ else None
+            items.append({"id": t.id, "title": t.title, "sub": " › ".join(x for x in [c.name if c else "", un_.name if un_ else ""] if x), "detail": "Published" if t.published else "Draft",
+                          "sort": (t.title or "").lower(), "target": {"type": "topic", "id": t.id}})
+    if q.strip():
+        needle = q.strip().lower(); items = [i for i in items if needle in " ".join([i["title"] or "", i["sub"] or "", i["detail"] or ""]).lower()]
+    if order == "recent" and any("recent" in i for i in items): items.sort(key=lambda i: (i.get("recent") or "", i["id"]), reverse=True)
+    elif order == "detail": items.sort(key=lambda i: ((i["detail"] or "").lower(), i["sort"], i["id"]))
+    elif order == "name_desc": items.sort(key=lambda i: (i["sort"], i["id"]), reverse=True)
+    elif order == "newest": items.sort(key=lambda i: i["id"], reverse=True)
+    else: items.sort(key=lambda i: (i["sort"], i["id"]))
+    limit = min(max(limit, 1), 50); offset = max(offset, 0)
+    return {"kind": kind, "title": LIST_TITLES[kind], "total": len(items), "items": [{k: v for k, v in i.items() if k not in ("sort", "recent")} for i in items[offset:offset + limit]],
+            "can_recent": any("recent" in i for i in items)}
 # ---- content: admin writes, everyone reads ----
 @app.get("/api/overview")
 def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs attention today: admins see the whole college, faculty only their own courses
