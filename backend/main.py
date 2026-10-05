@@ -1,5 +1,5 @@
 from collections import defaultdict
-import base64, csv, io, json, logging, os, re, smtplib, hashlib, hmac, secrets, datetime as dt, httpx, jwt
+import base64, csv, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, datetime as dt, httpx, jwt
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -2021,5 +2021,15 @@ def get_image(name: str):
     path = os.path.join(UPLOADS, name)
     if not m or not os.path.isfile(path): raise HTTPException(404, "Not found")
     return FileResponse(path, media_type=MIME[m.group(1)], headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"})
+def read_head():  # the commit this server's code is at (None when it is not a git checkout)
+    try: return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except Exception: return None
+SERVER_HEAD = read_head()
 dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+@app.get("/api/version")  # open it in a browser to check that the screens were rebuilt after the last update: "match" should be true
+def version():
+    try: screens = open(os.path.join(dist, "build.txt")).read().strip() or None
+    except OSError: screens = None
+    return {"server": SERVER_HEAD, "screens": screens, "match": bool(SERVER_HEAD and screens and SERVER_HEAD == screens),
+            "hint": None if SERVER_HEAD and screens and SERVER_HEAD == screens else "The screens are older than the server code (or were never built). Run ./run.sh, or: cd frontend && npm ci && npm run build, then restart."}
 if os.path.isdir(dist): app.mount("/", StaticFiles(directory=dist, html=True), name="ui")

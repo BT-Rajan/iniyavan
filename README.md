@@ -162,6 +162,10 @@ Home for a student is a plan for the day, not a list of everything.
 - **Tiles:** streak, topics completed this week, overall completion, quiz average (best score per quiz).
 - **Courses:** progress, overdue count and the next topic to open.
 
+## After an update: rebuild the screens
+
+The built screens (`frontend/dist`) are not stored in git. After `git pull`, run `./run.sh` (it rebuilds and restarts). If you only restart the backend, the app serves the old screens and new features seem to be missing (for example the new student dashboard, or a program getting 8 semesters instead of the years you chose). To check, open `/api/version` on your server: `"match": true` means the screens are up to date; `false` shows what to run.
+
 ## Strengths and weak areas
 Authors tie each quiz question to the topic it tests (the "Topic this tests" menu in the quiz editor; untied questions count under their unit). From each student's **latest** result in each published quiz the app works out, per topic, what share they got right: **80% or more is a strength**, **below 60% needs another round of study**, and in between is "getting there" (`STRONG` and `WEAK` in `backend/main.py`). A retake replaces the earlier result, so improving moves a topic up.
 - **After a quiz** the student sees "How you did by topic" with the weakest first and a **Study again** button that opens the topic. They still don't get the answer key.

@@ -315,8 +315,8 @@ function StaffHome({user,toast,open}){
   </div></>}
 const FOCUS={overdue:[AlertTriangle,'Overdue','Open it'],due_soon:[Clock,'Due soon','Open it'],weak:[Target,'Needs review','Review'],resume:[Play,'Continue','Continue'],quiz_retake:[RotateCcw,'Retake the quiz','Retake'],quiz_new:[ClipboardList,'Quiz','Take the quiz'],next:[ArrowRight,'Next up','Start']}
 function Dashboard({user,toast,onOpen,onSearch}){
-  const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[topic,setTopic]=useState(null)
-  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{});api('/me/today').then(setToday).catch(()=>{})},[topic,toast])
+  const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[planErr,setPlanErr]=useState(''),[topic,setTopic]=useState(null)
+  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{});api('/me/today').then(r=>{setToday(r);setPlanErr('')}).catch(e=>setPlanErr(e.message))},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
   const seen=new Set(),courses=[]
@@ -330,6 +330,7 @@ function Dashboard({user,toast,onOpen,onSearch}){
     <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
     {!tree&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {tree&&!courses.length&&<p className="known">{user.self_registered&&!user.placed?'Your account is ready. An admin will place you in your program and semester or year, and your courses will appear here.':'You are not enrolled in a course yet. Ask your admin to add you to one.'}</p>}
+    {planErr&&courses.length>0&&<p className="known" role="alert">Today's plan could not load ({planErr}). Your courses are below. If this keeps happening, tell your admin.</p>}
     {today&&courses.length>0&&<><div className="stats dstats">
       <div className="stat"><b><Flame size={20} className={'flame'+(today.streak?' on':'')} aria-hidden="true"/> {today.streak}</b>Day streak<small>{today.active_today?'Studied today':today.streak?'Study today to keep it':'Start one today'}</small></div>
       <div className="stat"><b>{today.completed_this_week}</b>Done this week<small>{pl(today.active_days_week,'active day')}</small></div>
