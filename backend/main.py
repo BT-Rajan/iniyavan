@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, func, or_, and_, inspect, text
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Date, func, or_, and_, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
@@ -135,6 +135,10 @@ class SearchLog(Base):  # one row per search that actually went to the AI provid
     __tablename__ = "search_log"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
     refresh = Column(Boolean, default=False); query = Column(String(200)); tokens = Column(Integer, default=0)
+class ActivityDay(Base):  # one row per student per local day they opened topics; with completions and quiz attempts it makes the study streak
+    __tablename__ = "activity_days"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); day = Column(Date); reads = Column(Integer, default=0)
+    __table_args__ = (UniqueConstraint("user_id", "day", name="uq_activity_user_day"),)
 class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
@@ -1751,12 +1755,80 @@ def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
 def remove_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).delete(); s.commit()
     return {"bookmarked": False}
+# ---- the student's day: streak, this week, and what to do next ----
+DAY_OFFSET = int(os.getenv("DAY_OFFSET_MINUTES") or 330)  # minutes ahead of UTC that a "day" starts for students (330 = India); streaks count these days
+def local_day(t): return (t + dt.timedelta(minutes=DAY_OFFSET)).date()
+def note_activity(s, uid):
+    day = local_day(dt.datetime.utcnow())
+    try:
+        if s.query(ActivityDay).filter_by(user_id=uid, day=day).update({"reads": ActivityDay.reads + 1}) == 0: s.add(ActivityDay(user_id=uid, day=day, reads=1))
+        s.commit()
+    except IntegrityError: s.rollback()  # two requests made today's row at once; the first one counts
+def study_days(s, uid, since):  # {local day: activity count}: topics opened, topics completed and quizzes taken
+    days = defaultdict(int)
+    for d, n in s.query(ActivityDay.day, ActivityDay.reads).filter(ActivityDay.user_id == uid, ActivityDay.day >= since): days[d] += n
+    for (t,) in s.query(Progress.completed_at).filter(Progress.user_id == uid, Progress.completed_at.isnot(None)): days[local_day(t)] += 1
+    for (t,) in s.query(Progress.last_read).filter(Progress.user_id == uid, Progress.last_read.isnot(None)): days[local_day(t)] += 1  # opens made before day tracking began
+    for (t,) in s.query(Attempt.at).filter(Attempt.user_id == uid): days[local_day(t)] += 1
+    return {d: n for d, n in days.items() if d >= since}
+def streak_of(days, today):
+    d = today if today in days else today - dt.timedelta(days=1)  # no study yet today does not break a streak that is still alive
+    n = 0
+    while d in days: n += 1; d -= dt.timedelta(days=1)
+    return n
+def due_phrase(due, now):  # in the student's own calendar days, so "tomorrow" means tomorrow
+    n = (local_day(due) - local_day(now)).days
+    if due < now: return f"Overdue by {-n} day{'s' if n != -1 else ''}" if n < 0 else "Overdue since earlier today"
+    return "Due today" if n == 0 else "Due tomorrow" if n == 1 else f"Due in {n} days"
+@app.get("/api/me/today")
+def my_today(u: User = Depends(me), s: Session = Depends(db)):
+    now = dt.datetime.utcnow(); today = local_day(now); since = today - dt.timedelta(days=400)
+    days = study_days(s, u.id, since); streak = streak_of(days, today)
+    week = [{"date": (today - dt.timedelta(days=i)).isoformat(), "label": (today - dt.timedelta(days=i)).strftime("%a")[0], "active": (today - dt.timedelta(days=i)) in days, "today": i == 0} for i in range(6, -1, -1)]
+    courses, seen = [], set()
+    for p in tree(u, s):
+        for sm in p["semesters"]:
+            for c in sm["courses"]:
+                if c["id"] not in seen: seen.add(c["id"]); courses.append((p, sm, c))
+    weak = {a["topic_id"]: a for a in my_insights(u, s)["needs_study"] if a.get("topic_id")}
+    cand, topics_total, topics_done, bests = {}, 0, 0, []
+    def offer(prio, key, item):
+        if key not in cand or cand[key][0] < prio: cand[key] = (prio, item)
+    for p, sm, c in courses:
+        first_new = None
+        for un in c["units"]:
+            nav = [p["id"], sm["id"], c["id"], un["id"]]; base = {"course": c["name"], "unit": un["name"], "nav": nav}
+            for q in un["quizzes"]:
+                if not q["published"] or not q["questions"]: continue
+                if q["best"] is not None: bests.append(q["best"])
+                if q["best"] is None: offer(40, ("q", q["id"]), {**base, "kind": "quiz_new", "title": q["title"], "reason": f"Quiz not tried yet · {q['questions']} questions", "quiz_id": q["id"]})
+                elif q["best"] < q["pass_percent"]: offer(45, ("q", q["id"]), {**base, "kind": "quiz_retake", "title": q["title"], "reason": f"Best so far {q['best']}%, pass mark {q['pass_percent']}%", "quiz_id": q["id"]})
+            for t in un["topics"]:
+                topics_total += 1; topics_done += t["status"] == "completed"
+                if t["status"] == "completed": continue
+                it = {**base, "title": t["title"], "topic_id": t["id"]}
+                if t["learning_due_at"]:
+                    due = dt.datetime.fromisoformat(t["learning_due_at"].replace("Z", "")); n = (local_day(due) - local_day(now)).days
+                    if t["overdue"]: offer(100 + min(30, max(0, -n)), ("t", t["id"]), {**it, "kind": "overdue", "reason": due_phrase(due, now)})
+                    elif n <= 3: offer(80 - n, ("t", t["id"]), {**it, "kind": "due_soon", "reason": due_phrase(due, now)})
+                if t["id"] in weak: offer(60 + (60 - weak[t["id"]]["percent"]) / 10, ("t", t["id"]), {**it, "kind": "weak", "reason": f"You scored {weak[t['id']]['percent']}% on questions about this"})
+                if t["status"] == "in_progress": offer(50, ("t", t["id"]), {**it, "kind": "resume", "reason": "You started this. Pick up where you left off", "last_read": t["last_read"]})
+                elif first_new is None: first_new = (t, it)
+        if first_new: offer(30, ("t", first_new[0]["id"]), {**first_new[1], "kind": "next", "reason": "Start the next topic"})
+    focus = [i for _, i in sorted(cand.values(), key=lambda x: (-x[0], x[1].get("last_read") or ""))][:4]
+    for i in focus: i.pop("last_read", None)
+    in7 = [d for d in days if d > today - dt.timedelta(days=7)]
+    done7 = s.query(func.count(Progress.id)).filter(Progress.user_id == u.id, Progress.completed_at >= now - dt.timedelta(days=7)).scalar()
+    return {"streak": streak, "active_today": today in days, "week": week, "active_days_week": len(in7), "completed_this_week": done7,
+            "topics_total": topics_total, "topics_completed": topics_done, "percent": round(100 * topics_done / topics_total) if topics_total else 0,
+            "quiz_average": round(sum(bests) / len(bests)) if bests else None, "focus": focus}
 @app.post("/api/topics/{tid}/read")
 def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
     p = progress_row(s, u.id, tid)  # opening a topic starts it; it never completes it or undoes a completion
+    note_activity(s, u.id)
     s.query(Progress).filter_by(id=p.id).update({"reads": Progress.reads + 1, "last_read": dt.datetime.utcnow()}, synchronize_session=False); s.commit(); s.refresh(p)
     known = [x.title for x in s.query(Topic).join(Progress, Progress.topic_id == Topic.id)
              .filter(Progress.user_id == u.id, Topic.course_id == t.course_id, Topic.id != tid).limit(8)]

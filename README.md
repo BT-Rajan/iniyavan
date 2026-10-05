@@ -153,6 +153,15 @@ Students find topics from **Search** in the menu, or the search bar on Home.
 
 Settings > AI prompts lets an admin rewrite the instructions the AI gets for **Explain**, **Sample answer** and **Student search**: tone, language, depth, format. Saving discards the saved answers that the old wording produced, so the new prompt applies from the next question (that spends tokens again). "Reset to built-in" restores the original. Prompts are 20 to 4000 characters.
 
+## Student dashboard
+
+Home for a student is a plan for the day, not a list of everything.
+
+- **Today's focus:** up to four next steps, most urgent first: overdue topics, topics due within three days, topics tied to weak quiz results, the topic they started, quizzes to retake (below the pass mark) or try, and the next topic in each course. A topic appears once, with the reason in plain words ("Overdue by 2 days", "You scored 40% on questions about this").
+- **Study streak and week:** consecutive days with any study (opening a topic, completing one or taking a quiz), and a 7-day strip. A day not yet studied does not break a live streak. Days follow the college's time zone: set `DAY_OFFSET_MINUTES` in `.env` (default 330 for India; 0 for UTC).
+- **Tiles:** streak, topics completed this week, overall completion, quiz average (best score per quiz).
+- **Courses:** progress, overdue count and the next topic to open.
+
 ## Strengths and weak areas
 Authors tie each quiz question to the topic it tests (the "Topic this tests" menu in the quiz editor; untied questions count under their unit). From each student's **latest** result in each published quiz the app works out, per topic, what share they got right: **80% or more is a strength**, **below 60% needs another round of study**, and in between is "getting there" (`STRONG` and `WEAK` in `backend/main.py`). A retake replaces the earlier result, so improving moves a topic up.
 - **After a quiz** the student sees "How you did by topic" with the weakest first and a **Study again** button that opens the topic. They still don't get the answer key.
