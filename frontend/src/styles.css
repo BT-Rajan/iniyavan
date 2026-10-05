@@ -150,3 +150,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .prose th{background:var(--s2);font-weight:600}
 .prose tr:nth-child(even) td{background:rgba(128,128,128,.05)}
 .prose th,.prose td{overflow-wrap:normal;word-break:normal;min-width:110px}.prose th:first-child,.prose td:first-child{min-width:130px}
+
+.search.fake{width:100%;text-align:left;cursor:pointer;padding:14px;margin-bottom:14px;font:inherit}.search.fake span{color:var(--mut)}
+.hitrow{display:block;width:100%;text-align:left;padding:12px 14px;margin:8px 0;border-radius:10px;background:var(--s1);border:1px solid var(--line);color:var(--tx);cursor:pointer;font:inherit}
+.hitrow:hover{border-color:var(--vio)}.hitrow small{display:block;color:var(--mut);margin-top:2px}.hitrow .snip{display:block;margin-top:6px;color:var(--mut);font-size:.92em;line-height:1.4}

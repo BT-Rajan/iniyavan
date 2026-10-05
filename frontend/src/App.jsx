@@ -62,11 +62,11 @@ export default function App(){
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
-  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
-    {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
+    {page==='search'&&<SearchPage user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
@@ -129,6 +129,21 @@ function MyAiKey({toast}){
     <label htmlFor="k">DeepSeek API key</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?'Paste a new key to replace the current one':'sk-…'}/>
     <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?'Checking the key…':'Save key'}</button>
     {d?.key_set&&<button className="btn ghost" onClick={del}>Remove my key</button>}</div></>}
+
+function PromptEditor({toast}){
+  const [items,setItems]=useState(null),[draft,setDraft]=useState({}),[busy,setBusy]=useState('')
+  const load=()=>api('/admin/prompts').then(r=>{setItems(r.items);setDraft({})}).catch(e=>toast(e.message));useEffect(()=>{load()},[])
+  if(!items)return <div className="sk"/>
+  const save=async x=>{const text=draft[x.kind];if(x.saved_answers>0&&!confirm(`Saving discards the ${pl(x.saved_answers,'saved answer')} written with the old prompt, so students get fresh ones. Continue?`))return
+    setBusy(x.kind);try{const r=await api('/admin/prompts/'+x.kind,{method:'PUT',body:{text}});toast('Prompt saved'+(r.cleared?` · ${pl(r.cleared,'saved answer')} cleared`:''));load()}catch(e){toast(e.message)}setBusy('')}
+  const reset=async x=>{if(!confirm('Go back to the built-in prompt?'+(x.saved_answers?` This also discards ${pl(x.saved_answers,'saved answer')}.`:'')))return
+    setBusy(x.kind);try{await api('/admin/prompts/'+x.kind,{method:'DELETE'});toast('Back to the built-in prompt');load()}catch(e){toast(e.message)}setBusy('')}
+  return <><p className="known">These are the instructions the AI gets before it answers. Change the tone, depth, language or format to suit your students. Saving a prompt discards the saved answers it wrote, so the new wording applies from the next question (that costs tokens again).</p>
+    {items.map(x=>{const v=draft[x.kind]??x.text,dirty=v.trim()!==x.text.trim()
+      return <div key={x.kind} className="qbox"><b>{x.label}{x.custom&&<span className="chip" style={{marginLeft:8}}>Edited</span>}</b><p className="known" style={{margin:'4px 0 8px'}}>{x.help}</p>
+        <textarea aria-label={x.label+' prompt'} rows={9} value={v} maxLength={4000} onChange={e=>setDraft({...draft,[x.kind]:e.target.value})}/>
+        <small className="known">{v.length} / 4000 characters</small>
+        <div className="two"><button className="btn" disabled={!dirty||busy===x.kind||v.trim().length<20} onClick={()=>save(x)}>Save prompt</button><button className="btn ghost" disabled={busy===x.kind||(!x.custom&&!dirty)} onClick={()=>x.custom?reset(x):setDraft({...draft,[x.kind]:x.default})}>{x.custom?'Reset to built-in':'Undo changes'}</button></div></div>})}</>}
 
 function SelfReg({cfg,run}){
   const [dom,setDom]=useState(null);const on=!!cfg.self_registration,shown=dom??cfg.allowed_domains??''
@@ -298,7 +313,7 @@ function StaffHome({user,toast,open}){
     {o&&!o.courses&&!admin&&<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}
     {o?.courses>0&&<><h3 style={{margin:'28px 0 4px'}}>{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
-function Dashboard({user,toast,onOpen}){
+function Dashboard({user,toast,onOpen,onSearch}){
   const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[topic,setTopic]=useState(null)
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{})},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
@@ -311,6 +326,7 @@ function Dashboard({user,toast,onOpen}){
   const quizzes=courses.flatMap(x=>x.c.units.flatMap(un=>un.quizzes.filter(q=>q.best==null).map(q=>({...q,x,un})))).slice(0,4)
   const need=ins?.needs_study.slice(0,3)||[]
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub="Here is where you are today"/><div className="main">
+    <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
     {!tree&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {tree&&!courses.length&&<p className="known">{user.self_registered&&!user.placed?'Your account is ready. An admin will place you in your program and semester or year, and your courses will appear here.':'You are not enrolled in a course yet. Ask your admin to add you to one.'}</p>}
     {resume&&<div className="hero"><small>{resume.status==='in_progress'?'Continue where you left off':'Start your first topic'}</small><h2 style={{fontSize:24}}>{resume.title}</h2><p>{resume.x.c.name} · {resume.unit.name}</p>
@@ -321,6 +337,31 @@ function Dashboard({user,toast,onOpen}){
     {quizzes.length>0&&<><h3 style={{margin:'24px 0 8px'}}>Quizzes to try</h3>{quizzes.map(q=><div key={q.id} className="row" style={{cursor:'pointer'}} onClick={()=>onOpen([q.x.p.id,q.x.s.id,q.x.c.id,q.un.id])}><div>{q.title}<small>{q.x.c.name} · {q.questions} questions</small></div></div>)}</>}
     {need.length>0&&<><h3 style={{margin:'24px 0 4px'}}>Worth another round of study</h3><AreaList areas={need} onStudy={setTopic}/></>}
   </div></>}
+function SearchPage({user,toast}){
+  const [q,setQ]=useState(''),[live,setLive]=useState(null),[asked,setAsked]=useState(''),[ai,setAi]=useState(null),[aiBusy,setAiBusy]=useState(false),[aiErr,setAiErr]=useState(''),[topic,setTopic]=useState(null),[pend,setPend]=useState(false)
+  const typed=q.trim()
+  useEffect(()=>{if(typed.length<2){setLive(null);return}const t=setTimeout(()=>api('/search?q='+encodeURIComponent(typed)).then(r=>setLive({...r,for:typed})).catch(()=>{}),300);return()=>clearTimeout(t)},[typed])
+  const askAi=async(query,refresh)=>{setAiBusy(true);setAiErr('');try{setAi({...await api('/search/ai',{method:'POST',body:{q:query,refresh}}),for:query,fresh:refresh})}catch(e){setAiErr(e.message)}setAiBusy(false)}
+  const submit=async()=>{if(typed.length<2)return;setPend(true);setAi(null);setAiErr('')
+    try{const r=await api('/search?q='+encodeURIComponent(typed));setLive({...r,for:typed});setAsked(typed);setPend(false)
+      if(!r.results.length||!r.confident)await askAi(typed,false)}catch(e){toast(e.message);setPend(false)}}  // nothing good in the app's own notes, so the AI answers
+  if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
+  const res=asked&&live?.for===asked?live:null,aiNote=ai&&res&&res.results.length>0&&!res.confident
+  return <><Bar title="Search" sub="Find a topic, or ask the AI"/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search topics" autoFocus placeholder="e.g. temporary hardness of water" value={q} maxLength={200} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()}/></div>
+    <button className="btn" disabled={pend||aiBusy||typed.length<2} onClick={submit}>{pend?'Searching…':'Search'}</button>
+    {!asked&&live&&live.results.length>0&&<><h3 style={{margin:'20px 0 6px'}}>Topics in your courses</h3><p className="known">Press Enter to search properly. If nothing here fits, the AI answers.</p>{live.results.slice(0,5).map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>}
+    {!asked&&typed.length>=2&&live&&!live.results.length&&<p className="known">Nothing in your courses matches yet. Press Enter and the AI will answer instead.</p>}
+    {res&&<>{res.results.length>0?<><h3 style={{margin:'22px 0 6px'}}>{aiNote?'Possible matches in your courses':'In your courses'}</h3>{res.results.map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>
+      :<p className="known" style={{marginTop:18}}>Nothing in your courses matches “{asked}”.</p>}
+      {!ai&&!aiBusy&&<button className="btn ghost" onClick={()=>askAi(asked,false)}><Sparkles size={16}/> Not what you wanted? Recheck with AI</button>}</>}
+    {aiBusy&&<div className="qbox" aria-live="polite"><b>Asking the AI…</b><div className="sk"/></div>}
+    {aiErr&&<div className="qbox" role="alert"><b>The AI could not answer</b><p className="known" style={{margin:'6px 0 0'}}>{aiErr}</p></div>}
+    {ai&&!aiBusy&&<><h3 style={{margin:'24px 0 6px'}}>AI answer</h3><div className="prose">{ai.cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai.text}</Md></div>
+      <p className="known">AI answers can contain mistakes. Check them against your notes and textbook.</p>
+      <button className="btn ghost" disabled={aiBusy} onClick={()=>askAi(ai.for,true)}><Sparkles size={16}/> Not happy? Recheck with AI</button></>}</div></>}
+function Hit({x,open}){return <button className="hitrow" onClick={()=>open(x.id)}><b>{x.title}{x.in_title&&<span className="chip" style={{marginLeft:8}}>Best match</span>}</b><small>{[x.program,x.semester,x.course,x.unit].filter(Boolean).join(' › ')}</small>{x.snippet&&<span className="snip">{x.snippet}</span>}</button>}
+
 function Insights({toast,role}){
   const [d,setD]=useState(null),[topic,setTopic]=useState(null)
   useEffect(()=>{if(!topic)api('/me/insights').then(setD).catch(e=>toast(e.message))},[topic])
@@ -785,6 +826,7 @@ function AiConfig({toast,onBrand}){
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Test the key</button>
       <button className="btn ghost" onClick={()=>confirm('Turn AI off for everyone? Students will see "AI unavailable" until you save a key again.')&&run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}>Remove the key (turn AI off)</button></>}
     <p className="known" style={{marginTop:20}}>One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
+    <h3 style={{margin:'32px 0 4px'}}>AI prompts</h3><PromptEditor toast={toast}/>
     <h3 style={{margin:'28px 0 4px'}}>Self-registration</h3><SelfReg cfg={cfg} run={run}/>
     <h3 style={{margin:'28px 0 4px'}}>Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
     {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</div></>}

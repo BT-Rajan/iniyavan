@@ -127,6 +127,14 @@ class BankQuestion(Base):  # a reusable question any faculty member or admin can
     id = Column(Integer, primary_key=True); owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True); sig = Column(String(40), index=True)
     text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text); tags = Column(String(200), default=""); source = Column(String(200), default="")
     uses = Column(Integer, default=0); created_at = Column(DateTime, default=dt.datetime.utcnow)
+class SearchAnswer(Base):  # a saved AI answer to a student's search, shared by everyone who asks the same thing; the key includes the prompt, so editing the prompt starts afresh
+    __tablename__ = "search_answers"
+    id = Column(Integer, primary_key=True); qhash = Column(String(64), unique=True); query = Column(String(200)); text = Column(Text)
+    tokens = Column(Integer, default=0); hits = Column(Integer, default=0); created_at = Column(DateTime, default=dt.datetime.utcnow)
+class SearchLog(Base):  # one row per search that actually went to the AI provider; used for the daily limit
+    __tablename__ = "search_log"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
+    refresh = Column(Boolean, default=False); query = Column(String(200)); tokens = Column(Integer, default=0)
 class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
@@ -1784,28 +1792,29 @@ def course_progress(cid: int, u: User = Depends(staff), s: Session = Depends(db)
     now = dt.datetime.utcnow()
     return {"students": len(aud), "topics": {x.id: {"completed": done[x.id], "overdue": len(aud) - done[x.id] if x.learning_due_at and x.learning_due_at < now else 0} for x in topics}}
 
-PROMPTS = {
+PROMPTS = {  # the built-in prompts; an admin can replace any of them under Settings (stored as prompt_<kind>)
  "explain": ("You are a warm, sharp engineering tutor for a teenage student. Explain the topic clearly with a hook, an everyday analogy, "
              "the core idea step by step, one worked example, and 3 quick recap bullets. Use Markdown, be concise, stay accurate. "
              "Show comparisons, classifications and families of related items as a Markdown table: a header row, a separator row, and every row on its own line."),
  "answer": ("You are an engineering exam coach. Write a model answer that follows the given answer guideline and question pattern exactly "
             "(structure, length, marks split, diagrams to sketch, keywords). Use Markdown (tables, when you use them, with every row on its own line). Mirror the style of the sample content."),
+ "search": ("You are the search helper inside a study app for college students. The student typed a search about something they are studying and the app has no good match in its own notes, "
+            "or they asked for a second opinion. Answer it as a clear, accurate tutor: start with a one-line definition, then explain the core idea simply, give one example, and end with 3 recap bullets. "
+            "Use Markdown; show comparisons and families of related items as a table with every row on its own line. Fit the answer to the student's program and level when it is given. "
+            "If the search is not about their studies, say briefly that you can only help with study topics."),
 }
-@app.get("/api/topics/{tid}/ai/{kind}")
-async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
-    t = s.get(Topic, tid)
-    if not t or kind not in PROMPTS: raise HTTPException(404, "Not found")
-    check_topic_access(u, t, s)
-    f = full(t, s)
-    ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or ""]).encode()).hexdigest()
+PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on a topic. The topic's notes are sent with it."),
+               "answer": ("Sample answer tab", "Used for the model answer. The question pattern, answer guideline and sample content are sent with it."),
+               "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
+MAX_PROMPT = 4000
+def prompt_for(s, kind): return setting(s, "prompt_" + kind).strip() or PROMPTS[kind]
+def key_or_fail(u, s):  # without a key AI is off, even for saved answers
     key = key_for(u, s)
     if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
-    if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")  # without a key AI is off, even for saved answers
-    hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
-    if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
-    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
-        "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
-    try: text, tokens = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": PROMPTS[kind]}, {"role": "user", "content": msg}], timeout=60)
+    if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")
+    return key
+async def ask_ai(u, s, key, system, msg):
+    try: return await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], timeout=60)
     except httpx.HTTPStatusError as e:
         log.warning("DeepSeek answered %s", e.response.status_code)
         if u.self_registered: raise HTTPException(503, f"DeepSeek refused your key ({e.response.status_code}). Check it, or your DeepSeek balance, under AI key in the menu.")
@@ -1814,9 +1823,106 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
         log.warning("DeepSeek call failed: %s", type(e).__name__)
         if u.self_registered: raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
         raise ai_down(u, "DeepSeek did not answer.")
+@app.get("/api/topics/{tid}/ai/{kind}")
+async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t or kind not in PROMPTS: raise HTTPException(404, "Not found")
+    check_topic_access(u, t, s)
+    f = full(t, s); prompt = prompt_for(s, kind)
+    ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or "", prompt]).encode()).hexdigest()
+    key = key_or_fail(u, s)
+    hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
+    if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
+    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
+        "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
+    text, tokens = await ask_ai(u, s, key, prompt, msg)
     try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
     except Exception: s.rollback()
     return {"text": text, "cached": False}
+
+# ---- search: the app's own topics first, then the AI ----
+STOP = set("a an the of in on at to for and or is are was were be been what whats how why when which who does do did define explain meaning about between difference differences vs versus with from by as it its this that these those me my tell give short note notes write full form please can you i we".split())
+SEARCH_DAILY = int(os.getenv("AI_SEARCH_DAILY") or 30)  # AI searches per student per day (answers already saved don't count)
+def search_terms(q):
+    out = []
+    for w in re.findall(r"[a-z0-9][a-z0-9+./-]*", q.lower()):
+        w = w.strip("-./+") or w
+        if len(w) > 3 and w.endswith("s") and not w.endswith("ss"): w = w[:-1]  # ions -> ion, bases -> base
+        if len(w) >= 2 and w not in STOP and w not in out: out.append(w)
+    return out[:6]
+def plain(t): return re.sub(r"\s+", " ", re.sub(r"[#*_`>|$\\\[\]()~]", " ", re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t or ""))).strip()
+def snippet(text, terms, n=170):
+    low = text.lower(); at = min([i for i in (low.find(t) for t in terms) if i >= 0] or [0]); a = max(0, at - 60)
+    return ("…" if a else "") + text[a:a + n].strip() + ("…" if a + n < len(text) else "")
+@app.get("/api/search")
+def search(q: str = "", limit: int = 10, u: User = Depends(me), s: Session = Depends(db)):
+    q = " ".join(q.split())[:200]; terms = search_terms(q)
+    if len(q) < 2 or not terms: return {"q": q, "results": [], "confident": False}
+    like = lambda col, t: func.lower(col).like(f"%{t}%")
+    conds = [c for t in terms for c in (like(Topic.title, t), like(Topic.content, t), like(Unit.name, t), like(Course.name, t))]
+    rows = s.query(Topic, Unit, Course).join(Unit, Unit.id == Topic.unit_id).join(Course, Course.id == Unit.course_id).filter(or_(*conds)).limit(500).all()
+    ok = {}
+    def allowed(c):
+        if c.id not in ok:
+            try: check_course_access(u, c.id, s); ok[c.id] = True
+            except HTTPException: ok[c.id] = False
+        return ok[c.id]
+    need = max(1, (len(terms) + 1) // 2); scored = []
+    for t, un, co in rows:
+        if not allowed(co) or (t.published is False and not can_edit(u, co.id, s)): continue
+        title, unit, course, body = (t.title or "").lower(), (un.name or "").lower(), (co.name or "").lower(), plain(t.content)
+        hit = [tm for tm in terms if tm in title or tm in unit or tm in course or tm in body.lower()]
+        if len(hit) < need: continue
+        score = sum(5 if tm in title else 2 if (tm in unit or tm in course) else 1 for tm in hit) + (5 if len(terms) > 1 and " ".join(terms) in title else 0)
+        near = any(tm in title or tm in unit or tm in course for tm in hit)
+        scored.append((score, near, len(hit) == len(terms), t, un, co, body))
+    scored.sort(key=lambda x: (-x[0], x[3].title)); top = scored[:max(1, min(limit, 25))]
+    sems = {x.id: x for x in s.query(Semester).filter(Semester.id.in_({x[5].semester_id for x in top if x[5].semester_id} or {0}))}
+    progs = {x.id: x.name for x in s.query(Program).filter(Program.id.in_({x[5].program_id for x in top} or {0}))}
+    return {"q": q, "terms": terms, "confident": any(near or (full_ and len(terms) > 1) for _, near, full_, *_ in scored),  # a lone word found only inside some notes is not a confident match
+            "results": [{"id": t.id, "title": t.title, "unit": un.name, "course": co.name, "program": progs.get(co.program_id, ""), "semester": sems[co.semester_id].name if co.semester_id in sems else "",
+                         "snippet": snippet(body, terms), "score": sc, "in_title": near} for sc, near, _, t, un, co, body in top]}
+class SearchAIIn(BaseModel): q: str; refresh: bool = False
+@app.post("/api/search/ai")
+async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(db)):
+    q = " ".join(b.q.split())
+    if not 2 <= len(q) <= 200: raise HTTPException(400, "Type what you want to look up (2 to 200 characters)")
+    key = key_or_fail(u, s); prompt = prompt_for(s, "search"); qh = hashlib.sha256("|".join(["search", q.lower(), prompt]).encode()).hexdigest()
+    if not b.refresh:
+        hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
+        if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
+    if u.role == "student" and s.query(func.count(SearchLog.id)).filter(SearchLog.user_id == u.id, SearchLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= SEARCH_DAILY:
+        raise HTTPException(429, f"You have used today's {SEARCH_DAILY} AI searches. Try again tomorrow, or browse your courses.")
+    who = ""
+    if u.role == "student" and u.program_id:
+        pr = s.get(Program, u.program_id); who = f"Student's program: {pr.name if pr else ''}" + (f", {term_label(pr)} {u.semester}" if u.semester else "") + "\n"
+    msg = who + f"Search: {q}" + ("\n\nThe student was not satisfied with the first answer or the topics the app found. Give a fresh, clearer and more complete explanation from a different angle." if b.refresh else "")
+    text, tokens = await ask_ai(u, s, key, prompt, msg)
+    s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
+    if not b.refresh:  # a recheck is the student asking for something different, so it is not saved for others
+        try: s.add(SearchAnswer(qhash=qh, query=q[:200], text=text, tokens=tokens)); s.flush()
+        except Exception: s.rollback(); s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
+    s.commit(); return {"text": text, "cached": False}
+# ---- admin: edit the AI prompts ----
+def saved_count(s, kind): return s.query(func.count(SearchAnswer.id)).scalar() if kind == "search" else s.query(func.count(AICache.id)).filter(AICache.kind == kind).scalar()
+def clear_saved(s, kind): return (s.query(SearchAnswer).delete() if kind == "search" else s.query(AICache).filter(AICache.kind == kind).delete(synchronize_session=False))
+@app.get("/api/admin/prompts")
+def get_prompts(_: User = Depends(admin), s: Session = Depends(db)):
+    return {"items": [{"kind": k, "label": PROMPT_INFO[k][0], "help": PROMPT_INFO[k][1], "text": prompt_for(s, k), "default": PROMPTS[k], "custom": bool(setting(s, "prompt_" + k).strip()), "saved_answers": saved_count(s, k)} for k in PROMPTS]}
+class PromptIn(BaseModel): text: str
+@app.put("/api/admin/prompts/{kind}")
+def put_prompt(kind: str, b: PromptIn, _: User = Depends(admin), s: Session = Depends(db)):
+    if kind not in PROMPTS: raise HTTPException(404, "No such prompt")
+    t = b.text.strip()
+    if len(t) < 20: raise HTTPException(400, "The prompt is too short to guide the AI. Write at least a sentence or two.")
+    if len(t) > MAX_PROMPT: raise HTTPException(400, f"The prompt is too long (up to {MAX_PROMPT} characters).")
+    if t == PROMPTS[kind]: s.query(Setting).filter_by(k="prompt_" + kind).delete()
+    else: s.merge(Setting(k="prompt_" + kind, v=t))
+    cleared = clear_saved(s, kind); s.commit(); return {"ok": True, "cleared": cleared}  # saved answers were written by the old prompt, so students get fresh ones
+@app.delete("/api/admin/prompts/{kind}")
+def reset_prompt(kind: str, _: User = Depends(admin), s: Session = Depends(db)):
+    if kind not in PROMPTS: raise HTTPException(404, "No such prompt")
+    s.query(Setting).filter_by(k="prompt_" + kind).delete(); cleared = clear_saved(s, kind); s.commit(); return {"ok": True, "cleared": cleared}
 
 UPLOADS = os.path.abspath(os.getenv("UPLOAD_DIR") or os.path.join(os.path.dirname(__file__), "uploads"))
 MAX_IMG = 3 * 1024 * 1024
