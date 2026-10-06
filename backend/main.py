@@ -61,18 +61,21 @@ class Program(Base):
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     pattern = Column(String(10), default="semester")  # "semester" (B.E., B.Tech) or "year" (annual programs such as M.B.B.S); the terms below are Semester n or Year n
+    archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class Semester(Base):
     __tablename__ = "semesters"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     program_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
     semester_no = Column(Integer, nullable=True)  # the semester's place in its program (1 to 8): decides order and which students see it; never read from the name
     __table_args__ = (UniqueConstraint("program_id", "semester_no", name="uq_semesters_program_no"),)
+    archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class Course(Base):
     __tablename__ = "subjects"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     program_id = Column("course_id", Integer, ForeignKey("courses.id", ondelete="CASCADE"))
     semester_id = Column(Integer, ForeignKey("semesters.id", ondelete="CASCADE"), nullable=True)
     faculty_owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)  # the one faculty member who runs the course; null = not assigned yet
+    archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class CourseLink(Base):  # a common course shown in other programs' semesters as well; it is edited only at its home
     __tablename__ = "course_links"
     id = Column(Integer, primary_key=True)
@@ -99,6 +102,7 @@ class Unit(Base):
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
     position = Column(Integer, nullable=True)  # order within the course, set by its owner
+    archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class Topic(Base):
     __tablename__ = "topics"
     id = Column(Integer, primary_key=True); title = Column(String(200)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
@@ -108,6 +112,7 @@ class Topic(Base):
     published = Column(Boolean, default=True)  # drafts are visible to admins and the course's owner only
     position = Column(Integer, nullable=True)  # order within the unit, set by the course's owner
     learning_due_at = Column(DateTime, nullable=True)  # learn-by deadline, a UTC instant like every timestamp here; null = no deadline
+    archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class TopicVersion(Base):  # a snapshot of a topic's text each time it is saved, so an earlier version can be read and restored
     __tablename__ = "topic_versions"
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
@@ -477,7 +482,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0009_course_owners_from_assignments", owners_from_assignments), ("0010_semesters_semester_no", semester_numbers),
               ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns),
               ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL")),
-              ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern)]
+              ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern),
+              ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -584,20 +590,41 @@ def sem_visible(u, sem):  # a student sees their own program, up to and includin
 def topic_course_id(t, s):  # None when the chain is broken, which only admins get past
     un = s.get(Unit, t.unit_id) if t.unit_id else None
     return un.course_id if un else None
+def quiz_unit_open(q, s):
+    un = s.get(Unit, q.unit_id) if q.unit_id else None
+    if un is not None and un.archived_at: raise HTTPException(403, "This quiz is unavailable right now")
 def quiz_course_id(q, s):
     un = s.get(Unit, q.unit_id) if q.unit_id else None
     return un.course_id if un else None
+UNAVAILABLE = "This course is unavailable right now"
+def sem_off(s, sem):  # a semester is off when it or its program is archived
+    p = s.get(Program, sem.program_id) if sem.program_id else None
+    return bool(sem.archived_at or (p and p.archived_at))
+def course_places(s, co):  # the semesters a course is shown in: its home first, then the ones it is shared into
+    ids = [co.semester_id] + [l.semester_id for l in s.query(CourseLink).filter_by(course_id=co.id)]
+    return [x for i in ids if i and (x := s.get(Semester, i))]
+def course_off(s, co):  # archived itself, or every place it is shown in is archived (an archived program or semester takes its courses with it)
+    if co.archived_at: return True
+    places = course_places(s, co)
+    return bool(places) and all(sem_off(s, x) for x in places)
 def check_course_access(u, course_id, s):
+    co = s.get(Course, course_id) if course_id else None
+    if co is not None and not can_edit(u, course_id, s) and course_off(s, co): raise HTTPException(403, UNAVAILABLE)  # admins and the course's owner can still open it, to restore it
     if not scoped(u): return
-    co = s.get(Course, course_id) if course_id else None; sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
+    sem = s.get(Semester, co.semester_id) if co and co.semester_id else None
     ok = co and sem and sem_visible(u, sem)
     if not ok and co:  # or the course is shared into one of the student's visible semesters
         ok = any(sem_visible(u, x) for x in s.query(Semester).join(CourseLink, CourseLink.semester_id == Semester.id).filter(CourseLink.course_id == co.id))
     if not ok: raise HTTPException(403, "This is not part of your program or semester")
+    if not any(sem_visible(u, x) and not sem_off(s, x) for x in course_places(s, co)): raise HTTPException(403, UNAVAILABLE)  # the only places they see it are archived
+def topic_off(s, t):  # the topic or its unit is archived (the course chain is checked on its own)
+    un = s.get(Unit, t.unit_id) if t.unit_id else None
+    return bool(t.archived_at or (un and un.archived_at))
 def check_topic_access(u, t, s):  # drafts are for admins and the faculty assigned to the course only
     cid = topic_course_id(t, s)
     if t.published is False and not can_edit(u, cid, s): raise HTTPException(404, "Topic not found")
     check_course_access(u, cid, s)
+    if topic_off(s, t) and not can_edit(u, cid, s): raise HTTPException(403, "This topic is unavailable right now")
 def sem_number(s, program_id, n, keep=None):  # a semester number is 1 to 8 and unique within its program
     lab = term_label(s.get(Program, program_id)).lower()
     if n is None or not 1 <= n <= 8: raise HTTPException(400, f"The {lab} number must be from 1 to 8")
@@ -822,9 +849,11 @@ def counts(s, ids):
     for pid, n in s.query(User.program_id, func.count(User.id)).filter(User.program_id.in_(ids)).group_by(User.program_id): c[pid]["students"] = n
     return c
 @app.get("/api/admin/programs")
-def admin_programs(q: str = "", order: str = "name", limit: int = 50, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
+def admin_programs(q: str = "", order: str = "name", status: str = "active", limit: int = 50, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
     stu = s.query(func.count(User.id)).filter(User.program_id == Program.id).correlate(Program).scalar_subquery()
     qs = s.query(Program)
+    if status == "archived": qs = qs.filter(Program.archived_at.isnot(None))
+    elif status != "all": qs = qs.filter(Program.archived_at.is_(None))  # archived programs are out of the way unless asked for
     if q.strip():
         like = f"%{q.strip().lower()}%"  # matches the program name, or any of its semester or course names
         qs = qs.filter(or_(func.lower(Program.name).like(like),
@@ -832,7 +861,7 @@ def admin_programs(q: str = "", order: str = "name", limit: int = 50, offset: in
             Program.id.in_(s.query(Course.program_id).filter(func.lower(Course.name).like(like)))))
     rows = qs.order_by(*PSORT.get(order, PSORT["name"])(stu), Program.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     c = counts(s, [p.id for p in rows])
-    return {"total": qs.count(), "items": [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), **c[p.id]} for p in rows]}
+    return {"total": qs.count(), "items": [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), "archived": bool(p.archived_at), **c[p.id]} for p in rows]}
 @app.get("/api/admin/programs/{pid}")
 def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     p = s.get(Program, pid)
@@ -841,11 +870,13 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     cc = dict(s.query(Course.semester_id, func.count(Course.id)).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     tc = dict(s.query(Course.semester_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(50).all()
-    cl = defaultdict(list)
+    cl = defaultdict(list); sem_arch = {x.id: bool(x.archived_at) for x in sems}
     for co, ow in s.query(Course, User).outerjoin(User, User.id == Course.faculty_owner_id).filter(Course.semester_id.in_([x.id for x in sems] or [0])).order_by(Course.id):
-        cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow)})
-    return {"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), **counts(s, [pid])[pid],
-            "semester_list": [{"id": x.id, "name": x.name, "number": x.semester_no, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0), "course_list": cl[x.id]} for x in sems],
+        cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow),
+                                "archived": bool(co.archived_at or p.archived_at or sem_arch.get(co.semester_id)), "archived_self": bool(co.archived_at)})
+    return {"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), "archived": bool(p.archived_at), **counts(s, [pid])[pid],
+            "semester_list": [{"id": x.id, "name": x.name, "number": x.semester_no, "courses": cc.get(x.id, 0), "topics": tc.get(x.id, 0), "course_list": cl[x.id],
+                               "archived": bool(x.archived_at or p.archived_at), "archived_self": bool(x.archived_at)} for x in sems],
             "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
 AI_DOWN = "AI unavailable. Try again later."
 def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
@@ -943,11 +974,11 @@ def course_audience(c, students, sems, links):  # students who can see this cour
         return any(x.program_id == u.program_id and (u.semester is None or x.semester_no is None or x.semester_no <= u.semester) for x in places)
     return [u for u in students if sees(u)]
 def course_stats(c, aud, s):
-    ids = {u.id for u in aud}; tids = [t.id for t in s.query(Topic.id).filter(Topic.course_id == c.id, Topic.published.isnot(False))]
+    ids = {u.id for u in aud}; off_units = s.query(Unit.id).filter(Unit.archived_at.isnot(None)); tids = [t.id for t in s.query(Topic.id).filter(Topic.course_id == c.id, Topic.published.isnot(False), Topic.archived_at.is_(None), or_(Topic.unit_id.is_(None), Topic.unit_id.notin_(off_units)))]
     reads, last = defaultdict(int), {}
     if tids and ids:
         for uid, n, l in s.query(Progress.user_id, func.count(Progress.id), func.max(Progress.last_read)).filter(Progress.topic_id.in_(tids), Progress.user_id.in_(ids)).group_by(Progress.user_id).all(): reads[uid], last[uid] = n, l
-    qids = [q.id for q in s.query(Quiz.id).filter(Quiz.course_id == c.id, Quiz.published == True)]  # noqa: E712
+    qids = [q.id for q in s.query(Quiz.id).filter(Quiz.course_id == c.id, Quiz.published == True, or_(Quiz.unit_id.is_(None), Quiz.unit_id.notin_(off_units)))]  # noqa: E712
     bests = defaultdict(dict)
     if qids and ids:
         for qid, uid, b in s.query(Attempt.quiz_id, Attempt.user_id, func.max(Attempt.percent)).filter(Attempt.quiz_id.in_(qids), Attempt.user_id.in_(ids)).group_by(Attempt.quiz_id, Attempt.user_id).all(): bests[uid][qid] = b
@@ -956,13 +987,15 @@ def my_courses(u, s):
     q = s.query(Course)
     if u.role == "faculty": q = q.filter(Course.faculty_owner_id == u.id)
     return q.order_by(Course.id).all()
+def live_courses(u, s): return [c for c in my_courses(u, s) if not course_off(s, c)]  # what the dashboard and reports count: archived courses are left out
+def live_units(s, cids): return s.query(Unit.id).filter(Unit.course_id.in_(cids or [0]), Unit.archived_at.is_(None))
 @app.get("/api/reports/courses")
 def report_courses(program_id: int = 0, semester: int = 0, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
     students = s.query(User).filter_by(role="student", active=True).all(); sems = {x.id: x for x in s.query(Semester)}; pn = {p.id: p.name for p in s.query(Program)}
     links = defaultdict(list); pt = {p.id: term_label(p) for p in s.query(Program)}; used = set()
     for l in s.query(CourseLink): links[l.course_id].append(l.semester_id)
     out = []
-    for c in my_courses(u, s):
+    for c in live_courses(u, s):
         sm = sems.get(c.semester_id)
         if program_id and c.program_id != program_id: continue
         if semester and (not sm or sm.semester_no != semester): continue
@@ -1006,7 +1039,7 @@ def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, o
     """The rows behind one dashboard card, with search, sorting and paging. Each item says where its details page is (target). Faculty see only their own courses."""
     if kind not in LIST_TITLES: raise HTTPException(404, "Unknown list")
     if kind in ADMIN_LISTS and u.role != "admin": raise HTTPException(403, "Admins only")
-    mine = my_courses(u, s); pn = {p.id: p for p in s.query(Program)}; sems = {x.id: x for x in s.query(Semester)}; items = []
+    mine = live_courses(u, s); pn = {p.id: p for p in s.query(Program)}; sems = {x.id: x for x in s.query(Semester)}; items = []
     def person(x, extra=""):
         p = pn.get(x.program_id); t = term_label(p) if p else "Semester"
         place = (p.name + (f" · {t} {x.semester}" if x.semester else "")) if p else "No program"
@@ -1025,13 +1058,13 @@ def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, o
     elif kind == "never_opened": items = [person(x) for x in stu.filter(User.id.notin_(s.query(Progress.user_id)))]
     elif kind == "courses": items = [course(c, f"Owner: {u2.name}" if (u2 := s.get(User, c.faculty_owner_id) if c.faculty_owner_id else None) else "No owner") for c in mine]
     elif kind == "unowned": items = [course(c, "No owner") for c in mine if c.faculty_owner_id is None]
-    elif kind == "empty_courses": items = [course(c, "No units yet") for c in mine if not s.query(Unit.id).filter_by(course_id=c.id).first()]
+    elif kind == "empty_courses": items = [course(c, "No units yet") for c in mine if not live_units(s, [c.id]).first()]
     elif kind == "semester_numbers":
         for x in s.query(Semester).filter(Semester.semester_no.is_(None)):
             p = pn.get(x.program_id); items.append({"id": x.id, "title": x.name, "sub": p.name if p else "", "detail": "No number set", "sort": (x.name or "").lower(), "target": {"type": "program", "id": x.program_id}})
     else:  # topics, drafts
-        cids = [c.id for c in mine]; cn = {c.id: c for c in mine}; un = {x.id: x for x in s.query(Unit).filter(Unit.course_id.in_(cids or [0]))}
-        tq = s.query(Topic).filter(Topic.unit_id.in_(list(un) or [0]))
+        cids = [c.id for c in mine]; cn = {c.id: c for c in mine}; un = {x.id: x for x in s.query(Unit).filter(Unit.course_id.in_(cids or [0]), Unit.archived_at.is_(None))}
+        tq = s.query(Topic).filter(Topic.unit_id.in_(list(un) or [0]), Topic.archived_at.is_(None))
         if kind == "drafts": tq = tq.filter(Topic.published == False)  # noqa: E712
         for t in tq:
             un_ = un.get(t.unit_id); c = cn.get(un_.course_id) if un_ else None
@@ -1050,14 +1083,14 @@ def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, o
 # ---- content: admin writes, everyone reads ----
 @app.get("/api/overview")
 def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs attention today: admins see the whole college, faculty only their own courses
-    mine = my_courses(u, s); cids = [c.id for c in mine]; now = dt.datetime.utcnow(); week = now - dt.timedelta(days=7)
-    units = s.query(Unit.id).filter(Unit.course_id.in_(cids or [0]))
-    topics = s.query(Topic).filter(Topic.unit_id.in_(units))
+    mine = live_courses(u, s); cids = [c.id for c in mine]; now = dt.datetime.utcnow(); week = now - dt.timedelta(days=7)
+    units = live_units(s, cids)
+    topics = s.query(Topic).filter(Topic.unit_id.in_(units), Topic.archived_at.is_(None))
     drafts = topics.filter(Topic.published == False).count()  # noqa: E712
     out = {"role": u.role, "courses": len(cids), "topics": topics.count(), "drafts": drafts, "attention": []}
     add = lambda kind, n, text: n and out["attention"].append({"kind": kind, "count": n, "text": text})
     add("drafts", drafts, f"{drafts} draft topic{'s' if drafts != 1 else ''} not yet visible to students")
-    empty = [c for c in mine if not s.query(Unit.id).filter_by(course_id=c.id).first()]
+    empty = [c for c in mine if not live_units(s, [c.id]).first()]
     add("empty_courses", len(empty), f"{len(empty)} course{'s have' if len(empty) != 1 else ' has'} no units yet: " + ", ".join(c.name for c in empty[:5]))
     if u.role == "admin":
         stu = s.query(User).filter_by(role="student", active=True)
@@ -1121,23 +1154,58 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     for q in s.query(Quiz).order_by(Quiz.id):
         qz[q.unit_id].append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
     cbyid = {c.id: c for c in s.query(Course)}
+    pa = {p.id for p in s.query(Program) if p.archived_at}; semoff = {x.id: bool(x.archived_at or x.program_id in pa) for x in s.query(Semester)}  # a semester is off when it or its program is archived
     mine = {c.id for c in cbyid.values() if c.faculty_owner_id == u.id} if u.role == "faculty" else set()
     owners = {x.id: x for x in s.query(User).filter(User.id.in_({c.faculty_owner_id for c in cbyid.values() if c.faculty_owner_id} or {0}))}
     for l in s.query(CourseLink).order_by(CourseLink.id):
         if l.course_id in cbyid: links[l.semester_id].append(cbyid[l.course_id])
     def cj(c, sm):
         shared = c.semester_id != sm.id; ed = u.role == "admin" or c.id in mine  # drafts show only to those who can edit the course
+        off = bool(c.archived_at) or semoff.get(sm.id, False)  # archived itself, or shown in an archived semester or program
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
-             "shared_with": len(linked_to[c.id]), "editable": ed, "mine": c.id in mine,
-             "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None, "units": [
-            {"id": n.id, "name": n.name, "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
+             "shared_with": len(linked_to[c.id]), "editable": ed, "mine": c.id in mine, "archived": off, "archived_self": bool(c.archived_at),
+             "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None, "units": [] if off and not ed else [  # everyone else sees an archived course as a locked name, nothing inside
+            {"id": n.id, "name": n.name, "archived": off or bool(n.archived_at), "archived_self": bool(n.archived_at), "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
              "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False,
+                         "archived": off or bool(n.archived_at) or bool(t.archived_at), "archived_self": bool(t.archived_at),
                          "last_read": mine_p[t.id].last_read.isoformat() + "Z" if t.id in mine_p and mine_p[t.id].last_read else None,
-                         **learning_state(t.learning_due_at, mine_p.get(t.id), now)} for t in tp[n.id] if t.published is not False or ed]} for n in un[c.id]]}
+                         **learning_state(t.learning_due_at, mine_p.get(t.id), now)} for t in tp[n.id] if (t.published is not False or ed) and (ed or not t.archived_at)]} for n in un[c.id] if ed or not n.archived_at]}
         if u.role == "admin": d["link_ids"] = linked_to[c.id]; d["owner_id"] = c.faculty_owner_id; d["owner_problem"] = owner_problem(owners.get(c.faculty_owner_id))
         return d
-    return [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), "semesters": [{"id": sm.id, "name": sm.name, "number": sm.semester_no, "current": scoped(u) and u.semester is not None and sm.semester_no == u.semester,
+    return [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), "archived": p.id in pa, "archived_self": p.id in pa, "semesters": [{"id": sm.id, "name": sm.name, "number": sm.semester_no, "archived": semoff.get(sm.id, False), "archived_self": bool(sm.archived_at), "current": scoped(u) and u.semester is not None and sm.semester_no == u.semester,
         "courses": [cj(c, sm) for c in co[sm.id] + links[sm.id]]} for sm in se[p.id] if sem_visible(u, sm)]} for p in progs]
+class ArchiveIn(BaseModel): archived: bool
+def archived_ancestor(s, kind, r):
+    """The nearest archived parent of an item, as (kind, name), or None. Programs have no parent."""
+    chain = []
+    if kind == "topics":
+        un = s.get(Unit, r.unit_id) if r.unit_id else None; co = s.get(Course, un.course_id if un else r.course_id) if (un or r.course_id) else None; chain.append(("unit", un)); chain.append(("course", co))
+    elif kind == "units": co = s.get(Course, r.course_id) if r.course_id else None; chain.append(("course", co))
+    elif kind == "courses": co = r
+    if kind in ("topics", "units", "courses"):
+        sem = s.get(Semester, co.semester_id) if co and co.semester_id else None; chain.append(("semester", sem)); prog = s.get(Program, (sem.program_id if sem else co.program_id) if (sem or co) else 0) if (sem or co) else None
+    elif kind == "semesters": chain.append(("program", s.get(Program, r.program_id) if r.program_id else None))
+    if kind in ("topics", "units", "courses"): chain.append(("program", prog))
+    for label, x in chain:
+        if x is not None and x.archived_at: return label, x.name
+    return None
+@app.put("/api/{kind}/{rid}/archive")
+def archive_item(kind: str, rid: int, b: ArchiveIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """Archive or restore one item. Archiving hides it and everything under it from students and counts; nothing is deleted. Restoring brings back what was archived with it."""
+    if kind not in M: raise HTTPException(404, "Unknown item")
+    r = s.get(M[kind], rid)
+    if not r: raise HTTPException(404, "Not found")
+    if kind in ("programs", "semesters"):
+        if u.role != "admin": raise HTTPException(403, "Admins only")
+    else: need_edit(u, r.id if kind == "courses" else r.course_id if kind == "units" else topic_course_id(r, s), s)
+    if not b.archived:
+        up = archived_ancestor(s, kind, r)
+        if up:
+            who = "Ask an admin to restore" if up[0] in ("program", "semester") and u.role != "admin" else "Restore"
+            raise HTTPException(400, f"This is archived because its {up[0]} “{up[1]}” is archived. {who} that first.")
+    if b.archived and not r.archived_at: r.archived_at = dt.datetime.utcnow()
+    elif not b.archived: r.archived_at = None
+    s.commit(); return {"ok": True, "archived": bool(r.archived_at)}
 class PublishIn(BaseModel): published: bool
 @app.put("/api/topics/{rid}/publish")
 def publish_topic(rid: int, b: PublishIn, u: User = Depends(staff), s: Session = Depends(db)):
@@ -1548,7 +1616,7 @@ def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
     q = quiz_or_404(qid, s); cid = quiz_course_id(q, s); staff_view = u.role == "admin" or (u.role == "faculty" and can_edit(u, cid, s))
     if not staff_view:
         if not q.published: raise HTTPException(404, "Quiz not found")
-        check_course_access(u, cid, s)
+        check_course_access(u, cid, s); quiz_unit_open(q, s)
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     mine = s.query(Attempt).filter_by(quiz_id=qid, user_id=u.id).all()
     return {"id": q.id, "title": q.title, "pass_percent": q.pass_percent, "published": bool(q.published), "unit_id": q.unit_id, "can_edit": staff_view,
@@ -1560,6 +1628,7 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     q = quiz_or_404(qid, s); cid = quiz_course_id(q, s)
     if not q.published and not (u.role == "admin" or can_edit(u, cid, s)): raise HTTPException(404, "Quiz not found")
     check_course_access(u, cid, s)
+    if not can_edit(u, cid, s): quiz_unit_open(q, s)
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     if not qs: raise HTTPException(400, "This quiz has no questions yet")
     if len(b.answers) != len(qs): raise HTTPException(400, "Answer every question or leave it blank")

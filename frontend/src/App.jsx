@@ -17,7 +17,7 @@ export function fixTables(text){
   }).join('\n')
 }
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Archive,ArchiveRestore,Lock} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -165,10 +165,20 @@ const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header
   <button className="ic menu" aria-label="Open menu" onClick={menu}><Menu/></button>{back&&<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>}
   <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</header>}
 
+const ARCHIVE_WHAT={programs:'every semester or year, course, unit, topic and quiz in it',semesters:'every course, unit, topic and quiz in it',courses:'its units, topics and quizzes',units:'its topics and quizzes',topics:'this topic'}
+const ONE={programs:'program',semesters:'semester or year',courses:'course',units:'unit',topics:'topic'}
+function ArchiveSheet({a,close,done,toast}){  // archive or restore one item; archiving takes everything under it along, nothing is deleted
+  const [busy,setBusy]=useState(false)
+  const go=async()=>{setBusy(true);try{await api(`/${a.kind}/${a.id}/archive`,{method:'PUT',body:{archived:a.on}});toast(a.on?'Archived':'Restored');done()}catch(e){toast(e.message);setBusy(false)}}
+  return <Sheet close={close}><h3>{a.on?'Archive':'Restore'} “{a.name}”?</h3>
+    <p className="known">{a.on?`This hides the ${ONE[a.kind]} and ${ARCHIVE_WHAT[a.kind]} from students, who see “unavailable right now” instead. Nothing is deleted and reading progress and quiz results are kept. You can restore it any time.`
+      :`This brings back the ${ONE[a.kind]} and everything that was archived along with it. Anything you archived on its own inside it stays archived until you restore that too.`}</p>
+    <button className={'btn'+(a.on?' danger':'')} disabled={busy} onClick={go}>{busy?'Working…':a.on?'Archive':'Restore'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
+const ArchPill=({x})=>x.archived?<span className="pill off" style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>{x.archived_self?'Archived':'Archived with its parent'}</span>:null
 function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
-  const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null)
-  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet])
+  const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false)
+  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet,arch])
   const landed=useRef(false);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
   const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
@@ -179,39 +189,43 @@ function Learn({user,toast,appName,start}){
   if(ed)return <TopicEditor role={user.role} toast={toast} edit={ed.id?ed:null} unitId={ed.unit_id} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const tsub=x=>[x.published===false&&'Draft · students cannot see it',x.learning_due_at?'Due '+when(x.learning_due_at):!staff&&'No deadline',x.overdue&&!staff&&'Overdue',
     cp?.topics[x.id]&&`${cp.topics[x.id].completed}/${cp.students} completed`+(cp.topics[x.id].overdue?` · ${cp.topics[x.id].overdue} overdue`:'')].filter(Boolean).join(' · ')
-  const row=(x,kind,one,sub,extra={})=>({id:x.id,n:x.name,sub,kind,go:()=>setNav([...nav,x.id]),edit:()=>setEd({kind:one,id:x.id,name:x.name,...extra})})
+  const row=(x,kind,one,sub,extra={})=>({id:x.id,n:x.name,sub,kind,archived:x.archived,archived_self:x.archived_self,locked:!staff&&kind==='courses'&&x.archived,can:kind==='programs'||kind==='semesters'?isAdmin:kind==='courses'?(isAdmin||x.mine)&&!x.shared:mayEdit&&!co?.shared,go:()=>setNav([...nav,x.id]),edit:()=>setEd({kind:one,id:x.id,name:x.name,...extra})})
   const drafts=t=>t.filter(x=>x.published===false).length
   const setPub=async(url,published,msg)=>{try{await api(url,{method:'PUT',body:{published}});toast(msg);load()}catch(e){toast(e.message)}}
   const move=async(items,i,d,url)=>{const ids=items.map(x=>x.id),j=i+d;if(j<0||j>=ids.length)return;[ids[i],ids[j]]=[ids[j],ids[i]];try{await api(url,{method:'PUT',body:{ids}});load()}catch(e){toast(e.message)}}
-  const list=unit?unit.topics.map(x=>({id:x.id,n:x.title,s:x.status,b:x.bookmarked,kind:'topics',sub:tsub(x),late:x.overdue,draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
+  const list0=unit?unit.topics.map(x=>({id:x.id,n:x.title,s:x.status,b:x.bookmarked,kind:'topics',archived:x.archived,archived_self:x.archived_self,can:mayEdit&&!co.shared,sub:tsub(x),late:x.overdue,draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
     :co?co.units.map(x=>({...row(x,'units','unit',staff?x.topics.length+' topics'+(mayEdit&&drafts(x.topics)?' · '+drafts(x.topics)+' draft':''):doneOf(x.topics)+' topics completed'),edit:()=>setSheet({type:'unit',un:x,cid:co.id})}))
     :sem?sem.courses.map(x=>({...row(x,'courses','course',(staff?x.units.length+' units':doneOf(x.units.flatMap(n=>n.topics))+' topics completed')+(x.shared?' · shared from '+x.home:x.shared_with?' · shared with '+x.shared_with+' more':'')+(staff?' · '+ownerLine(x):'')),edit:()=>setSheet({type:'course',c:x,pid:prog.id,sid:x.semester_id}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
     :prog?prog.semesters.map(x=>({...row(x,'semesters','semester',(isAdmin?(x.number?prog.term+' no. '+x.number:'No '+prog.term.toLowerCase()+' number set')+' · ':'')+x.courses.length+' courses'),edit:()=>setSheet({type:'semester',sem:x,pid:prog.id})}))
     :tree.map(x=>({...row(x,'programs','program',x.semesters.length+' '+x.term.toLowerCase()+(x.semesters.length===1?'':'s')),edit:()=>setSheet({type:'program',p:x})}))
+  const hidden=staff?list0.filter(x=>x.archived).length:0,list=staff&&!showArch?list0.filter(x=>!x.archived):list0,anyArch=staff&&tree.some(p=>p.archived||p.semesters.some(s=>s.archived||s.courses.some(c=>c.archived||c.units.some(n=>n.archived_self||n.topics.some(t=>t.archived_self)))))
   const cur=unit||co||sem||prog,crumbs=[prog,sem,co,unit].filter(Boolean).slice(0,-1).map(x=>x.name).join(' › ')
   const allSems=tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))
-  const myCourses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>c.mine&&!c.shared).map(c=>({p,s,c}))))
+  const myCourses=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>c.mine&&!c.shared&&(!c.archived||showArch)).map(c=>({p,s,c}))))
   const saveShare=async()=>{try{await api(`/courses/${sh.id}/links`,{method:'PUT',body:{semester_ids:sh.sel}});toast('Sharing updated');setSh(null);load()}catch(e){toast(e.message)}}
   const remove=async()=>{try{if(del.unlink)await api(`/courses/${del.unlink.id}/links`,{method:'PUT',body:{semester_ids:del.unlink.keep}});else await api(`/${del.kind}/${del.id}`,{method:'DELETE'});toast('Deleted');setDel(null);load()}catch(e){toast(e.message)}}
   return <><Bar title={cur?.name||appName} sub={nav.length?crumbs:'Hi '+user.name} back={nav.length>0&&(()=>setNav(nav.slice(0,-1)))}/>
    <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&<div className="hero"><h2>Choose a program</h2></div>}
+     {staff&&(anyArch||showArch)&&<label className="chk" style={{marginBottom:12}}><input type="checkbox" checked={showArch} onChange={e=>setShowArch(e.target.checked)}/> Show archived{!showArch&&hidden>0?` (${hidden} here)`:''}</label>}
      {isAdmin&&!sem&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add '+prog.term.toLowerCase()+' to '+prog.name:'New program'}</button>}
      {isAdmin&&sem&&!co&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
      {co&&!unit&&!staff&&<p className="known" style={{marginTop:0}}>{doneOf(co.units.flatMap(n=>n.topics))} topics completed</p>}
      {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],[prog.term,sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
        {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
-     {!nav.length&&user.role==='faculty'&&<><h3 style={{margin:'0 0 8px'}}>My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}</b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
+     {!nav.length&&user.role==='faculty'&&<><h3 style={{margin:'0 0 8px'}}>My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}<ArchPill x={c}/></b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
        :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 style={{margin:'20px 0 8px'}}>All programs</h3></>}
     {mayEdit&&co&&!unit&&!co.shared&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'unit',un:{},cid:co.id})}>Add unit</button>}
     {mayEdit&&unit&&!co.shared&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setEd({unit_id:unit.id})}>Add topic to {unit.name}</button>}
     {staff&&unit&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setCopy({kind:'unit',id:unit.id,title:unit.name})}>Copy this unit to another course</button>}
-    {list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}</b>{x.sub&&<span>{x.sub}</span>}</div>{(x.s||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.s&&<Mark s={x.s}/>}</span>}</button>
+    {list.map((x,i)=>x.locked?<div key={x.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={x.n+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{x.n}</b><span>Unavailable right now</span></div></button></div>:<div key={x.id} className="card" style={x.archived?{opacity:.75}:undefined}><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}<ArchPill x={x}/></b>{x.sub&&<span>{x.sub}</span>}</div>{(x.s||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.s&&<Mark s={x.s}/>}</span>}</button>
+      {staff&&x.can&&(x.archived_self||!x.archived)&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.n} onClick={()=>setArch({kind:x.kind,id:x.id,name:x.n,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}
       {mayEdit&&<>{(x.kind==='units'||x.kind==='topics')&&list.length>1&&[[-1,ArrowUp,'up'],[1,ArrowDown,'down']].map(([d,I,w])=><button key={w} className="ic sm" aria-label={`Move ${x.n} ${w}`} disabled={i+d<0||i+d>=list.length} onClick={()=>move(list,i,d,x.kind==='units'?`/courses/${co.id}/units/order`:`/units/${unit.id}/topics/order`)}><I size={16}/></button>)}{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
     {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 style={{margin:'28px 0 8px'}}>Quizzes</h3>
       {unit.quizzes.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+3)%5]}}>?</span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
         {mayEdit&&<button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}><Pencil size={16}/></button>}</div>)}
       {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{(mayEdit&&co)||isAdmin?'Nothing here yet. Use the button above to add it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
+   {arch&&<ArchiveSheet a={arch} toast={toast} close={()=>setArch(null)} done={()=>setArch(null)}/>}
    {copy&&<CopySheet {...copy} toast={toast} close={()=>{setCopy(null);load()}}/>}
    {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this '+(prog?.term||'semester').toLowerCase():''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this '+(prog?.term||'semester').toLowerCase()+'. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
@@ -303,8 +317,9 @@ function Dashboard({user,toast,onOpen}){
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{})},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
-  const seen=new Set(),courses=[]
-  for(const p of tree||[])for(const s of p.semesters)for(const c of s.courses)if(!seen.has(c.id)){seen.add(c.id);courses.push({p,s,c,topics:c.units.flatMap(un=>un.topics.map(t=>({...t,unit:un})))})}
+  const seen=new Map(),courses=[]
+  for(const p of tree||[])for(const s of p.semesters)for(const c of s.courses){const at=seen.get(c.id),item={p,s,c,topics:c.units.flatMap(un=>un.topics.map(t=>({...t,unit:un})))}
+    if(at===undefined){seen.set(c.id,courses.length);courses.push(item)}else if(courses[at].c.archived&&!c.archived)courses[at]=item}  // a course shown twice counts once, and a live place wins over an archived one
   const all=courses.flatMap(x=>x.topics.map(t=>({...t,x})))
   const resume=all.filter(t=>t.status==='in_progress').sort((a,b)=>(b.last_read||'').localeCompare(a.last_read||''))[0]||all.find(t=>t.status==='not_started')
   const due=all.filter(t=>t.learning_due_at&&t.status!=='completed').sort((a,b)=>a.learning_due_at.localeCompare(b.learning_due_at)).slice(0,5)
@@ -316,6 +331,7 @@ function Dashboard({user,toast,onOpen}){
     {resume&&<div className="hero"><small>{resume.status==='in_progress'?'Continue where you left off':'Start your first topic'}</small><h2 style={{fontSize:24}}>{resume.title}</h2><p>{resume.x.c.name} · {resume.unit.name}</p>
       <button className="btn inv" style={{marginTop:14}} onClick={()=>setTopic(resume.id)}>{resume.status==='in_progress'?'Continue':'Start'}</button></div>}
     {courses.length>0&&<><h3 style={{margin:'8px 0'}}>My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0
+      if(c.archived)return <div key={c.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={c.name+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{c.name}</b><span>Unavailable right now</span></div></button></div>
       return <div key={c.id} className="card" style={{display:'block'}}><button className="hit" style={{width:'100%'}} onClick={()=>onOpen([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div style={{flex:1}}><b>{c.name}</b><span>{done} of {topics.length} topics completed · {pc}%</span><Bar2 v={pc}/></div></button></div>})}</>}
     {due.length>0&&<><h3 style={{margin:'24px 0 8px'}}>Coming up</h3>{due.map(t=><div key={t.id} className="row" style={{cursor:'pointer'}} onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {when(t.learning_due_at)}</small></div>{t.overdue&&<span className="pill off">Overdue</span>}</div>)}</>}
     {quizzes.length>0&&<><h3 style={{margin:'24px 0 8px'}}>Quizzes to try</h3>{quizzes.map(q=><div key={q.id} className="row" style={{cursor:'pointer'}} onClick={()=>onOpen([q.x.p.id,q.x.s.id,q.x.c.id,q.un.id])}><div>{q.title}<small>{q.x.c.name} · {q.questions} questions</small></div></div>)}</>}
@@ -462,14 +478,15 @@ function HistorySheet({tid,close,done,toast}){
       :list.map(x=><button key={x.id} className="row" style={{width:'100%',textAlign:'left',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):'Before history began'}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">Current</span>}<ChevronRight size={16}/></button>)}
     <button className="btn ghost" onClick={close}>Close</button></Sheet>}
 function Topic({id:first,back,toast,role}){
-  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false)
-  const opened=useRef(false),jump=nid=>{opened.current=false;setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
+  const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
+  const opened=useRef(false),jump=nid=>{opened.current=false;setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
-    if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>toast(e.message))},[id,v])  // opening starts it, after the page has loaded
+    if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>{toast(e.message);if(/unavailable right now/.test(e.message))setGone(e.message)})},[id,v])  // opening starts it, after the page has loaded
   const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
   useEffect(()=>{api('/ai/status').then(r=>{setAiOk(r.available);setOwnKey(!!r.own_key)}).catch(()=>{})},[id])
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
   if(editing)return <TopicEditor role={role} toast={toast} edit={{id}} done={()=>{setEditing(false);setV(v+1)}} cancel={()=>setEditing(false)}/>
+  if(gone)return <><Bar title="Unavailable" back={back}/><div className="main"><div className="hero"><h2>{gone}</h2><p>It has been archived. Check back later or ask your teacher.</p></div></div></>
   if(!t)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const flip=async()=>{const on=!bm;setBm(on);try{await api(`/topics/${id}/bookmark`,{method:on?'PUT':'DELETE'});toast(on?'Bookmarked':'Bookmark removed')}catch(e){setBm(!on);toast(e.message)}}
   const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai[k].text}</Md></div>
@@ -671,11 +688,11 @@ function UserSheet({u,me,progs,close,done,toast}){
     <button className="btn" disabled={busy} onClick={save}>{isNew?'Add user':'Save changes'}</button></Sheet>}
 
 function Programs({toast,onOpen}){
-  const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[order,setOrder]=useState('name')
+  const [items,setItems]=useState([]),[total,setTotal]=useState(0),[q,setQ]=useState(''),[order,setOrder]=useState('name'),[status,setStatus]=useState('active')
   const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef()
-  const url=offset=>`/admin/programs?q=${encodeURIComponent(q)}&order=${order}&limit=50&offset=${offset}`
+  const url=offset=>`/admin/programs?q=${encodeURIComponent(q)}&order=${order}&status=${status}&limit=50&offset=${offset}`
   const load=()=>api(url(0)).then(r=>{setItems(r.items);setTotal(r.total)}).catch(e=>toast(e.message))
-  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q,order])
+  useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t)},[q,order,status])
   const more=()=>api(url(items.length)).then(r=>{setItems([...items,...r.items]);setTotal(r.total)}).catch(e=>toast(e.message))
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
@@ -683,14 +700,14 @@ function Programs({toast,onOpen}){
   if(view)return <ProgramDetail id={view} onOpen={onOpen} toast={toast} back={()=>{setView(null);load()}}/>
   return <><Bar title="Programs" sub={total+(q?' matches':' programs')}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label="Search programs" placeholder="Search program, semester, year or course" value={q} onChange={e=>setQ(e.target.value)}/></div>
-    <div className="filters"><select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="name">Sort: name</option><option value="students">Sort: most students</option><option value="newest">Sort: newest first</option></select></div>
+    <div className="filters"><select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="name">Sort: name</option><option value="students">Sort: most students</option><option value="newest">Sort: newest first</option></select><select aria-label="Show" value={status} onChange={e=>setStatus(e.target.value)}><option value="active">Active programs</option><option value="archived">Archived programs</option><option value="all">All programs</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>New program</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead p" aria-hidden="true"><span>Program</span><span>Courses</span><span>Students</span></div>}
     {items.map(x=><button key={x.id} className="utr p" onClick={()=>setView(x.id)} aria-label={'Open '+x.name}>
-      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}</b><small className="sub">{pl(x.semesters,x.term.toLowerCase())}, {x.topics} topics</small></span></span>
+      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}{x.archived&&<span className="pill off" style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>Archived</span>}</b><small className="sub">{pl(x.semesters,x.term.toLowerCase())}, {x.topics} topics</small></span></span>
       <span className="sn">{x.courses}</span><span className="sn">{x.students}</span></button>)}
-    {!items.length&&<p className="known">{q?'No program matches that search.':'No programs yet. Add one or bulk upload a CSV.'}</p>}
+    {!items.length&&<p className="known">{q?'No program matches that search.':status==='archived'?'No archived programs.':'No programs yet. Add one or bulk upload a CSV.'}</p>}
     {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
     <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
     {ed&&<ProgramSheet p={ed} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
@@ -717,16 +734,18 @@ function RolloverSheet({p,close,done,toast}){
     <label htmlFor="fin">Students finishing the program</label><select id="fin" value={fin} onChange={e=>setFin(e.target.value)}><option value="keep">Leave them as they are</option><option value="deactivate">Switch their accounts off</option></select>
     <button className="btn" disabled={busy||!r||(!r.moved&&!(fin==='deactivate'&&r.finishing))} onClick={go}>{busy?'Working…':'Apply'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 function ProgramDetail({id,back,onOpen,toast}){
-  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false),[addSem,setAddSem]=useState(false),[term,setTerm]=useState(false)
+  const [p,setP]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[busy,setBusy]=useState(false),[addSem,setAddSem]=useState(false),[term,setTerm]=useState(false),[arch,setArch]=useState(null)
   const load=()=>api('/admin/programs/'+id).then(setP).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[id])
   if(!p)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const del=async()=>{setBusy(true);try{await api('/programs/'+p.id,{method:'DELETE'});toast('Program deleted');back()}catch(e){toast(e.message);setBusy(false)}}
   const row=(v,l,k)=><div className="row" key={k}><div>{v}<small>{l}</small></div></div>
-  return <><Bar title={p.name} sub={pl(p.semesters,p.term.toLowerCase())+(p.pattern==='year'?' · annual':'')} back={back}/><div className="main">
+  return <><Bar title={p.name} sub={pl(p.semesters,p.term.toLowerCase())+(p.pattern==='year'?' · annual':'')+(p.archived?' · archived':'')} back={back}/><div className="main">
+    {p.archived&&<p className="known" style={{marginTop:0}}>This program is archived. Students see its courses as unavailable right now. Restore it to bring everything back.</p>}
+    <button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setArch({kind:'programs',id:p.id,name:p.name,on:!p.archived})}>{p.archived?'Restore program':'Archive program'}</button>
     <div className="stats">{[['semesters',p.term+'s'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
     <h3 style={{margin:'24px 0 4px'}}>{p.term}s</h3>
-    {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}</b><span>{(x.number?'':'No '+p.term.toLowerCase()+' number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button></div>):<p className="known">No {p.term.toLowerCase()}s yet.</p>}
+    {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}<ArchPill x={x}/></b><span>{(x.number?'':'No '+p.term.toLowerCase()+' number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button>{!p.archived&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.name} onClick={()=>setArch({kind:'semesters',id:x.id,name:x.name,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}</div>):<p className="known">No {p.term.toLowerCase()}s yet.</p>}
     <button className="btn ghost" onClick={()=>setAddSem(true)}>Add {p.term.toLowerCase()}</button>
     <h3 style={{margin:'28px 0 4px'}}>Students</h3>
     {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?p.term+' '+u.semester:p.term+' not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
@@ -736,6 +755,7 @@ function ProgramDetail({id,back,onOpen,toast}){
     <button className="btn ghost" onClick={()=>onOpen([p.id])}>Open {p.term.toLowerCase()}s and courses</button></div>
     {term&&<RolloverSheet p={p} toast={toast} close={()=>setTerm(false)} done={()=>{setTerm(false);load()}}/>}
     {ed&&<ProgramSheet p={p} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
+    {arch&&<ArchiveSheet a={arch} toast={toast} close={()=>setArch(null)} done={()=>{setArch(null);load()}}/>}
     {addSem&&<SemesterSheet sem={{}} pid={p.id} term={p.term} toast={toast} close={()=>setAddSem(false)} done={()=>{setAddSem(false);load()}}/>}
     {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {pl(p.semesters,p.term.toLowerCase())}, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
       <button className="btn danger" disabled={busy} onClick={del}>Delete program</button><button className="btn ghost" onClick={()=>setAsk(false)}>Keep it</button></Sheet>}</>}
