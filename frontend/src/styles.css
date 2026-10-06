@@ -150,3 +150,20 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .prose th{background:var(--s2);font-weight:600}
 .prose tr:nth-child(even) td{background:rgba(128,128,128,.05)}
 .prose th,.prose td{overflow-wrap:normal;word-break:normal;min-width:110px}.prose th:first-child,.prose td:first-child{min-width:130px}
+
+.search.fake{width:100%;text-align:left;cursor:pointer;padding:14px;margin-bottom:14px;font:inherit}.search.fake span{color:var(--mut)}
+.hitrow{display:block;width:100%;text-align:left;padding:12px 14px;margin:8px 0;border-radius:10px;background:var(--s1);border:1px solid var(--line);color:var(--tx);cursor:pointer;font:inherit}
+.hitrow:hover{border-color:var(--vio)}.hitrow small{display:block;color:var(--mut);margin-top:2px}.hitrow .snip{display:block;margin-top:6px;color:var(--mut);font-size:.92em;line-height:1.4}
+
+/* student dashboard */
+.dstats .stat small{display:block;color:var(--mut);font-size:12.5px;margin-top:2px}.dstats .stat b{display:flex;align-items:center;gap:6px}
+.flame{color:var(--mut)}.flame.on{color:#e8751a}
+.week{display:flex;justify-content:space-between;gap:6px;margin:12px 0 22px;padding:12px 14px;border-radius:12px;background:var(--s1)}
+.wd{display:flex;flex-direction:column;align-items:center;gap:6px;flex:1}.wd small{font-size:12px;color:var(--mut)}
+.wd i{width:28px;height:28px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;color:#fff}
+.wd.on i{background:var(--acc);border-color:var(--acc)}.wd.now i{box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 28%,transparent)}.wd.now small{color:var(--tx);font-weight:600}
+.frow{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 14px;margin:8px 0;border-radius:12px;background:var(--s1);border:1px solid var(--line);color:var(--tx);cursor:pointer;font:inherit}
+.frow:hover{border-color:var(--vio)}.fic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--s2);color:var(--mut)}
+.fic{background:color-mix(in srgb,currentColor 14%,transparent)}.fic.overdue{color:#d64533}.fic.due_soon{color:#c98a1b}.fic.weak{color:#8a5fd0}.fic.resume,.fic.next{color:#3d6ae0}.fic.quiz_new,.fic.quiz_retake{color:#22a06b}
+.ftx{flex:1;min-width:0}.ftx b{display:block}.ftx small{display:block;color:var(--mut);margin-top:2px}.fgo{font-size:13px;font-weight:600;color:var(--acc);white-space:nowrap}
+.nexts{display:block;margin-top:6px;color:var(--mut);font-size:13px}

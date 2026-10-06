@@ -70,3 +70,9 @@ def test_admin_sets_the_institution_name_and_logo_and_only_an_uploaded_image_is_
     cfg = env.c.get("/api/config").json(); assert cfg["name"] == "Karkathar College" and cfg["logo"] == url  # public: the sign-in page needs it
     assert put(env.admin, remove_logo=True, name="").status_code == 200
     cfg = env.c.get("/api/config").json(); assert cfg["logo"] is None and cfg["name"] == main.APP_NAME
+
+def test_version_endpoint_tells_whether_the_screens_match_the_server(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "dist", str(tmp_path)); monkeypatch.setattr(main, "SERVER_HEAD", "abc1234")
+    r = env.c.get("/api/version").json(); assert r["screens"] is None and r["match"] is False and "./run.sh" in r["hint"]  # never built
+    (tmp_path / "build.txt").write_text("old9999\n"); r = env.c.get("/api/version").json(); assert r["match"] is False and r["screens"] == "old9999" and r["server"] == "abc1234"
+    (tmp_path / "build.txt").write_text("abc1234\n"); r = env.c.get("/api/version").json(); assert r["match"] is True and r["hint"] is None

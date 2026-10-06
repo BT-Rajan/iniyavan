@@ -17,7 +17,7 @@ export function fixTables(text){
   }).join('\n')
 }
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Archive,ArchiveRestore,Lock} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -62,11 +62,11 @@ export default function App(){
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
-  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
-    {page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
+    {page==='search'&&<SearchPage user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
@@ -129,6 +129,21 @@ function MyAiKey({toast}){
     <label htmlFor="k">DeepSeek API key</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?'Paste a new key to replace the current one':'sk-…'}/>
     <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?'Checking the key…':'Save key'}</button>
     {d?.key_set&&<button className="btn ghost" onClick={del}>Remove my key</button>}</div></>}
+
+function PromptEditor({toast}){
+  const [items,setItems]=useState(null),[draft,setDraft]=useState({}),[busy,setBusy]=useState('')
+  const load=()=>api('/admin/prompts').then(r=>{setItems(r.items);setDraft({})}).catch(e=>toast(e.message));useEffect(()=>{load()},[])
+  if(!items)return <div className="sk"/>
+  const save=async x=>{const text=draft[x.kind];if(x.saved_answers>0&&!confirm(`Saving discards the ${pl(x.saved_answers,'saved answer')} written with the old prompt, so students get fresh ones. Continue?`))return
+    setBusy(x.kind);try{const r=await api('/admin/prompts/'+x.kind,{method:'PUT',body:{text}});toast('Prompt saved'+(r.cleared?` · ${pl(r.cleared,'saved answer')} cleared`:''));load()}catch(e){toast(e.message)}setBusy('')}
+  const reset=async x=>{if(!confirm('Go back to the built-in prompt?'+(x.saved_answers?` This also discards ${pl(x.saved_answers,'saved answer')}.`:'')))return
+    setBusy(x.kind);try{await api('/admin/prompts/'+x.kind,{method:'DELETE'});toast('Back to the built-in prompt');load()}catch(e){toast(e.message)}setBusy('')}
+  return <><p className="known">These are the instructions the AI gets before it answers. Change the tone, depth, language or format to suit your students. Saving a prompt discards the saved answers it wrote, so the new wording applies from the next question (that costs tokens again).</p>
+    {items.map(x=>{const v=draft[x.kind]??x.text,dirty=v.trim()!==x.text.trim()
+      return <div key={x.kind} className="qbox"><b>{x.label}{x.custom&&<span className="chip" style={{marginLeft:8}}>Edited</span>}</b><p className="known" style={{margin:'4px 0 8px'}}>{x.help}</p>
+        <textarea aria-label={x.label+' prompt'} rows={9} value={v} maxLength={4000} onChange={e=>setDraft({...draft,[x.kind]:e.target.value})}/>
+        <small className="known">{v.length} / 4000 characters</small>
+        <div className="two"><button className="btn" disabled={!dirty||busy===x.kind||v.trim().length<20} onClick={()=>save(x)}>Save prompt</button><button className="btn ghost" disabled={busy===x.kind||(!x.custom&&!dirty)} onClick={()=>x.custom?reset(x):setDraft({...draft,[x.kind]:x.default})}>{x.custom?'Reset to built-in':'Undo changes'}</button></div></div>})}</>}
 
 function SelfReg({cfg,run}){
   const [dom,setDom]=useState(null);const on=!!cfg.self_registration,shown=dom??cfg.allowed_domains??''
@@ -312,31 +327,67 @@ function StaffHome({user,toast,open}){
     {o&&!o.courses&&!admin&&<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}
     {o?.courses>0&&<><h3 style={{margin:'28px 0 4px'}}>{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
-function Dashboard({user,toast,onOpen}){
-  const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[topic,setTopic]=useState(null)
-  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{})},[topic,toast])
+const FOCUS={overdue:[AlertTriangle,'Overdue','Open it'],due_soon:[Clock,'Due soon','Open it'],weak:[Target,'Needs review','Review'],resume:[Play,'Continue','Continue'],quiz_retake:[RotateCcw,'Retake the quiz','Retake'],quiz_new:[ClipboardList,'Quiz','Take the quiz'],next:[ArrowRight,'Next up','Start']}
+function Dashboard({user,toast,onOpen,onSearch}){
+  const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[planErr,setPlanErr]=useState(''),[topic,setTopic]=useState(null)
+  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{});api('/me/today').then(r=>{setToday(r);setPlanErr('')}).catch(e=>setPlanErr(e.message))},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
   const seen=new Map(),courses=[]
   for(const p of tree||[])for(const s of p.semesters)for(const c of s.courses){const at=seen.get(c.id),item={p,s,c,topics:c.units.flatMap(un=>un.topics.map(t=>({...t,unit:un})))}
     if(at===undefined){seen.set(c.id,courses.length);courses.push(item)}else if(courses[at].c.archived&&!c.archived)courses[at]=item}  // a course shown twice counts once, and a live place wins over an archived one
   const all=courses.flatMap(x=>x.topics.map(t=>({...t,x})))
-  const resume=all.filter(t=>t.status==='in_progress').sort((a,b)=>(b.last_read||'').localeCompare(a.last_read||''))[0]||all.find(t=>t.status==='not_started')
   const due=all.filter(t=>t.learning_due_at&&t.status!=='completed').sort((a,b)=>a.learning_due_at.localeCompare(b.learning_due_at)).slice(0,5)
-  const quizzes=courses.flatMap(x=>x.c.units.flatMap(un=>un.quizzes.filter(q=>q.best==null).map(q=>({...q,x,un})))).slice(0,4)
-  const need=ins?.needs_study.slice(0,3)||[]
-  return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub="Here is where you are today"/><div className="main">
+  const need=ins?.needs_study.slice(0,3)||[],focus=today?.focus||[],top=focus[0]
+  const act=f=>f.topic_id?setTopic(f.topic_id):onOpen(f.nav)
+  const sub=!today?'Here is where you are today':today.streak>1?`${today.streak}-day study streak. Keep it going`:today.active_today?'You have studied today. Nice start':focus.length?'Here is what to do next':'Here is where you are today'
+  return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={sub}/><div className="main">
+    <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
     {!tree&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {tree&&!courses.length&&<p className="known">{user.self_registered&&!user.placed?'Your account is ready. An admin will place you in your program and semester or year, and your courses will appear here.':'You are not enrolled in a course yet. Ask your admin to add you to one.'}</p>}
-    {resume&&<div className="hero"><small>{resume.status==='in_progress'?'Continue where you left off':'Start your first topic'}</small><h2 style={{fontSize:24}}>{resume.title}</h2><p>{resume.x.c.name} · {resume.unit.name}</p>
-      <button className="btn inv" style={{marginTop:14}} onClick={()=>setTopic(resume.id)}>{resume.status==='in_progress'?'Continue':'Start'}</button></div>}
-    {courses.length>0&&<><h3 style={{margin:'8px 0'}}>My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0
+    {planErr&&courses.length>0&&<p className="known" role="alert">Today's plan could not load ({planErr}). Your courses are below. If this keeps happening, tell your admin.</p>}
+    {today&&courses.length>0&&<><div className="stats dstats">
+      <div className="stat"><b><Flame size={20} className={'flame'+(today.streak?' on':'')} aria-hidden="true"/> {today.streak}</b>Day streak<small>{today.active_today?'Studied today':today.streak?'Study today to keep it':'Start one today'}</small></div>
+      <div className="stat"><b>{today.completed_this_week}</b>Done this week<small>{pl(today.active_days_week,'active day')}</small></div>
+      <div className="stat"><b>{today.percent}%</b>Completed<small>{today.topics_completed} of {today.topics_total} topics</small></div>
+      <div className="stat"><b>{today.quiz_average==null?'–':today.quiz_average+'%'}</b>Quiz average<small>{today.quiz_average==null?'No quizzes yet':'best scores'}</small></div></div>
+      <div className="week" role="img" aria-label={`Studied on ${today.week.filter(d=>d.active).length} of the last 7 days`}>{today.week.map(d=><span key={d.date} className={'wd'+(d.active?' on':'')+(d.today?' now':'')}><i>{d.active&&<Check size={13}/>}</i><small>{d.label}</small></span>)}</div></>}
+    {top&&<><h3 style={{margin:'6px 0 8px'}}>Today's focus</h3>
+      <div className="hero"><small>{top.kind==='overdue'||top.kind==='due_soon'?top.reason:FOCUS[top.kind][1]+' · '+top.reason}</small><h2 style={{fontSize:24}}>{top.title}</h2><p>{top.course} · {top.unit}</p>
+        <button className="btn inv" style={{marginTop:14}} onClick={()=>act(top)}>{FOCUS[top.kind][2]}</button></div>
+      {focus.slice(1).map((f,i)=>{const [I,,go]=FOCUS[f.kind];return <button key={i} className="frow" onClick={()=>act(f)}><span className={'fic '+f.kind}><I size={18}/></span><span className="ftx"><b>{f.title}</b><small>{f.reason} · {f.course}</small></span><span className="fgo">{go}</span></button>})}</>}
+    {today&&courses.length>0&&!focus.length&&<div className="qbox" style={{marginTop:6}}><b>You are all caught up</b><p className="known" style={{margin:'6px 0 0'}}>Nothing is overdue or waiting. Search a topic you want to revisit, or try a quiz to test yourself.</p></div>}
+    {courses.length>0&&<><h3 style={{margin:'22px 0 8px'}}>My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0,late=topics.filter(t=>t.overdue).length,next=topics.find(t=>t.status==='in_progress')||topics.find(t=>t.status==='not_started')
       if(c.archived)return <div key={c.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={c.name+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{c.name}</b><span>Unavailable right now</span></div></button></div>
-      return <div key={c.id} className="card" style={{display:'block'}}><button className="hit" style={{width:'100%'}} onClick={()=>onOpen([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div style={{flex:1}}><b>{c.name}</b><span>{done} of {topics.length} topics completed · {pc}%</span><Bar2 v={pc}/></div></button></div>})}</>}
+      return <div key={c.id} className="card" style={{display:'block'}}><button className="hit" style={{width:'100%'}} onClick={()=>onOpen([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div style={{flex:1}}><b>{c.name}{late>0&&<span className="pill off" style={{marginLeft:8}}>{late} overdue</span>}</b><span>{done} of {topics.length} topics completed · {pc}%</span><Bar2 v={pc}/>{next&&<span className="nexts">{next.status==='in_progress'?'Continue':'Next'}: {next.title}</span>}</div></button></div>})}</>}
     {due.length>0&&<><h3 style={{margin:'24px 0 8px'}}>Coming up</h3>{due.map(t=><div key={t.id} className="row" style={{cursor:'pointer'}} onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {when(t.learning_due_at)}</small></div>{t.overdue&&<span className="pill off">Overdue</span>}</div>)}</>}
-    {quizzes.length>0&&<><h3 style={{margin:'24px 0 8px'}}>Quizzes to try</h3>{quizzes.map(q=><div key={q.id} className="row" style={{cursor:'pointer'}} onClick={()=>onOpen([q.x.p.id,q.x.s.id,q.x.c.id,q.un.id])}><div>{q.title}<small>{q.x.c.name} · {q.questions} questions</small></div></div>)}</>}
     {need.length>0&&<><h3 style={{margin:'24px 0 4px'}}>Worth another round of study</h3><AreaList areas={need} onStudy={setTopic}/></>}
   </div></>}
+function SearchPage({user,toast}){
+  const [q,setQ]=useState(''),[live,setLive]=useState(null),[asked,setAsked]=useState(''),[ai,setAi]=useState(null),[aiBusy,setAiBusy]=useState(false),[aiErr,setAiErr]=useState(''),[topic,setTopic]=useState(null),[pend,setPend]=useState(false)
+  const typed=q.trim()
+  useEffect(()=>{if(typed.length<2){setLive(null);return}const t=setTimeout(()=>api('/search?q='+encodeURIComponent(typed)).then(r=>setLive({...r,for:typed})).catch(()=>{}),300);return()=>clearTimeout(t)},[typed])
+  const askAi=async(query,refresh)=>{setAiBusy(true);setAiErr('');try{setAi({...await api('/search/ai',{method:'POST',body:{q:query,refresh}}),for:query,fresh:refresh})}catch(e){setAiErr(e.message)}setAiBusy(false)}
+  const submit=async()=>{if(typed.length<2)return;setPend(true);setAi(null);setAiErr('')
+    try{const r=await api('/search?q='+encodeURIComponent(typed));setLive({...r,for:typed});setAsked(typed);setPend(false)
+      if(!r.results.length||!r.confident)await askAi(typed,false)}catch(e){toast(e.message);setPend(false)}}  // nothing good in the app's own notes, so the AI answers
+  if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
+  const res=asked&&live?.for===asked?live:null,aiNote=ai&&res&&res.results.length>0&&!res.confident
+  return <><Bar title="Search" sub="Find a topic, or ask the AI"/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search topics" autoFocus placeholder="e.g. temporary hardness of water" value={q} maxLength={200} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()}/></div>
+    <button className="btn" disabled={pend||aiBusy||typed.length<2} onClick={submit}>{pend?'Searching…':'Search'}</button>
+    {!asked&&live&&live.results.length>0&&<><h3 style={{margin:'20px 0 6px'}}>Topics in your courses</h3><p className="known">Press Enter to search properly. If nothing here fits, the AI answers.</p>{live.results.slice(0,5).map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>}
+    {!asked&&typed.length>=2&&live&&!live.results.length&&<p className="known">Nothing in your courses matches yet. Press Enter and the AI will answer instead.</p>}
+    {res&&<>{res.results.length>0?<><h3 style={{margin:'22px 0 6px'}}>{aiNote?'Possible matches in your courses':'In your courses'}</h3>{res.results.map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>
+      :<p className="known" style={{marginTop:18}}>Nothing in your courses matches “{asked}”.</p>}
+      {!ai&&!aiBusy&&<button className="btn ghost" onClick={()=>askAi(asked,false)}><Sparkles size={16}/> Not what you wanted? Recheck with AI</button>}</>}
+    {aiBusy&&<div className="qbox" aria-live="polite"><b>Asking the AI…</b><div className="sk"/></div>}
+    {aiErr&&<div className="qbox" role="alert"><b>The AI could not answer</b><p className="known" style={{margin:'6px 0 0'}}>{aiErr}</p></div>}
+    {ai&&!aiBusy&&<><h3 style={{margin:'24px 0 6px'}}>AI answer</h3><div className="prose">{ai.cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai.text}</Md></div>
+      <p className="known">AI answers can contain mistakes. Check them against your notes and textbook.</p>
+      <button className="btn ghost" disabled={aiBusy} onClick={()=>askAi(ai.for,true)}><Sparkles size={16}/> Not happy? Recheck with AI</button></>}</div></>}
+function Hit({x,open}){return <button className="hitrow" onClick={()=>open(x.id)}><b>{x.title}{x.in_title&&<span className="chip" style={{marginLeft:8}}>Best match</span>}</b><small>{[x.program,x.semester,x.course,x.unit].filter(Boolean).join(' › ')}</small>{x.snippet&&<span className="snip">{x.snippet}</span>}</button>}
+
 function Insights({toast,role}){
   const [d,setD]=useState(null),[topic,setTopic]=useState(null)
   useEffect(()=>{if(!topic)api('/me/insights').then(setD).catch(e=>toast(e.message))},[topic])
@@ -805,6 +856,7 @@ function AiConfig({toast,onBrand}){
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Test the key</button>
       <button className="btn ghost" onClick={()=>confirm('Turn AI off for everyone? Students will see "AI unavailable" until you save a key again.')&&run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}>Remove the key (turn AI off)</button></>}
     <p className="known" style={{marginTop:20}}>One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
+    <h3 style={{margin:'32px 0 4px'}}>AI prompts</h3><PromptEditor toast={toast}/>
     <h3 style={{margin:'28px 0 4px'}}>Self-registration</h3><SelfReg cfg={cfg} run={run}/>
     <h3 style={{margin:'28px 0 4px'}}>Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
     {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</div></>}

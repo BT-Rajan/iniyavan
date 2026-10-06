@@ -74,3 +74,14 @@ def test_archived_quiz_unit_and_reports(env):
     assert env.c.get(f"/api/quizzes/{qid}", headers=env.fac).status_code == 200  # the owner can still open it
     arch(env, env.fac, "units", i["u1"], False); arch(env, env.fac, "courses", i["course"])
     assert env.c.get("/api/reports/courses", headers=env.admin).json() == []
+
+def test_search_and_today_leave_out_archived_content(env):
+    i = setup(env)
+    found = lambda h, q: [r["id"] for r in env.c.get("/api/search", headers=h, params={"q": q}).json()["results"]]
+    assert i["water"] in found(env.s2, "Water")
+    arch(env, env.fac, "topics", i["water"])
+    assert i["water"] not in found(env.s2, "Water") and i["water"] in found(env.fac, "Water")
+    arch(env, env.fac, "topics", i["water"], False); arch(env, env.admin, "courses", i["course"])
+    assert found(env.s2, "Water") == []
+    today = env.c.get("/api/me/today", headers=env.s2).json()
+    assert today["topics_total"] == 0
