@@ -132,14 +132,14 @@ A pool of questions every faculty member and admin can browse, so a good questio
 - Everyone on staff sees every bank question. Only the person who added a question, or an admin, can edit or delete it. Students never see the bank.
 - API: `GET/POST /api/bank`, `PUT/DELETE /api/bank/{id}`, `POST /api/bank/from-quiz/{quiz_id}`, `POST /api/quizzes/{quiz_id}/questions/from-bank`.
 
-## Semester or year programs
+## Semester, year or grade programs
 
-Each program is either a **semester** program (B.E., B.Tech, M.E.) or an **annual** program (M.B.B.S, B.Sc, law). Choose it when you create the program under Programs > New program.
+Each program is a **semester** program (B.E., B.Tech, M.E.), an **annual** program (M.B.B.S, B.Sc, law) or a **school** program (Grade 1 to 12). Choose it when you create the program under Programs > New program.
 
-- The terms are created for you: Semester 1 to 8 (default for semester programs) or Year 1 to 4 (default for annual programs). Pick 0 to 8, so M.B.B.S can start with 5 years. You can go straight to adding courses.
-- Everything then speaks the program's own word: the program page, adding a term, Users (placing a student, bulk Move, a student's "Year 2"), and starting a new term ("moves up one year").
-- Edit a program to change its pattern. Terms still named "Semester n" or "Year n" are renamed to match; terms you named yourself keep their names.
-- Existing programs stay semester programs. The CSV import creates an annual program when its terms are called "Year 1", "Year 2" and so on. Students' year or semester is a number from 1 to 8 either way, and a student sees every term up to their current one.
+- The terms are created for you: Semester 1 to 8 (default for semester programs), Year 1 to 4 (default for annual programs) or Grade 1 to 12 (default for school programs). Semester and annual programs take 0 to 8, so M.B.B.S can start with 5 years; school programs take 0 to 12. You can go straight to adding courses.
+- Everything then speaks the program's own word: the program page, adding a term, Users (placing a student, bulk Move, a student's "Year 2" or "Grade 7"), and starting a new term ("moves up one year"). The number dropdowns go up to 12 for school programs.
+- Edit a program to change its pattern. Terms still named "Semester n", "Year n" or "Grade n" are renamed to match; terms you named yourself keep their names. A school program with grades above 8 cannot become a semester or annual program until those grades are deleted or renumbered.
+- Existing programs stay semester programs. The CSV import creates an annual program when its terms are called "Year 1", "Year 2" and so on, and a school program when they are called "Grade 1" (or "Std 1", "Class 1"; Roman numerals such as "Grade XII" work too). Students' semester, year or grade is a number from 1 to 12, and a student sees every term up to their current one.
 
 ## Search (local first, then AI)
 

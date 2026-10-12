@@ -36,7 +36,7 @@ class User(Base):
     pw = Column(String(200)); role = Column(String(10), default="student"); active = Column(Boolean, default=True)
     must_change = Column(Boolean, default=False)  # set when an admin chose the password; cleared once the user picks their own
     program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
-    semester = Column(Integer, nullable=True)  # current semester, 1 to 8
+    semester = Column(Integer, nullable=True)  # current semester, year or grade, 1 to 12
     institution = Column(String(150), nullable=True); id_number = Column(String(60), nullable=True); phone = Column(String(30), nullable=True)  # given at self-registration
     self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email; they use their own AI key, never the shared one
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
@@ -60,13 +60,13 @@ class Setting(Base):
 class Program(Base):
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
-    pattern = Column(String(10), default="semester")  # "semester" (B.E., B.Tech) or "year" (annual programs such as M.B.B.S); the terms below are Semester n or Year n
+    pattern = Column(String(10), default="semester")  # "semester" (B.E., B.Tech), "year" (annual programs such as M.B.B.S) or "grade" (school, Grade 1 to 12); the terms below are Semester n, Year n or Grade n
     archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class Semester(Base):
     __tablename__ = "semesters"
     id = Column(Integer, primary_key=True); name = Column(String(150)); created_by = Column("owner_id", Integer, ForeignKey("users.id"))  # who created the row; not an owner
     program_id = Column(Integer, ForeignKey("courses.id", ondelete="CASCADE"))
-    semester_no = Column(Integer, nullable=True)  # the semester's place in its program (1 to 8): decides order and which students see it; never read from the name
+    semester_no = Column(Integer, nullable=True)  # the semester's place in its program (1 to 8, or 1 to 12 for grades): decides order and which students see it; never read from the name
     __table_args__ = (UniqueConstraint("program_id", "semester_no", name="uq_semesters_program_no"),)
     archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
 class Course(Base):
@@ -577,19 +577,21 @@ def change_password(b: PwChange, request: Request, u: User = Depends(me), s: Ses
 ROLES = ("student", "faculty", "admin")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PWCHARS = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
-SEM = re.compile(r"^(?:s|sem|semester|y|yr|year)?\s*([1-8])$", re.I)
-PATTERNS = {"semester": "Semester", "year": "Year"}; DEFAULT_TERMS = {"semester": 8, "year": 4}
+SEM = re.compile(r"^(?:s|sem|semester|y|yr|year|g|gr|grade|std|class)?\s*(1[0-2]|[1-9])$", re.I)
+PATTERNS = {"semester": "Semester", "year": "Year", "grade": "Grade"}; DEFAULT_TERMS = {"semester": 8, "year": 4, "grade": 12}
+MAX_TERMS = {"semester": 8, "year": 8, "grade": 12}; TOP_TERM = max(MAX_TERMS.values())  # school programs run Grade 1 to 12
+def term_max(p): return MAX_TERMS.get(getattr(p, "pattern", None) or "semester", 8)
 def term_label(p): return PATTERNS.get(getattr(p, "pattern", None) or "semester", "Semester")
 def gen_pw(): return "".join(secrets.choice(PWCHARS) for _ in range(10))
-def term_header(terms): return next(iter(terms)) if len(terms) == 1 else "Semester or year"  # CSV column title: Semester or Year when every row shares it
+def term_header(terms): return next(iter(terms)) if len(terms) == 1 else "Term"  # CSV column title: Semester, Year or Grade when every row shares it
 def to_sem(v):  # 3, "3", "Semester 3", "S3" -> 3; blank -> None; anything else -> error
     if v is None or str(v).strip() == "": return None
     m = SEM.match(str(v).strip())
-    if not m: raise HTTPException(400, "Semester or year must be a number from 1 to 8")
+    if not m: raise HTTPException(400, f"Semester, year or grade must be a number from 1 to {TOP_TERM}")
     return int(m.group(1))
-ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8}
+ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10, "xi": 11, "xii": 12}
 def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number. Only used to fill semesters.semester_no once (migration 0010, CSV import)
-    m = re.search(r"(?<![\w])(?:[1-8]|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
+    m = re.search(r"(?<![\w])(?:1[0-2]|[1-9]|xii|xi|ix|x|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
     return None if not m else (int(m.group(0)) if m.group(0).isdigit() else ROMAN[m.group(0).lower()])
 def scoped(u): return u.role == "student"  # a student without a program sees no programs, courses or topics until an admin enrols them
 def sem_visible(u, sem):  # a student sees their own program, up to and including their current semester
@@ -637,9 +639,9 @@ def check_topic_access(u, t, s):  # drafts are for admins and the faculty assign
     if t.published is False and not can_edit(u, cid, s): raise HTTPException(404, "Topic not found")
     check_course_access(u, cid, s)
     if topic_off(s, t) and not can_edit(u, cid, s): raise HTTPException(403, "This topic is unavailable right now")
-def sem_number(s, program_id, n, keep=None):  # a semester number is 1 to 8 and unique within its program
-    lab = term_label(s.get(Program, program_id)).lower()
-    if n is None or not 1 <= n <= 8: raise HTTPException(400, f"The {lab} number must be from 1 to 8")
+def sem_number(s, program_id, n, keep=None):  # a semester number is 1 to 8 (grades 1 to 12) and unique within its program
+    p = s.get(Program, program_id); lab, top = term_label(p).lower(), term_max(p)
+    if n is None or not 1 <= n <= top: raise HTTPException(400, f"The {lab} number must be from 1 to {top}")
     dup = s.query(Semester).filter(Semester.program_id == program_id, Semester.semester_no == n, Semester.id != (keep or 0)).first()
     if dup: raise HTTPException(400, f"This program already has {lab} {n} ({dup.name})")
     return n
@@ -827,7 +829,7 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
         prog = progs.get(v.get("program", "").lower()) if v.get("program") else None
         if v.get("program") and not prog: bad("Unknown program '" + v["program"][:40] + "'. Names must match the Programs tab"); continue
         try: sem = to_sem(v.get("semester"))
-        except HTTPException: bad("Semester or year must be a number from 1 to 8"); continue
+        except HTTPException: bad(f"Semester, year or grade must be a number from 1 to {TOP_TERM}"); continue
         seen.add(e); u = existing.get(e)
         if u:
             if u.id == a.id and role and role != u.role: bad("You can't change your own role"); continue
@@ -1126,7 +1128,7 @@ def rollover(pid: int, b: RolloverIn, _: User = Depends(admin), s: Session = Dep
     p = s.get(Program, pid)
     if not p: raise HTTPException(404, "Program not found")
     if b.finishing not in ("keep", "deactivate"): raise HTTPException(400, "finishing must be keep or deactivate")
-    top = min(8, max([x.semester_no for x in s.query(Semester).filter_by(program_id=pid) if x.semester_no] or [8]))
+    top = min(term_max(p), max([x.semester_no for x in s.query(Semester).filter_by(program_id=pid) if x.semester_no] or [term_max(p)]))
     stu = s.query(User).filter_by(role="student", active=True, program_id=pid).order_by(User.name).all()
     moving = [x for x in stu if x.semester and x.semester < top]; finishing = [x for x in stu if x.semester and x.semester >= top]; unplaced = [x for x in stu if not x.semester]
     if not b.dry_run:
@@ -1137,7 +1139,7 @@ def rollover(pid: int, b: RolloverIn, _: User = Depends(admin), s: Session = Dep
     names = lambda L: [x.name for x in L[:20]]
     return {"program": p.name, "dry_run": b.dry_run, "last_semester": top, "term": term_label(p), "moved": len(moving), "finishing": len(finishing), "finishing_action": b.finishing, "unplaced": len(unplaced),
             "finishing_names": names(finishing), "unplaced_names": names(unplaced)}
-class ProgramIn(BaseModel): name: str; pattern: str | None = None; terms: int | None = None  # pattern: semester or year; terms: how many to create now (new programs only)
+class ProgramIn(BaseModel): name: str; pattern: str | None = None; terms: int | None = None  # pattern: semester, year or grade; terms: how many to create now (new programs only)
 class SemesterIn(BaseModel): name: str; program_id: int; semester_no: int | None = None  # on edit, leave out to keep the number
 class NewSemesterIn(BaseModel): name: str; semester_no: int
 class NewCourseIn(BaseModel): name: str; faculty_owner_id: int | None = None
@@ -1284,9 +1286,9 @@ def program_name(name, s, keep=None):  # names must be unique: the users CSV imp
 @app.post("/api/programs")
 def new_program(b: ProgramIn, u: User = Depends(admin), s: Session = Depends(db)):
     pat = (b.pattern or "semester").strip().lower()
-    if pat not in PATTERNS: raise HTTPException(400, "Choose semester or year")
+    if pat not in PATTERNS: raise HTTPException(400, "Choose semester, year or grade")
     n = DEFAULT_TERMS[pat] if b.terms is None else b.terms
-    if not 0 <= n <= 8: raise HTTPException(400, f"A program can start with 0 to 8 {PATTERNS[pat].lower()}s")
+    if not 0 <= n <= MAX_TERMS[pat]: raise HTTPException(400, f"A program can start with 0 to {MAX_TERMS[pat]} {PATTERNS[pat].lower()}s")
     p = Program(name=program_name(b.name, s), pattern=pat, created_by=u.id); s.add(p); s.flush()
     for i in range(1, n + 1): s.add(Semester(name=f"{PATTERNS[pat]} {i}", program_id=p.id, semester_no=i, created_by=u.id))  # the terms exist from the start, so the admin only has to add courses
     s.commit(); return {"id": p.id, "pattern": pat, "terms": n}
@@ -1326,10 +1328,12 @@ def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = 
     vals = {"name": program_name(b.name, s, rid)}
     if b.pattern is not None:
         pat = b.pattern.strip().lower()
-        if pat not in PATTERNS: raise HTTPException(400, "Choose semester or year")
+        if pat not in PATTERNS: raise HTTPException(400, "Choose semester, year or grade")
         if pat != (p.pattern or "semester"):  # terms still carrying the standard name follow the change; custom names are left alone
-            for x in s.query(Semester).filter_by(program_id=rid):
-                if re.fullmatch(r"(Semester|Year) \d+", x.name or ""): x.name = f"{PATTERNS[pat]} {x.semester_no}" if x.semester_no else x.name
+            terms = s.query(Semester).filter_by(program_id=rid).all()
+            if any((x.semester_no or 0) > MAX_TERMS[pat] for x in terms): raise HTTPException(400, f"A {pat} program goes up to {PATTERNS[pat].lower()} {MAX_TERMS[pat]}. Delete or renumber the terms above it first")
+            for x in terms:
+                if re.fullmatch(r"(Semester|Year|Grade) \d+", x.name or ""): x.name = f"{PATTERNS[pat]} {x.semester_no}" if x.semester_no else x.name
             vals["pattern"] = pat
     return update(p, vals, s)
 @app.put("/api/semesters/{rid}")
@@ -1737,12 +1741,13 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
             if any(len(v[c]) > 150 for c in LEVELS) or len(v["topic"]) > 200:
                 errors.append({"row": n, "error": "A name is too long (150 characters, topics 200)"}); continue
             given = v.get("semester_no", "")
-            if given and not (given.isdigit() and 1 <= int(given) <= 8): errors.append({"row": n, "error": "semester_no must be a number from 1 to 8"}); continue
-            p = get("program", v["program"].lower(), lambda: Program(name=v["program"], pattern="year" if re.match(r"\s*(year|yr)\b", v["semester"], re.I) else "semester"))
+            if given and not (given.isdigit() and 1 <= int(given) <= TOP_TERM): errors.append({"row": n, "error": f"semester_no must be a number from 1 to {TOP_TERM}"}); continue
+            p = get("program", v["program"].lower(), lambda: Program(name=v["program"], pattern="year" if re.match(r"\s*(year|yr)\b", v["semester"], re.I) else "grade" if re.match(r"\s*(grade|std|class)\b", v["semester"], re.I) else "semester"))
             if (p.id, v["semester"].lower()) not in cache["semester"]:  # a new semester gets semester_no, or else the number in its name, if that is free
                 no = int(given) if given else sem_no(v["semester"])
                 if given and no in used[p.id]: errors.append({"row": n, "error": f"{v['program']} already has semester {no}"}); continue
-                if no in used[p.id] or no is None:
+                if given and no > term_max(p): errors.append({"row": n, "error": f"{v['program']} goes up to {term_label(p).lower()} {term_max(p)}"}); continue
+                if no in used[p.id] or no is None or no > term_max(p):
                     warnings.append(f"{v['program']} › {v['semester']} has no semester number yet. Set it under Programs."); no = None
                 if no is not None: used[p.id].add(no)
             sm = get("semester", (p.id, v["semester"].lower()), lambda: Semester(name=v["semester"], program_id=p.id, semester_no=no))

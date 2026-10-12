@@ -55,3 +55,18 @@ def test_old_programs_become_semester_programs_on_upgrade(tmp_path):
         main.upgrade_schema()
         with e.connect() as c: assert c.execute(text("SELECT pattern FROM courses WHERE id = 1")).scalar() == "semester"
     finally: main.engine = old
+
+def test_a_school_program_runs_grade_1_to_12(env):
+    g = make(env, name="School", pattern="grade").json(); assert g["pattern"] == "grade" and g["terms"] == 12
+    assert terms(env, g["id"]) == [(i, f"Grade {i}") for i in range(1, 13)]
+    assert make(env, name="School 2", pattern="grade", terms=13).status_code == 400
+    assert make(env, name="B.E. 2", terms=12).status_code == 400  # semesters still stop at 8
+    assert env.c.get(f"/api/admin/programs/{g['id']}", headers=env.admin).json()["term"] == "Grade"
+    assert [main.to_sem(v) for v in ("Grade 12", "g10", "11", "std 9")] == [12, 10, 11, 9]
+    assert env.c.put(f"/api/programs/{g['id']}", headers=env.admin, json={"name": "School", "pattern": "semester"}).status_code == 400  # grades 9 to 12 do not fit
+    r = env.c.post(f"/api/admin/programs/{g['id']}/rollover", headers=env.admin, json={"dry_run": True, "finishing": "keep"}); assert r.json()["term"] == "Grade" and r.json()["last_semester"] == 12
+
+def test_csv_import_makes_a_grade_program_and_reads_grade_numbers(env):
+    env.csv("program,semester,course,unit,topic,content\nSchool,Grade 10,Maths,U1,Algebra,a\nSchool,Grade XII,Physics,U1,Motion,m\n")
+    with Session_() as s: got = {p.name: p.pattern for p in s.query(Program)}; n = {x.name: x.semester_no for x in s.query(Semester)}
+    assert got["School"] == "grade" and n["Grade 10"] == 10 and n["Grade XII"] == 12
