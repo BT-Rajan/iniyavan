@@ -74,6 +74,7 @@ def test_attempt_review_is_for_the_student_and_course_staff_only(env):
     env.add_user("stu2@x.com"); assert env.c.get(f"/api/attempts/{aid}", headers=env.login("stu2@x.com")).status_code == 403
     env.add_user("fac2@x.com", "faculty"); assert env.c.get(f"/api/attempts/{aid}", headers=env.login("fac2@x.com")).status_code == 403
     mine = env.c.get(f"/api/quizzes/{q}/attempts", headers=env.stu).json(); assert [x["id"] for x in mine["items"]] == [aid]
+    res = env.c.get(f"/api/quizzes/{q}/results", headers=env.fac).json()["questions"]; assert [(x["correct"], x["right"]) for x in res] == [(0, 1), (2, 0)]  # key and count never mix
     uid = d["user_id"]; assert env.c.get(f"/api/quizzes/{q}/attempts?user_id={uid}", headers=env.fac).json()["items"][0]["percent"] == 50
     assert env.c.get(f"/api/quizzes/{q}/attempts?user_id={uid}", headers=env.login("stu2@x.com")).status_code == 403
 
@@ -91,7 +92,8 @@ def test_results_give_final_scores_question_analysis_and_a_drill_down(env):
     assert (st["stu@x.com"]["best"], st["stu@x.com"]["latest"], st["stu@x.com"]["attempts"]) == (100, 0, 2) and st["stu@x.com"]["needs_study"] == ["Ions", "Units"]
     assert st["stu2@x.com"]["strong"] == ["Units"] and [x["email"] for x in r["not_taken"]] == ["stu3@x.com"]
     q1, q2 = r["questions"]
-    assert (q1["total"], q1["correct"], q1["picks"], q1["percent"]) == (2, 0, [0, 1, 1], 0) and (q2["picks"], q2["percent"]) == ([1, 1], 50)  # latest attempts only
+    assert (q1["total"], q1["right"], q1["picks"], q1["percent"]) == (2, 0, [0, 1, 1], 0) and (q2["picks"], q2["percent"]) == ([1, 1], 50)  # latest attempts only
+    assert (q1["correct"], q2["correct"]) == (0, 1)  # the answer key, not a count
     assert {a["title"]: a["students"] for a in r["areas"]} == {"Ions": 2, "Units": 2}
     rows = list(csv.reader(io.StringIO(env.c.get(f"/api/quizzes/{q}/results?format=csv", headers=env.fac).text.lstrip("﻿"))))
     assert rows[0][3].startswith("Final score") and {r_[1]: r_[3] for r_ in rows[1:]} == {"stu@x.com": "100", "stu2@x.com": "50", "stu3@x.com": ""}
@@ -127,3 +129,8 @@ def test_drafts_archived_courses_old_attempts_and_deleting_the_course(env):
     assert env.c.get(f"/api/quizzes/{q}", headers=env.stu).status_code == 403 and env.c.post(f"/api/quizzes/{q}/attempt", headers=env.stu, json={"answers": [0]}).status_code == 403
     assert env.c.delete(f"/api/courses/{cid}", headers=env.admin).status_code == 200
     with Session_() as s: assert s.get(Quiz, q) is None and s.query(Attempt).filter_by(quiz_id=q).count() == 0
+
+def test_course_topics_list_for_a_new_test(env):
+    i, cid = setup(env)
+    got = env.c.get(f"/api/courses/{cid}/topics", headers=env.fac).json(); assert [(t["unit"], t["title"]) for t in got] == [("U1", "Water"), ("U1", "Hardness"), ("U2", "Boilers")]
+    assert env.c.get(f"/api/courses/{cid}/topics", headers=env.stu).status_code == 403 and env.c.get(f"/api/courses/{i['course']['Workshop']}/topics", headers=env.fac).status_code == 403

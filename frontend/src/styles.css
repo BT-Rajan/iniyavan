@@ -167,3 +167,27 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--vio)}textarea{mi
 .fic{background:color-mix(in srgb,currentColor 14%,transparent)}.fic.overdue{color:#d64533}.fic.due_soon{color:#c98a1b}.fic.weak{color:#8a5fd0}.fic.resume,.fic.next{color:#3d6ae0}.fic.quiz_new,.fic.quiz_retake{color:#22a06b}
 .ftx{flex:1;min-width:0}.ftx b{display:block}.ftx small{display:block;color:var(--mut);margin-top:2px}.fgo{font-size:13px;font-weight:600;color:var(--acc);white-space:nowrap}
 .nexts{display:block;margin-top:6px;color:var(--mut);font-size:13px}
+/* MCQ tests: images on questions and answers, the review, results and the gradebook */
+.qimg{display:block;max-width:100%;max-height:340px;border-radius:8px;margin:8px 0;background:var(--s1)}
+.opt{display:flex;align-items:flex-start;gap:10px}.olet{flex:none;font-weight:700;color:var(--mut);min-width:1.2em}
+.obody{flex:1;min-width:0}.obody img{display:block;max-width:100%;max-height:180px;border-radius:6px;margin-bottom:4px}
+.otag{flex:none;font-size:12px;font-weight:600;color:var(--mut);display:inline-flex;align-items:center;gap:4px}.otag.ok{color:var(--ok)}
+div.opt{cursor:default}
+.islot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0}.islot img{max-width:160px;max-height:120px;border-radius:6px;background:var(--s1)}
+.islot.sm img{max-width:110px;max-height:80px}.islot span{display:flex;gap:4px;flex-wrap:wrap}
+.islot.need{padding:8px 10px;border-radius:8px;background:var(--warnbg);color:var(--tx)}.islot.need svg{color:var(--warn)}
+.qbox.need{background:var(--warnbg)}
+.rowbtn{width:100%;text-align:left;background:none;color:inherit;font:inherit;border:0;border-bottom:1px solid var(--line);cursor:pointer}.rowbtn:disabled{cursor:default;opacity:1}
+.pill.okp{background:var(--okbg);color:var(--ok)}
+.spread{margin:8px 0 0}.sbars{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;height:140px;align-items:end;border-bottom:1px solid var(--line)}
+.sbar{height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center}.sbar em{font-style:normal;font-size:11px;color:var(--mut);margin-bottom:2px}
+.sbar i{display:block;width:100%;max-width:28px;background:var(--acc);border-radius:4px 4px 0 0}.sbar i.below{opacity:.45}
+.saxis{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;font-size:11px;color:var(--mut);text-align:center;margin-top:4px}
+.spread figcaption{font-size:12px;color:var(--mut);margin-top:6px}
+.pick{margin:8px 0}.pickh{display:flex;align-items:flex-start;gap:8px}.pickh .obody{font-size:14px}.pickh .obody p{margin:0}.pickn{flex:none;font-size:12px;color:var(--mut)}
+.pick .meter{margin-top:4px}.meter i.ok{background:var(--ok)}
+.gbwrap{overflow-x:auto;margin:0 -2px}.gb{border-collapse:collapse;font-size:13px;min-width:100%}
+.gb th,.gb td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}.gb th:first-child,.gb td:first-child{text-align:left;position:sticky;left:0;background:var(--bg)}
+.gb th small,.gb td small{display:block;color:var(--mut);font-weight:400}.gb td.na{color:var(--mut)}.gb td.low{background:var(--warnbg)}
+.gb .tool{white-space:nowrap}
+code{font-size:.92em;background:var(--s2);padding:1px 5px;border-radius:4px}

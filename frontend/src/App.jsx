@@ -192,8 +192,8 @@ function ArchiveSheet({a,close,done,toast}){  // archive or restore one item; ar
 const ArchPill=({x})=>x.archived?<span className="pill off" style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>{x.archived_self?'Archived':'Archived with its parent'}</span>:null
 function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
-  const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false)
-  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet,arch])
+  const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
+  const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet,arch,qr])
   const landed=useRef(false);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
   const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
@@ -201,6 +201,8 @@ function Learn({user,toast,appName,start}){
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role={user.role}/>
   if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast} role={user.role}/>
   if(qe)return <QuizEditor {...qe} done={()=>setQe(null)} toast={toast}/>
+  if(qr)return <QuizResults id={qr} back={()=>setQr(null)} toast={toast} role={user.role}/>
+  if(gb)return <Gradebook cid={gb} back={()=>setGb(null)} toast={toast} role={user.role}/>
   if(ed)return <TopicEditor role={user.role} toast={toast} edit={ed.id?ed:null} unitId={ed.unit_id} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const tsub=x=>[x.published===false&&'Draft · students cannot see it',x.learning_due_at?'Due '+when(x.learning_due_at):!staff&&'No deadline',x.overdue&&!staff&&'Overdue',
     cp?.topics[x.id]&&`${cp.topics[x.id].completed}/${cp.students} completed`+(cp.topics[x.id].overdue?` · ${cp.topics[x.id].overdue} overdue`:'')].filter(Boolean).join(' · ')
@@ -235,9 +237,14 @@ function Learn({user,toast,appName,start}){
     {list.map((x,i)=>x.locked?<div key={x.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={x.n+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{x.n}</b><span>Unavailable right now</span></div></button></div>:<div key={x.id} className="card" style={x.archived?{opacity:.75}:undefined}><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}<ArchPill x={x}/></b>{x.sub&&<span>{x.sub}</span>}</div>{(x.s||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.s&&<Mark s={x.s}/>}</span>}</button>
       {staff&&x.can&&(x.archived_self||!x.archived)&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.n} onClick={()=>setArch({kind:x.kind,id:x.id,name:x.n,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}
       {mayEdit&&<>{(x.kind==='units'||x.kind==='topics')&&list.length>1&&[[-1,ArrowUp,'up'],[1,ArrowDown,'down']].map(([d,I,w])=><button key={w} className="ic sm" aria-label={`Move ${x.n} ${w}`} disabled={i+d<0||i+d>=list.length} onClick={()=>move(list,i,d,x.kind==='units'?`/courses/${co.id}/units/order`:`/units/${unit.id}/topics/order`)}><I size={16}/></button>)}{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
+    {co&&!unit&&(co.tests?.length>0||(mayEdit&&!co.shared))&&<><h3 style={{margin:'28px 0 8px'}}>MCQ tests</h3>
+      {co.tests.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+1)%5]}}><ClipboardList size={18}/></span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
+        {mayEdit&&<><button className="ic sm" aria-label={'Results of '+q.title} onClick={()=>setQr(q.id)}><BarChart3 size={16}/></button><button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,course_id:co.id})}><Pencil size={16}/></button></>}</div>)}
+      {mayEdit&&!co.shared&&<button className="btn ghost" onClick={()=>setQe({course_id:co.id,csvFirst:true})}><Upload size={16}/> New MCQ test from a CSV</button>}
+      {mayEdit&&<button className="btn ghost" onClick={()=>setGb(co.id)}><BarChart3 size={16}/> Gradebook: final scores for every test</button>}</>}
     {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 style={{margin:'28px 0 8px'}}>Quizzes</h3>
       {unit.quizzes.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+3)%5]}}>?</span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
-        {mayEdit&&<button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}><Pencil size={16}/></button>}</div>)}
+        {mayEdit&&<><button className="ic sm" aria-label={'Results of '+q.title} onClick={()=>setQr(q.id)}><BarChart3 size={16}/></button><button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}><Pencil size={16}/></button></>}</div>)}
       {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{(mayEdit&&co)||isAdmin?'Nothing here yet. Use the button above to add it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {arch&&<ArchiveSheet a={arch} toast={toast} close={()=>setArch(null)} done={()=>setArch(null)}/>}
@@ -389,93 +396,217 @@ function SearchPage({user,toast}){
 function Hit({x,open}){return <button className="hitrow" onClick={()=>open(x.id)}><b>{x.title}{x.in_title&&<span className="chip" style={{marginLeft:8}}>Best match</span>}</b><small>{[x.program,x.semester,x.course,x.unit].filter(Boolean).join(' › ')}</small>{x.snippet&&<span className="snip">{x.snippet}</span>}</button>}
 
 function Insights({toast,role}){
-  const [d,setD]=useState(null),[topic,setTopic]=useState(null)
+  const [d,setD]=useState(null),[topic,setTopic]=useState(null),[sc,setSc]=useState(null)
   useEffect(()=>{if(!topic)api('/me/insights').then(setD).catch(e=>toast(e.message))},[topic])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
+  if(sc)return <ScoreCourse c={sc} back={()=>setSc(null)} toast={toast} role={role}/>
   const n=d?d.needs_study.length:0
-  return <><Bar title="My progress" sub="Where you shine and what to revisit"/><div className="main">
+  return <><Bar title="My progress" sub="Your scores, where you shine and what to revisit"/><div className="main">
+    <MyScores onCourse={setSc}/>{d?.courses.length>0&&<h3 style={{margin:'24px 0 4px'}}>Strengths and weak areas</h3>}
     {!d&&<p className="known">Loading…</p>}
     {d&&!d.courses.length&&<p className="known">Take a quiz and your strengths and weak spots will show up here.</p>}
     {d?.courses.length>0&&<div className="qbox"><b>{n?`${n} ${n===1?'area needs':'areas need'} another round of study`:'Nothing needs another round of study right now'}</b><p className="known" style={{margin:'4px 0 0'}}>{d.strong.length} strong · {d.getting_there.length} getting there · based on your latest result in {d.quizzes_taken} {d.quizzes_taken===1?'quiz':'quizzes'}</p></div>}
     {d?.courses.map(c=><section key={c.course_id}><h3 style={{margin:'24px 0 4px'}}>{c.course} · {c.percent}% right</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>)}</div></>}
 
+const uploadImg=async f=>{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':f.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');return j.url}
+// one image place on a question or an answer: shows the image, the file the CSV asked for, or a small "Add image" button
+function ImgSlot({url,need,label,onSet,toast,small}){
+  const ref=useRef(),[busy,setBusy]=useState(false)
+  const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;setBusy(true);try{onSet(await uploadImg(f))}catch(x){toast(x.message)}setBusy(false)}
+  const input=<input ref={ref} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={pick}/>
+  if(url)return <div className={'islot'+(small?' sm':'')}>{input}<img src={url} alt={label}/><span><button className="tool" onClick={()=>ref.current.click()}>Replace</button><button className="tool" onClick={()=>onSet('')}>Remove image</button></span></div>
+  if(need)return <div className="islot need" role="status">{input}<AlertTriangle size={16}/><span>Needs <b>{need}</b></span><button className="tool" disabled={busy} onClick={()=>ref.current.click()}>{busy?'Uploading…':'Upload'}</button><button className="tool" onClick={()=>onSet('',true)}>Skip</button></div>
+  return <>{input}<button className="tool" disabled={busy} onClick={()=>ref.current.click()} aria-label={'Add image to '+label}>{busy?'Uploading…':small?'Image':'Add image'}</button></>}
+const QImg=({src,alt})=>src?<img className="qimg" src={src} alt={alt} loading="lazy"/>:null
+const OptBody=({text,img,k})=><span className="obody">{img&&<img src={img} alt={'Answer '+LET[k]}/>}{text?<Md>{text}</Md>:!img&&<span>—</span>}</span>
+const LET='ABCDEF'
 function QuizPlay({id,back,toast,role}){
-  const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false),[topic,setTopic]=useState(null)
+  const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false),[topic,setTopic]=useState(null),[view,setView]=useState(null)
   const start=d=>{setQ(d);setAns(d.questions.map(()=>null));setRes(null)}
   useEffect(()=>{api('/quizzes/'+id).then(start).catch(e=>{toast(e.message);back()})},[id])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
+  if(view)return view.kind==='attempt'?<AttemptView id={view.id} back={()=>setView(null)} toast={toast} role={role}/>:view.kind==='mine'?<MyAttempts quiz={id} back={()=>setView(null)} toast={toast} role={role}/>:<QuizResults id={id} back={()=>setView(null)} toast={toast} role={role}/>
   if(!q)return <><Bar title="Quiz" back={back}/><div className="main"><p className="known">Loading…</p></div></>
   const left=ans.filter(a=>a===null).length
   const submit=async()=>{setBusy(true);try{setRes(await api(`/quizzes/${id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
-  return <><Bar title={q.title} sub={q.questions.length+' questions · pass mark '+q.pass_percent+'%'} back={back}/><div className="main">
-    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Go back over the topics and try again.'}</p>
-      <button className="btn" onClick={()=>start(q)}>Try again</button><button className="btn ghost" onClick={back}>Back to the unit</button></div>}
-    {res&&res.areas?.length>0&&<><h3 style={{margin:'20px 0 4px'}}>How you did by topic</h3><AreaList areas={res.areas} onStudy={setTopic}/></>}
-    {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1}</b><div className="prose"><Md>{x.text}</Md></div>
+  return <><Bar title={q.title} sub={q.questions.length+' questions · pass mark '+q.pass_percent+'%'+(q.kind==='course'?' · course test':'')} back={back}/><div className="main">
+    {!res&&q.can_edit&&<button className="btn ghost" style={{marginTop:0}} onClick={()=>setView({kind:'results'})}><BarChart3 size={16}/> Results and scores</button>}
+    {!res&&q.attempts>0&&<p className="known" style={{marginTop:0}}>You have tried this {pl(q.attempts,'time')}. Best {q.best}% · latest {q.latest}%. <button className="tool" onClick={()=>setView({kind:'mine'})}>See your attempts</button></p>}
+    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Go back over the topics and try again.'}{res.summary&&' '+res.summary}</p>
+      <div className="two"><button className="btn" onClick={()=>setView({kind:'attempt',id:res.attempt_id})}>Review answers</button><button className="btn ghost" onClick={()=>start(q)}>Try again</button></div><button className="btn ghost" onClick={back}>Back</button></div>}
+    {res&&res.areas?.length>0&&<><h3 style={{margin:'20px 0 4px'}}>What you are good at and what to revisit</h3><AreaList areas={res.areas} onStudy={setTopic}/></>}
+    {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={'Picture for question '+(i+1)}/>
       {x.options.map((o,k)=>{const r=res&&res.results[i],cls=r?(k===r.correct||(r.ok&&k===r.chosen)?' ok':k===r.chosen?' bad':''):ans[i]===k?' sel':''
-        return <button key={k} className={'opt'+cls} disabled={!!res} onClick={()=>setAns(ans.map((a,n)=>n===i?k:a))}><Md>{o}</Md></button>})}
+        return <button key={k} className={'opt'+cls} disabled={!!res} aria-pressed={!res&&ans[i]===k} onClick={()=>setAns(ans.map((a,n)=>n===i?k:a))}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/></button>})}
       {res&&res.results[i].explanation&&<div className="known"><Md>{res.results[i].explanation}</Md></div>}</div>)}
     {!res&&<button className="btn" disabled={busy} onClick={submit}>{busy?'Checking…':'Submit answers'}</button>}
     {!res&&left>0&&<p className="known">{left} unanswered. Blank answers count as wrong.</p>}</div></>}
+// one attempt, question by question
+function AttemptView({id,back,toast,role}){
+  const [d,setD]=useState(null),[topic,setTopic]=useState(null)
+  useEffect(()=>{api('/attempts/'+id).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
+  if(!d)return <><Bar title="Attempt" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  const staff=role!=='student',right=d.questions.filter(x=>x.ok).length
+  return <><Bar title={d.quiz} sub={(staff?d.user+' · ':'')+when(d.at)} back={back}/><div className="main">
+    <div className="qbox" style={{marginTop:0}}><h2 style={{margin:0}}>{d.score} / {d.total} · {d.percent}%</h2><p className="known" style={{marginBottom:0}}>{d.passed?'Passed':'Below the pass mark'} of {d.pass_percent}%.{d.summary&&' '+d.summary}</p></div>
+    {d.areas.length>0&&<><h3 style={{margin:'20px 0 4px'}}>{staff?'Strengths and weak areas':'What you are good at and what to revisit'}</h3><AreaList areas={d.areas} onStudy={staff?null:setTopic} staff={staff}/></>}
+    {d.no_detail&&<p className="known">This attempt was made before answers were kept question by question, so only the score is known.</p>}
+    {d.changed>0&&<p className="known">{pl(d.changed,'question')} of this attempt {d.changed===1?'was':'were'} changed or removed since, so {d.changed===1?'it is':'they are'} not shown.</p>}
+    {!d.reveal&&d.questions.length>0&&<p className="known">You see which answers were right ({right} of {d.questions.length}). This quiz does not show the correct answers.</p>}
+    {d.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1} · {x.ok?'Right':'Wrong'}{x.area?' · '+x.area:''}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={'Picture for question '+(i+1)}/>
+      {x.options.map((o,k)=>{const mine=x.chosen_known&&x.chosen===k,key=d.reveal&&x.correct===k,cls=key||(mine&&x.ok)?' ok':mine?' bad':''
+        return <div key={k} className={'opt'+cls}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/>{(mine||key)&&<span className="otag">{[mine&&(staff?'Their answer':'Your answer'),key&&'Correct answer'].filter(Boolean).join(' · ')}</span>}</div>})}
+      {x.chosen_known&&x.chosen==null&&<p className="known">Left blank.</p>}
+      {x.explanation&&<div className="known"><Md>{x.explanation}</Md></div>}</div>)}</div></>}
+function MyAttempts({quiz,user,back,toast,role}){  // a person's attempts at one quiz; staff pass user to see a student's
+  const [d,setD]=useState(null),[open,setOpen]=useState(null)
+  useEffect(()=>{api(`/quizzes/${quiz}/attempts`+(user?'?user_id='+user:'')).then(setD).catch(e=>{toast(e.message);back()})},[quiz,user])
+  if(open)return <AttemptView id={open} back={()=>setOpen(null)} toast={toast} role={role}/>
+  return <><Bar title={d?.quiz||'Attempts'} sub={d?(user?d.user+' · ':'')+pl(d.items.length,'attempt'):''} back={back}/><div className="main">
+    {d&&!d.items.length&&<p className="known">No attempts yet.</p>}
+    {d?.items.map((a,i)=><button key={a.id} className="row rowbtn" onClick={()=>setOpen(a.id)}><div>{a.score} / {a.total} · {a.percent}%<small>{when(a.at)} · {a.passed?'Passed':'Below the pass mark'}{i===0?' · latest':''}</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>)}</div></>}
 
-const parseCsv=text=>{const rows=[];let row=[],cell='',q=false;const t=text.replace(/^\ufeff/,'')
-  for(let i=0;i<t.length;i++){const ch=t[i]
-    if(q){if(ch==='"'&&t[i+1]==='"'){cell+='"';i++}else if(ch==='"')q=false;else cell+=ch}
-    else if(ch==='"')q=true;else if(ch===','||ch===';'||ch==='\t'){row.push(cell);cell=''}
-    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;row.push(cell);cell='';if(row.some(x=>x.trim()))rows.push(row);row=[]}
-    else cell+=ch}
-  row.push(cell);if(row.some(x=>x.trim()))rows.push(row);return rows}
-const QUIZ_TEMPLATE='question,a,b,c,d,correct,explanation,topic\n"Which ion makes water hard?",Na+,Ca2+,Cl-,K+,B,"Calcium and magnesium salts cause hardness.",1. Water Treatment\n'
-// rows of a questions CSV -> {questions, errors}; "correct" is a letter (A-F) or a 1-based number; "topic" is matched against this unit's topic titles
-const quizFromCsv=(text,topics)=>{const rows=parseCsv(text),head=(rows.shift()||[]).map(h=>h.trim().toLowerCase().replace(/[^a-z0-9]+/g,'_')),col=n=>head.indexOf(n),errors=[],questions=[]
-  const al=head.map((h,i)=>/^(option_|answer_)?[a-f]$/.test(h)?i:-1).filter(i=>i>=0)
-  if(col('question')<0||al.length<2)return {questions,errors:['The first row must name the columns: question, a, b, c, d, correct (and optionally explanation, topic).']}
-  rows.forEach((r,n)=>{const line=n+2,text=(r[col('question')]||'').trim(),opts=al.map(i=>(r[i]||'').trim()).filter(Boolean),raw=(r[col('correct')]||'').trim().toUpperCase()
-    const k=/^[A-F]$/.test(raw)?raw.charCodeAt(0)-65:/^[1-6]$/.test(raw)?+raw-1:-1
-    if(!text)return errors.push(`Row ${line}: no question text`);if(opts.length<2)return errors.push(`Row ${line}: needs at least two answers`)
-    if(k<0||k>=opts.length)return errors.push(`Row ${line}: "correct" must be a letter such as B that points at one of the answers`)
-    const tn=(r[col('topic')]||'').trim().toLowerCase(),tp=tn&&topics.find(t=>t.title.trim().toLowerCase()===tn)
-    if(tn&&!tp)errors.push(`Row ${line}: no topic called "${r[col('topic')].trim()}" in this unit, so it is not tied to a topic`)
-    questions.push({text,options:opts,correct:k,explanation:(r[col('explanation')]||'').trim(),topic_id:tp?tp.id:null})})
-  return {questions,errors}}
-function QuizEditor({id,unit_id,unitTopics,done,toast}){
-  const blank=()=>({text:'',options:['',''],correct:0,explanation:'',topic_id:null})
-  const [m,setM]=useState({title:'',pass_percent:50,published:false}),[qs,setQs]=useState([blank()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),[csvMsg,setCsvMsg]=useState([]),[bank,setBank]=useState(false),[btags,setBtags]=useState('')
-  useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published});setTopics(d.topics||[]);setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id??null})):[blank()])}).catch(e=>{toast(e.message);done()})},[id])
-  const upd=(i,p)=>setQs(qs.map((x,n)=>n===i?{...x,...p}:x))
+const MCQ_TEMPLATE=`question,a,b,c,d,correct,explanation,topic,area,question_image,a_image,b_image,c_image,d_image
+"Which ion makes water hard?",Na+,Ca2+,Cl-,K+,B,"Calcium and magnesium salts cause hardness.",Water Treatment,,,,,,
+"Which boiler is shown in the picture?",Fire tube,Water tube,Electric,Packaged,A,,Boilers,,boiler.png,,,,
+"Pick the symbol for a resistor",,,,,C,,,Circuit symbols,,sym-a.png,sym-b.png,sym-c.png,sym-d.png
+"What is 15% of 200?",20,30,15,35,30,,,Arithmetic,,,,,
+`
+const CSV_COLS=[['question','The question. Markdown and $math$ work.'],['a, b, c, d (up to f)','The answer choices. Leave the later ones blank if a question has fewer. A choice can be only an image.'],
+  ['correct','The right answer: its letter (B), its number (2) or its exact text.'],['explanation','Optional. Shown after submitting when the test reveals answers.'],
+  ['topic','Optional. A topic title from this course; strengths are worked out per topic.'],['area','Optional. A skill or area name for questions not tied to a topic.'],
+  ['question_image, a_image … f_image','Optional. Image file names. You upload the files in the preview, matched by name.']]
+const blankQ=()=>({text:'',options:['',''],option_images:['',''],correct:0,explanation:'',topic_id:null,area:'',image:'',need:{image:'',options:[]}})
+const fromCsv=x=>({text:x.text,options:x.options,option_images:x.option_images.map(v=>v||''),correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id,area:x.area||'',image:x.image||'',
+  need:{image:x.image?'':x.image_name,options:x.option_image_names.map((n,k)=>x.option_images[k]?'':n)}})
+const missing=qs=>qs.flatMap((x,i)=>[...(x.need.image&&!x.image?[{i,k:-1,name:x.need.image}]:[]),...x.need.options.map((n,k)=>n&&!x.option_images[k]?{i,k,name:n}:null).filter(Boolean)])
+function QuizEditor({id,unit_id,course_id,unitTopics,csvFirst,done,toast}){
+  const [m,setM]=useState({title:'',pass_percent:50,published:false,reveal:false}),[qs,setQs]=useState([blankQ()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),imgRef=useRef(null)
+  const [csv,setCsv]=useState(null),[bank,setBank]=useState(false),[btags,setBtags]=useState(''),[stage,setStage]=useState(csvFirst&&!id?'csv':'edit'),[cid,setCid]=useState(course_id)
+  const course=!unit_id
+  useEffect(()=>{if(id)api('/quizzes/'+id).then(d=>{setM({title:d.title,pass_percent:d.pass_percent,published:d.published,reveal:d.reveal});setCid(d.course_id);setTopics(d.topics||[])
+    setQs(d.questions.length?d.questions.map(x=>({text:x.text,options:x.options,option_images:x.options.map((_,k)=>x.option_images[k]||''),correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id??null,area:x.area||'',image:x.image||'',need:{image:'',options:[]}})):[blankQ()])}).catch(e=>{toast(e.message);done()})
+    else if(course&&course_id)api('/courses/'+course_id+'/topics').then(setTopics).catch(()=>{})},[id])
+  const upd=(i,p)=>setQs(cur=>cur.map((x,n)=>n===i?{...x,...p}:x))
   const setOpt=(i,k,v)=>upd(i,{options:qs[i].options.map((o,n)=>n===k?v:o)})
-  const delOpt=(i,k)=>upd(i,{options:qs[i].options.filter((_,n)=>n!==k),correct:qs[i].correct===k?0:qs[i].correct>k?qs[i].correct-1:qs[i].correct})
-  const save=async()=>{setBusy(true);try{const qid=id||(await api('/quizzes',{method:'POST',body:{unit_id,...m,pass_percent:+m.pass_percent}})).id
-    if(id)await api('/quizzes/'+id,{method:'PUT',body:{unit_id,...m,pass_percent:+m.pass_percent}})
-    await api(`/quizzes/${qid}/questions`,{method:'PUT',body:{questions:qs.filter(x=>x.text.trim())}});toast('Quiz saved');done()}catch(e){toast(e.message)}setBusy(false)}
-  const importCsv=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const {questions,errors}=quizFromCsv(await f.text(),topics);setCsvMsg(errors)
-    if(questions.length){setQs(cur=>[...cur.filter(x=>x.text.trim()),...questions]);toast(`${questions.length} questions added. Review them, then save.`)}else toast('No questions were added')}
-  const addFromBank=picked=>{setQs(cur=>[...cur.filter(x=>x.text.trim()),...picked.map(x=>({text:x.text,options:x.options,correct:x.correct,explanation:x.explanation||'',topic_id:null}))]);setBank(false);toast(`${pl(picked.length,'question')} added. Tie them to topics if you like, then save.`)}
+  const setOptImg=(i,k,v,skip)=>setQs(cur=>cur.map((x,n)=>n!==i?x:{...x,option_images:x.options.map((_,j)=>j===k?v:x.option_images[j]||''),need:skip||v?{...x.need,options:x.need.options.map((nm,j)=>j===k?'':nm)}:x.need}))
+  const setQImg=(i,v,skip)=>setQs(cur=>cur.map((x,n)=>n!==i?x:{...x,image:v,need:skip||v?{...x.need,image:''}:x.need}))
+  const delOpt=(i,k)=>{const x=qs[i];upd(i,{options:x.options.filter((_,n)=>n!==k),option_images:x.option_images.filter((_,n)=>n!==k),need:{...x.need,options:x.need.options.filter((_,n)=>n!==k)},correct:x.correct===k?0:x.correct>k?x.correct-1:x.correct})}
+  const todo=missing(qs)
+  const payload=()=>qs.filter(x=>x.text.trim()||x.image).map(x=>({text:x.text,options:x.options,option_images:x.option_images,correct:x.correct,explanation:x.explanation,topic_id:x.topic_id,area:x.area,image:x.image}))
+  const save=async()=>{setBusy(true);try{const body={...(course?{course_id:cid}:{unit_id}),...m,pass_percent:+m.pass_percent},qid=id||(await api('/quizzes',{method:'POST',body})).id
+    if(id)await api('/quizzes/'+id,{method:'PUT',body})
+    await api(`/quizzes/${qid}/questions`,{method:'PUT',body:{questions:payload()}});toast(course?'Test saved':'Quiz saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  const readCsv=async(f,replace)=>{try{const r=await api('/quizzes/parse-csv',{method:'POST',body:{csv:await f.text(),...(course?{course_id:cid}:{unit_id})}});setCsv(r)
+    if(!r.questions.length){toast('No questions could be read from the file');return}
+    const got=r.questions.map(fromCsv);setQs(cur=>replace?got:[...cur.filter(x=>x.text.trim()||x.image),...got])
+    if(replace&&!m.title)setM(v=>({...v,title:f.name.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ').slice(0,200)}))
+    setStage('edit');toast(`${pl(r.questions.length,'question')} read. Check them below${r.images_needed.length?' and upload the images':''}, then save.`)}catch(e){toast(e.message)}}
+  const importCsv=async e=>{const f=e.target.files[0];e.target.value='';if(f)readCsv(f,stage==='csv')}
+  const bulkImages=async e=>{const files=[...e.target.files];e.target.value='';if(!files.length)return;setBusy(true);let used=0;const extra=[];let next=qs
+    for(const f of files){const hits=missing(next).filter(s=>s.name.toLowerCase()===f.name.toLowerCase());if(!hits.length){extra.push(f.name);continue}
+      try{const url=await uploadImg(f);used++;next=next.map((x,i)=>{const h=hits.filter(s=>s.i===i);if(!h.length)return x
+        return {...x,image:h.some(s=>s.k<0)?url:x.image,option_images:x.option_images.map((v,k)=>h.some(s=>s.k===k)?url:v),need:{image:h.some(s=>s.k<0)?'':x.need.image,options:x.need.options.map((n,k)=>h.some(s=>s.k===k)?'':n)}}})}catch(x){toast(f.name+': '+x.message)}}
+    setQs(next);setBusy(false);toast(`${pl(used,'image')} matched${extra.length?`. Not in the CSV: ${extra.slice(0,3).join(', ')}${extra.length>3?'…':''}`:''}`)}
+  const addFromBank=picked=>{setQs(cur=>[...cur.filter(x=>x.text.trim()),...picked.map(x=>({...blankQ(),text:x.text,options:x.options,option_images:x.options.map(()=>''),correct:x.correct,explanation:x.explanation||''}))]);setBank(false);toast(`${pl(picked.length,'question')} added. Tie them to topics if you like, then save.`)}
   const toBank=async()=>{const list=qs.filter(x=>x.text.trim());let added=0,skipped=0,bad=0;setBusy(true)
-    for(const x of list){try{await api('/bank',{method:'POST',body:{text:x.text,options:x.options,correct:x.correct,explanation:x.explanation,tags:btags,source:m.title}});added++}catch(e){/already in the bank/.test(e.message)?skipped++:bad++}}
-    setBusy(false);toast(`${added} saved to the bank${skipped?`, ${skipped} already there`:''}${bad?`, ${bad} skipped (incomplete)`:''}`)}
-  const del=async()=>{if(!confirm('Delete this quiz and every student attempt?'))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Quiz deleted');done()}catch(e){toast(e.message)}}
-  return <><Bar title={id?'Edit quiz':'New quiz'} back={done}/><div className="main">
-    <label>Title</label><input value={m.title} onChange={e=>setM({...m,title:e.target.value})} placeholder="e.g. Water treatment check"/>
+    for(const x of list){if(x.image||x.option_images.some(Boolean)){bad++;continue}try{await api('/bank',{method:'POST',body:{text:x.text,options:x.options,correct:x.correct,explanation:x.explanation,tags:btags,source:m.title}});added++}catch(e){/already in the bank/.test(e.message)?skipped++:bad++}}
+    setBusy(false);toast(`${added} saved to the bank${skipped?`, ${skipped} already there`:''}${bad?`, ${bad} skipped (incomplete or with images)`:''}`)}
+  const del=async()=>{if(!confirm('Delete this and every student attempt?'))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Deleted');done()}catch(e){toast(e.message)}}
+  const fileInputs=<><input ref={csvRef} type="file" accept=".csv,text/csv,text/plain" hidden onChange={importCsv}/><input ref={imgRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={bulkImages}/></>
+  const csvNotes=csv&&(csv.error_count>0||csv.warnings.length>0)&&<div className="qbox" role="alert">{csv.error_count>0&&<><b>{pl(csv.error_count,'row')} could not be read and {csv.error_count===1?'was':'were'} left out</b>{csv.errors.slice(0,10).map((x,i)=><p className="known" style={{margin:'4px 0'}} key={i}>Row {x.row}: {x.error}</p>)}{csv.error_count>10&&<p className="known">…and {csv.error_count-10} more.</p>}</>}
+    {csv.warnings.length>0&&<><b style={{display:'block',marginTop:csv.error_count?10:0}}>Worth a look</b>{csv.warnings.slice(0,8).map((w,i)=><p className="known" style={{margin:'4px 0'}} key={i}>{w}</p>)}{csv.warnings.length>8&&<p className="known">…and {csv.warnings.length-8} more.</p>}</>}</div>
+  if(stage==='csv')return <><Bar title="New MCQ test" sub="Step 1 of 2 · attach the questions CSV" back={done}/><div className="main">{fileInputs}
+    <p className="known" style={{marginTop:0}}>A course test is built from a CSV file with one question per row. In the next step you check every question, upload any pictures for questions and answer choices, then save.</p>
+    <button className="btn" onClick={()=>csvRef.current.click()}><Upload size={16}/> Choose the CSV file</button><button className="btn ghost" onClick={()=>download('mcq-template.csv',MCQ_TEMPLATE)}>Download the template</button>
+    {csvNotes}
+    <h3 style={{margin:'24px 0 4px'}}>Columns</h3>{CSV_COLS.map(([c,h])=><div className="row" key={c}><div><code>{c}</code><small>{h}</small></div></div>)}
+    <p className="known">The first row names the columns. Comma, semicolon and tab separated files all work. A course test holds up to 200 questions.</p></div></>
+  return <><Bar title={id?(course?'Edit test':'Edit quiz'):csvFirst?'New MCQ test':'New quiz'} sub={csvFirst&&!id?'Step 2 of 2 · check, add images, save':''} back={done}/><div className="main">{fileInputs}
+    {csvNotes}
+    {todo.length>0&&<div className="qbox need" role="status"><b>{pl(todo.length,'image')} still to upload</b><p className="known" style={{margin:'4px 0 8px'}}>Choose them all at once and they are matched to their questions by file name, or upload each one below. {[...new Set(todo.map(x=>x.name))].slice(0,6).join(', ')}{todo.length>6?'…':''}</p>
+      <button className="btn" style={{margin:0}} disabled={busy} onClick={()=>imgRef.current.click()}><Upload size={16}/> {busy?'Uploading…':'Upload images'}</button></div>}
+    <label>Title</label><input value={m.title} onChange={e=>setM({...m,title:e.target.value})} placeholder={course?'e.g. Chemistry final MCQ':'e.g. Water treatment check'}/>
     <label>Pass mark (%)</label><input type="number" min="1" max="100" value={m.pass_percent} onChange={e=>setM({...m,pass_percent:e.target.value})}/>
     <label className="chk"><input type="checkbox" checked={m.published} onChange={e=>setM({...m,published:e.target.checked})}/> Published (students can take it)</label>
+    <label className="chk"><input type="checkbox" checked={m.reveal} onChange={e=>setM({...m,reveal:e.target.checked})}/> Show students the correct answers and explanations after they submit</label>
     {qs.map((x,i)=><div className="qbox" key={i}><b>Question {i+1}</b>
       <textarea placeholder="Question (Markdown and $math$ work)" value={x.text} onChange={e=>upd(i,{text:e.target.value})}/>
-      {x.options.map((o,k)=><div className="qopt" key={k}><input type="radio" name={'c'+i} aria-label="Correct answer" checked={x.correct===k} onChange={()=>upd(i,{correct:k})}/><input value={o} placeholder={'Answer '+(k+1)} onChange={e=>setOpt(i,k,e.target.value)}/>{x.options.length>2&&<button className="ic sm" aria-label="Remove answer" onClick={()=>delOpt(i,k)}><X size={16}/></button>}</div>)}
-      {x.options.length<6&&<button className="tool" onClick={()=>upd(i,{options:[...x.options,'']})}>Add answer</button>}
-      <label>Topic this tests</label><select value={x.topic_id??''} onChange={e=>upd(i,{topic_id:e.target.value?+e.target.value:null})}><option value="">Not tied to one topic</option>{topics.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select>
+      <ImgSlot url={x.image} need={x.need.image} label={'question '+(i+1)} toast={toast} onSet={(v,skip)=>setQImg(i,v,skip)}/>
+      {x.options.map((o,k)=><div key={k}><div className="qopt"><input type="radio" name={'c'+i} aria-label={'Answer '+LET[k]+' is correct'} checked={x.correct===k} onChange={()=>upd(i,{correct:k})}/><b className="olet">{LET[k]}</b><input value={o} placeholder={'Answer '+LET[k]+(x.option_images[k]?' (optional with an image)':'')} onChange={e=>setOpt(i,k,e.target.value)}/>
+        {!x.option_images[k]&&!x.need.options[k]&&<ImgSlot small label={'answer '+LET[k]} toast={toast} onSet={v=>setOptImg(i,k,v)}/>}{x.options.length>2&&<button className="ic sm" aria-label={'Remove answer '+LET[k]} onClick={()=>delOpt(i,k)}><X size={16}/></button>}</div>
+        {(x.option_images[k]||x.need.options[k])&&<div style={{paddingLeft:48}}><ImgSlot small url={x.option_images[k]} need={x.need.options[k]} label={'answer '+LET[k]} toast={toast} onSet={(v,skip)=>setOptImg(i,k,v,skip)}/></div>}</div>)}
+      {x.options.length<6&&<button className="tool" onClick={()=>upd(i,{options:[...x.options,''],option_images:[...x.option_images,'']})}>Add answer</button>}
+      <label>Topic this tests</label><select value={x.topic_id??''} onChange={e=>upd(i,{topic_id:e.target.value?+e.target.value:null})}><option value="">Not tied to one topic</option>{topics.map(t=><option key={t.id} value={t.id}>{t.unit?t.unit+' › ':''}{t.title}</option>)}</select>
+      {x.topic_id==null&&<><label>Area or skill</label><input value={x.area} onChange={e=>upd(i,{area:e.target.value})} placeholder="e.g. Arithmetic (used for strengths when there is no topic)"/></>}
       <textarea placeholder="Explanation shown after submitting (optional)" value={x.explanation} onChange={e=>upd(i,{explanation:e.target.value})}/>
       {qs.length>1&&<button className="tool" onClick={()=>setQs(qs.filter((_,n)=>n!==i))}>Remove question</button>}</div>)}
-    <p className="known">Tick the radio button beside the correct answer. Tie each question to the topic it tests: students then see which topics they know well and which need another round of study.</p>
-    <button className="btn ghost" onClick={()=>setQs([...qs,blank()])}>Add question</button>
-    <input ref={csvRef} type="file" accept=".csv,text/csv" hidden onChange={importCsv}/>
-    <div className="two"><button className="btn ghost" onClick={()=>csvRef.current.click()}><Upload size={16}/> Import from CSV</button><button className="btn ghost" onClick={()=>download('quiz-template.csv',QUIZ_TEMPLATE)}>CSV template</button></div>
-    {csvMsg.length>0&&<div className="qbox" role="alert"><b>{csvMsg.length} {csvMsg.length===1?'row needs':'rows need'} a look</b>{csvMsg.slice(0,8).map((m,i)=><p className="known" style={{margin:'4px 0'}} key={i}>{m}</p>)}{csvMsg.length>8&&<p className="known">…and {csvMsg.length-8} more.</p>}</div>}
+    <p className="known">Tick the radio button beside the correct answer. Tie each question to the topic it tests, or name an area: students then see what they are good at and what needs another round of study.</p>
+    <button className="btn ghost" onClick={()=>setQs([...qs,blankQ()])}>Add question</button>
+    <div className="two"><button className="btn ghost" onClick={()=>csvRef.current.click()}><Upload size={16}/> Add from a CSV</button><button className="btn ghost" onClick={()=>download('mcq-template.csv',MCQ_TEMPLATE)}>CSV template</button></div>
     <button className="btn ghost" onClick={()=>setBank(true)}>Add from the question bank</button>
     <label htmlFor="bt">Share these questions in the bank</label><div className="two"><input id="bt" value={btags} onChange={e=>setBtags(e.target.value)} placeholder="Tags, e.g. water, hardness (optional)"/><button className="btn ghost" disabled={busy||!qs.some(x=>x.text.trim())} onClick={toBank}>Save to bank</button></div>
-    <button className="btn" disabled={busy} onClick={save}>{busy?'Saving…':'Save quiz'}</button>{bank&&<BankSheet close={()=>setBank(false)} onAdd={addFromBank} toast={toast}/>}
-    {id&&<button className="btn danger" onClick={del}>Delete quiz</button>}</div></>}
+    <button className="btn" disabled={busy||todo.length>0} onClick={save}>{busy?'Saving…':todo.length?`Upload ${pl(todo.length,'image')} first`:id?'Save changes':course?'Create test':'Save quiz'}</button>{bank&&<BankSheet close={()=>setBank(false)} onAdd={addFromBank} toast={toast}/>}
+    {id&&<button className="btn danger" onClick={del}>Delete {course?'test':'quiz'}</button>}</div></>}
 
+// score spread: one series, so one hue and no legend; every bar has its count as text and a tooltip
+const Spread=({rows,pass})=>{const top=Math.max(1,...rows.map(r=>r.count))
+  return <figure className="spread" aria-label="How many students scored in each band"><div className="sbars">{rows.map((r,i)=><div key={r.label} className="sbar" title={`${r.label}%: ${pl(r.count,'student')}`}><em>{r.count||''}</em><i style={{height:r.count?Math.max(4,100*r.count/top)+'%':0}} className={i*10+9<pass?'below':''}/></div>)}</div>
+    <div className="saxis">{rows.map(r=><span key={r.label}>{r.label.split('–')[0]}</span>)}</div><figcaption>Final score in bands of 10%. Lighter bars are below the {pass}% pass mark.</figcaption></figure>}
+const PassPill=({ok})=><span className={'pill '+(ok?'okp':'off')} style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>{ok?'Passed':'Not yet'}</span>
+function QuizResults({id,back,toast,role}){
+  const [d,setD]=useState(null),[tab,setTab]=useState('overview'),[who,setWho]=useState(null),[sort,setSort]=useState('order')
+  useEffect(()=>{api(`/quizzes/${id}/results`).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  if(who)return <MyAttempts quiz={id} user={who} back={()=>setWho(null)} toast={toast} role={role}/>
+  if(!d)return <><Bar title="Results" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  const sm=d.summary,qs=sort==='hard'?[...d.questions].sort((a,b)=>(a.percent??101)-(b.percent??101)):d.questions
+  return <><Bar title={d.title} sub={`Results · ${sm.took} of ${sm.students} students took it`} back={back}/><div className="main">
+    <div className="tabs scroll" role="tablist">{[['overview','Overview'],['students','Students'],['questions','Questions'],['areas','Strengths']].map(([k,l])=><button key={k} role="tab" aria-selected={tab===k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
+    {tab==='overview'&&<>{!sm.took?<p className="known">Nobody has taken it yet.{d.published?'':' It is still a draft, so students cannot see it.'}</p>:<>
+      <div className="stats">{[['Average final score',sm.average+'%'],['Pass rate',sm.pass_rate+'%',`${sm.passed} of ${sm.took} passed`],['Median',sm.median+'%'],['Highest · lowest',sm.highest+'% · '+sm.lowest+'%'],
+        ['Took it',sm.took+' / '+sm.students,sm.not_taken?sm.not_taken+' not yet':'everyone'],['Attempts',sm.attempts,'latest average '+sm.average_latest+'%']].map(([l,v,x])=><div className="stat" key={l}><b>{v}</b>{l}{x&&<small style={{display:'block',color:'var(--mut)'}}>{x}</small>}</div>)}</div>
+      <h3 style={{margin:'24px 0 4px'}}>Spread of final scores</h3><Spread rows={sm.distribution} pass={d.pass_percent}/>
+      <p className="known">The final score is each student's best attempt. Strengths and the question analysis use each student's latest attempt, so a retake replaces the earlier result.</p></>}
+      {d.not_taken.length>0&&<><h3 style={{margin:'24px 0 4px'}}>Not taken yet ({sm.not_taken})</h3><p className="known" style={{margin:0}}>{d.not_taken.map(x=>x.name).join(', ')}{sm.not_taken>d.not_taken.length?'…':''}</p></>}
+      <button className="btn ghost" onClick={()=>fetchFile(`/quizzes/${id}/results?format=csv`,'results-'+d.title.replace(/\s+/g,'_')+'.csv',toast)}>Download results CSV</button></>}
+    {tab==='students'&&<>{!d.students.length&&<p className="known">No results yet.</p>}
+      {d.students.map(x=><button key={x.user_id} className="row rowbtn" onClick={()=>setWho(x.user_id)}><div>{x.name}<PassPill ok={x.passed}/><small>Final {x.best}% · latest {x.latest}% · {pl(x.attempts,'attempt')} · {day(x.last_at)}</small>
+        {(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&'Good at: '+x.strong.join(', ')}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&'Revisit: '+x.needs_study.join(', ')}</small>}<Bar2 v={x.best}/></div><ChevronRight size={18}/></button>)}</>}
+    {tab==='questions'&&<><div className="seg" style={{gridTemplateColumns:'1fr 1fr',margin:'0 0 12px'}}>{[['order','In test order'],['hard','Hardest first']].map(([k,l])=><button key={k} className={sort===k?'on':''} aria-pressed={sort===k} onClick={()=>setSort(k)}>{l}</button>)}</div>
+      {qs.map(x=>{const n=x.picks.reduce((a,b)=>a+b,0)+x.blank
+        return <div className="qbox" key={x.id}><b>Question {x.pos} · {x.percent==null?'no answers yet':x.percent+'% right'}{x.area?' · '+x.area:''}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={'Picture for question '+x.pos}/>
+          {x.options.map((o,k)=>{const c=x.picks[k],pc=n?Math.round(100*c/n):0
+            return <div key={k} className="pick" title={`${LET[k]}: ${pl(c,'student')}`}><div className="pickh"><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/>{k===x.correct&&<span className="otag ok"><Check size={14}/> Correct</span>}<span className="pickn">{c} · {pc}%</span></div><div className="meter"><i style={{width:pc+'%'}} className={k===x.correct?'ok':''}/></div></div>})}
+          {x.picks_known>0&&x.blank>0&&<p className="known" style={{margin:'6px 0 0'}}>Left blank: {x.blank}</p>}
+          {x.total>x.picks_known&&<p className="known" style={{margin:'6px 0 0'}}>{x.total-x.picks_known} older {x.total-x.picks_known===1?'attempt does':'attempts do'} not record which answer was picked.</p>}</div>})}</>}
+    {tab==='areas'&&<>{!d.areas.length?<p className="known">No results yet.</p>:<><p className="known" style={{marginTop:0}}>Weakest first, from each student's latest attempt.</p>
+      {d.areas.map(a=><div className="row" key={a.title+(a.topic_id||'')}><div>{a.title}<small>{a.percent}% right · {a.strong} strong · {a.getting_there} getting there · {a.needs_study} need another round{a.unit?' · '+a.unit:''}</small><Bar2 v={a.percent}/></div></div>)}</>}</>}</div></>}
+function Gradebook({cid,back,toast,role}){
+  const [d,setD]=useState(null),[open,setOpen]=useState(null),[stu,setStu]=useState(null)
+  useEffect(()=>{api(`/courses/${cid}/gradebook`).then(setD).catch(e=>{toast(e.message);back()})},[cid])
+  if(open)return <QuizResults id={open} back={()=>setOpen(null)} toast={toast} role={role}/>
+  if(stu)return stu.quiz?<MyAttempts quiz={stu.quiz} user={stu.id} back={()=>setStu({...stu,quiz:null})} toast={toast} role={role}/>
+    :<><Bar title={stu.name} sub={d.course+' · final '+(stu.final==null?'–':stu.final+'%')} back={()=>setStu(null)}/><div className="main">{d.tests.map((t,i)=><button key={t.id} className="row rowbtn" disabled={stu.scores[i]==null} onClick={()=>setStu({...stu,quiz:t.id})}><div>{t.title}{stu.scores[i]!=null&&<PassPill ok={stu.scores[i]>=t.pass_percent}/>}<small>{t.unit||'Course test'} · {stu.scores[i]==null?'not taken':'final '+stu.scores[i]+'%'} · pass {t.pass_percent}%</small>{stu.scores[i]!=null&&<Bar2 v={stu.scores[i]}/>}</div>{stu.scores[i]!=null&&<ChevronRight size={18}/>}</button>)}</div></>
+  if(!d)return <><Bar title="Gradebook" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  return <><Bar title="Gradebook" sub={d.course+' · '+pl(d.tests.length,'test')} back={back}/><div className="main">
+    {!d.tests.length?<p className="known">No published tests or quizzes in this course yet.</p>:<>
+    <p className="known" style={{marginTop:0}}>Each cell is a student's final (best) score. The final course score is the average of the tests they took. Tap a student or a test to drill down.</p>
+    <div className="gbwrap"><table className="gb"><thead><tr><th>Student</th>{d.tests.map(t=><th key={t.id}><button className="tool" onClick={()=>setOpen(t.id)} title={t.unit||'Course test'}>{t.title}</button><small>avg {t.average??'–'}%</small></th>)}<th>Final</th></tr></thead>
+      <tbody>{d.students.map(r=><tr key={r.user_id}><td><button className="tool" onClick={()=>setStu(r)}>{r.name}</button></td>{r.scores.map((v,i)=><td key={i} className={v==null?'na':v>=d.tests[i].pass_percent?'':'low'}>{v==null?'–':v+'%'}</td>)}<td><b>{r.final==null?'–':r.final+'%'}</b><small>{r.taken}/{d.tests.length}</small></td></tr>)}</tbody></table></div>
+    <p className="known">A dash means not taken. Scores below a test's pass mark are marked with a lighter background.</p>
+    <button className="btn ghost" onClick={()=>fetchFile(`/courses/${cid}/gradebook?format=csv`,'gradebook-'+d.course.replace(/\s+/g,'_')+'.csv',toast)}>Download gradebook CSV</button></>}</div></>}
+function ScoreCourse({c,back,toast,role}){  // one course of a student's scores: each test, then its attempts
+  const [q,setQ]=useState(null)
+  if(q)return <MyAttempts quiz={q} back={()=>setQ(null)} toast={toast} role={role}/>
+  return <><Bar title={c.course} sub={'Final score '+(c.final==null?'–':c.final+'%')+' · '+c.taken+' of '+c.tests.length+' taken'} back={back}/><div className="main">
+    {c.tests.map(t=><button key={t.id} className="row rowbtn" disabled={!t.attempts} onClick={()=>setQ(t.id)}><div>{t.title}{t.attempts>0&&<PassPill ok={t.passed}/>}<small>{t.unit||'Course test'} · {t.attempts?`best ${t.best}% · latest ${t.latest}% · ${pl(t.attempts,'attempt')}`:'not taken yet'} · pass {t.pass_percent}%</small>{t.attempts>0&&<Bar2 v={t.best}/>}</div>{t.attempts>0&&<ChevronRight size={18}/>}</button>)}
+    <p className="known">Your final score in a test is your best attempt. The course score is the average of the tests you have taken.</p></div></>}
+function MyScores({onCourse}){  // a student's final score per course
+  const [d,setD]=useState(null)
+  useEffect(()=>{api('/me/scores').then(setD).catch(()=>setD({courses:[]}))},[])
+  if(!d||!d.courses.length)return null
+  return <><h3 style={{margin:'0 0 4px'}}>Scores</h3>{d.courses.map(x=><button key={x.course_id} className="row rowbtn" onClick={()=>onCourse(x)}><div>{x.course}<small>{x.final==null?'No tests taken yet':'Final score '+x.final+'%'} · {x.taken} of {x.tests.length} taken · {x.passed} passed</small>{x.final!=null&&<Bar2 v={x.final}/>}</div><ChevronRight size={18}/></button>)}</>}
 function BankSheet({close,onAdd,toast}){
   const [q,setQ]=useState(''),[tag,setTag]=useState(''),[mine,setMine]=useState(false),[d,setD]=useState(null),[sel,setSel]=useState({}),[n,setN]=useState(0)
   useEffect(()=>{const t=setTimeout(()=>api('/bank?limit=30&q='+encodeURIComponent(q)+'&tag='+encodeURIComponent(tag)+(mine?'&mine=true':'')).then(setD).catch(e=>toast(e.message)),250);return()=>clearTimeout(t)},[q,tag,mine,n,toast])

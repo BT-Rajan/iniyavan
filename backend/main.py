@@ -1708,7 +1708,13 @@ def question_view(x):  # what anyone taking the quiz may see of a question
     return {"id": x.id, "text": x.text, "options": json.loads(x.options), "image": x.image or "", "option_images": [v or "" for v in json.loads(x.option_images)] if x.option_images else []}
 def quiz_topics(q, s):  # the topics a question of this quiz may be tied to
     if q.unit_id: return [{"id": t.id, "title": t.title} for t in s.query(Topic).filter_by(unit_id=q.unit_id).order_by(*ORDER[Topic])]
-    units = s.query(Unit).filter_by(course_id=q.course_id).order_by(*ORDER[Unit]).all(); by = defaultdict(list)
+    return course_topics(q.course_id, s)
+@app.get("/api/courses/{cid}/topics")
+def course_topic_list(cid: int, u: User = Depends(staff), s: Session = Depends(db)):  # for tying a new course test's questions to topics
+    if not s.get(Course, cid): raise HTTPException(404, "Course not found")
+    need_edit(u, cid, s); return course_topics(cid, s)
+def course_topics(cid, s):
+    units = s.query(Unit).filter_by(course_id=cid).order_by(*ORDER[Unit]).all(); by = defaultdict(list)
     for t in s.query(Topic).filter(Topic.unit_id.in_([x.id for x in units] or [0])).order_by(*ORDER[Topic]): by[t.unit_id].append(t)
     return [{"id": t.id, "title": t.title, "unit": un.name} for un in units for t in by[un.id]]
 @app.post("/api/quizzes/{qid}/attempt")
@@ -1844,19 +1850,19 @@ def quiz_results(qid: int, format: str = "json", u: User = Depends(staff), s: Se
                             [[x.name, x.email, 0, "", "", "not taken", "", "", ""] for x in not_taken])
     best = [r["best"] for r in students]; dist = [0] * 10
     for v in best: dist[min(v // 10, 9)] += 1
-    qstat = {x.id: {"answered": 0, "blank": 0, "correct": 0, "total": 0, "picks": [0] * len(json.loads(x.options)), "picks_known": 0} for x in qs}
+    qstat = {x.id: {"answered": 0, "blank": 0, "right": 0, "total": 0, "picks": [0] * len(json.loads(x.options)), "picks_known": 0} for x in qs}
     for _, _, _, detail in ctx_batches:
         for d in detail:
             st = qstat.get(d[0])
             if not st: continue
-            st["total"] += 1; st["correct"] += d[1]
+            st["total"] += 1; st["right"] += d[1]
             if len(d) > 2:
                 st["picks_known"] += 1
                 if d[2] is None: st["blank"] += 1
                 elif 0 <= d[2] < len(st["picks"]): st["picks"][d[2]] += 1; st["answered"] += 1
     topics = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({x.topic_id for x in qs if x.topic_id} or {0}))}
     questions = [{**question_view(x), "pos": i + 1, "correct": x.correct, "explanation": x.explanation or "", "area": topics.get(x.topic_id) or x.area or "",
-                  **qstat[x.id], "percent": round(100 * qstat[x.id]["correct"] / qstat[x.id]["total"]) if qstat[x.id]["total"] else None} for i, x in enumerate(qs)]
+                  **qstat[x.id], "percent": round(100 * qstat[x.id]["right"] / qstat[x.id]["total"]) if qstat[x.id]["total"] else None} for i, x in enumerate(qs)]
     n, areas = class_areas(ctx_batches, s)
     return {"id": q.id, "title": q.title, "course_id": cid, "pass_percent": q.pass_percent, "published": bool(q.published), "questions_count": len(qs),
             "summary": {"students": len(set(x.id for x in aud) | set(by)), "took": len(by), "not_taken": len(not_taken), "attempts": sum(len(L) for L in by.values()),
