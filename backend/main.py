@@ -118,15 +118,18 @@ class TopicVersion(Base):  # a snapshot of a topic's text each time it is saved,
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
     title = Column(String(200)); content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
     saved_by = Column(Integer, nullable=True); saved_at = Column(DateTime, default=dt.datetime.utcnow); note = Column(String(200), default="")
-class Quiz(Base):  # a multiple-choice quiz attached to a unit
+class Quiz(Base):  # a multiple-choice quiz attached to a unit, or an MCQ test for a whole course (unit_id null; course_id is then its real parent)
     __tablename__ = "quizzes"
-    id = Column(Integer, primary_key=True); unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), index=True); course_id = Column(Integer, index=True)
+    id = Column(Integer, primary_key=True); unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), index=True, nullable=True); course_id = Column(Integer, index=True)
     title = Column(String(200)); pass_percent = Column(Integer, default=50); published = Column(Boolean, default=False)
+    reveal = Column(Boolean, default=False)  # students see the correct answers and explanations after submitting
 class Question(Base):
     __tablename__ = "quiz_questions"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); pos = Column(Integer, default=0)
     text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text)  # options is a JSON list
-    topic_id = Column(Integer, nullable=True)  # the topic this question tests, chosen by the author; must be a topic of the quiz's unit
+    topic_id = Column(Integer, nullable=True)  # the topic this question tests, chosen by the author; must be a topic of the quiz's unit (or course, for a course test)
+    area = Column(String(150), nullable=True)  # a skill or area label for questions not tied to a topic; strengths are grouped by it
+    image = Column(String(300), nullable=True); option_images = Column(Text, nullable=True)  # uploaded image urls: one for the question, a JSON list matching options
 class BankQuestion(Base):  # a reusable question any faculty member or admin can browse and add to their own quizzes; adding copies it, so later edits never change a live quiz
     __tablename__ = "question_bank"
     id = Column(Integer, primary_key=True); owner_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True); sig = Column(String(40), index=True)
@@ -148,7 +151,7 @@ class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
     score = Column(Integer); total = Column(Integer); percent = Column(Integer); at = Column(DateTime, default=dt.datetime.utcnow)
-    detail = Column(Text, nullable=True)  # JSON [[question_id, 1 or 0], ...] so strengths and weak areas can be worked out; null on attempts made before this existed
+    detail = Column(Text, nullable=True)  # JSON [[question_id, 1 or 0, chosen index or null], ...] (older rows have no chosen index) so strengths and weak areas can be worked out; null on attempts made before this existed
 class Progress(Base):  # one row per student and topic, made when they first open it. No row = not started; completed_at null = in progress
     __tablename__ = "progress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id")); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
@@ -486,6 +489,9 @@ def program_pattern(c):  # courses.pattern; every existing program is a semester
 def registration_columns(c):  # users.institution, id_number, phone, self_registered, ai_key; nobody is marked self-registered retroactively
     for col, typ in (("institution", "VARCHAR(150) NULL"), ("id_number", "VARCHAR(60) NULL"), ("phone", "VARCHAR(30) NULL"), ("self_registered", "TINYINT(1) NOT NULL DEFAULT 0"), ("ai_key", "TEXT NULL")):
         _addcol("users", col, typ)(c)
+def mcq_columns(c):  # course-level MCQ tests: images, areas and revealing answers
+    _addcol("quizzes", "reveal", "TINYINT(1) NOT NULL DEFAULT 0")(c)
+    for col, typ in (("area", "VARCHAR(150) NULL"), ("image", "VARCHAR(300) NULL"), ("option_images", "TEXT NULL")): _addcol("quiz_questions", col, typ)(c)
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
@@ -495,7 +501,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0011_unit_topic_positions", positions), ("0012_learning_deadlines", learning_state_columns),
               ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL")),
               ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern),
-              ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")])]
+              ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")]),
+              ("0018_mcq_tests", mcq_columns)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -607,8 +614,9 @@ def topic_course_id(t, s):  # None when the chain is broken, which only admins g
 def quiz_unit_open(q, s):
     un = s.get(Unit, q.unit_id) if q.unit_id else None
     if un is not None and un.archived_at: raise HTTPException(403, "This quiz is unavailable right now")
-def quiz_course_id(q, s):
-    un = s.get(Unit, q.unit_id) if q.unit_id else None
+def quiz_course_id(q, s):  # a unit quiz belongs to its unit's course; a course test to its course
+    if not q.unit_id: return q.course_id
+    un = s.get(Unit, q.unit_id)
     return un.course_id if un else None
 UNAVAILABLE = "This course is unavailable right now"
 def sem_off(s, sem):  # a semester is off when it or its program is archived
@@ -984,7 +992,7 @@ def reports(_: User = Depends(admin), s: Session = Depends(db)):
             "ai": [{"title": t, "kind": k, "hits": h or 0, "tokens": tk or 0, "saved": (h or 0) * (tk or 0)} for t, k, h, tk in ai]}
 
 # ---- course reports (admins see every course; faculty see only their own) ----
-def csv_cell(v): v = "" if v is None else v; return "'" + v if isinstance(v, str) and v[:1] in "=+-@\t\r" else v  # stops spreadsheet formula injection
+def csv_cell(v): v = "" if v is None else v; return "'" + v if isinstance(v, str) and v[:1] and v[:1] in "=+-@\t\r" else v  # stops spreadsheet formula injection
 def csv_response(name, header, rows):
     out = io.StringIO(); w = csv.writer(out); w.writerow(header); [w.writerow([csv_cell(c) for c in r]) for r in rows]
     return Response("\ufeff" + out.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{name}"'})
@@ -1172,9 +1180,9 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
     for l in s.query(CourseLink): linked_to[l.course_id].append(l.semester_id)
     qcount = dict(s.query(Question.quiz_id, func.count(Question.id)).group_by(Question.quiz_id).all())
     best = dict(s.query(Attempt.quiz_id, func.max(Attempt.percent)).filter(Attempt.user_id == u.id).group_by(Attempt.quiz_id).all())
-    qz = defaultdict(list)
+    qz, tests = defaultdict(list), defaultdict(list)  # unit quizzes by unit; course tests by course
     for q in s.query(Quiz).order_by(Quiz.id):
-        qz[q.unit_id].append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
+        (qz[q.unit_id] if q.unit_id else tests[q.course_id]).append({"id": q.id, "title": q.title, "published": bool(q.published), "questions": qcount.get(q.id, 0), "best": best.get(q.id), "pass_percent": q.pass_percent})
     cbyid = {c.id: c for c in s.query(Course)}
     pa = {p.id for p in s.query(Program) if p.archived_at}; semoff = {x.id: bool(x.archived_at or x.program_id in pa) for x in s.query(Semester)}  # a semester is off when it or its program is archived
     mine = {c.id for c in cbyid.values() if c.faculty_owner_id == u.id} if u.role == "faculty" else set()
@@ -1186,7 +1194,8 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
         off = bool(c.archived_at) or semoff.get(sm.id, False)  # archived itself, or shown in an archived semester or program
         d = {"id": c.id, "name": c.name, "shared": shared, "semester_id": c.semester_id, "home": sname.get(c.semester_id, "") if shared else "",
              "shared_with": len(linked_to[c.id]), "editable": ed, "mine": c.id in mine, "archived": off, "archived_self": bool(c.archived_at),
-             "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None, "units": [] if off and not ed else [  # everyone else sees an archived course as a locked name, nothing inside
+             "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None,
+             "tests": [] if off and not ed else [q for q in tests[c.id] if ed or (q["published"] and q["questions"])], "units": [] if off and not ed else [  # everyone else sees an archived course as a locked name, nothing inside
             {"id": n.id, "name": n.name, "archived": off or bool(n.archived_at), "archived_self": bool(n.archived_at), "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
              "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False,
                          "archived": off or bool(n.archived_at) or bool(t.archived_at), "archived_self": bool(t.archived_at),
@@ -1452,8 +1461,12 @@ def order_topics(uid: int, b: OrderIn, u: User = Depends(staff), s: Session = De
     if not un: raise HTTPException(404, "Unit not found")
     need_edit(u, un.course_id, s); reorder(s.query(Topic).filter_by(unit_id=uid).all(), b.ids); s.commit(); return {"ok": True}
 # ---- quizzes: staff write them, students take them and are graded on the server ----
-class QuizIn(BaseModel): unit_id: int = 0; title: str; pass_percent: int = 50; published: bool = False
-class QuestionIn(BaseModel): text: str; options: list[str]; correct: int; explanation: str = ""; topic_id: int | None = None
+MAX_QUESTIONS = 200  # a course test; a unit quiz stays short
+def max_questions(q): return 100 if q.unit_id else MAX_QUESTIONS
+class QuizIn(BaseModel): unit_id: int = 0; course_id: int = 0; title: str; pass_percent: int = 50; published: bool = False; reveal: bool = False  # unit_id for a unit quiz, else course_id for a course test
+class QuestionIn(BaseModel):
+    text: str; options: list[str]; correct: int; explanation: str = ""; topic_id: int | None = None
+    area: str = ""; image: str = ""; option_images: list[str] = []  # images are urls from POST /api/uploads
 class QuestionsIn(BaseModel): questions: list[QuestionIn]
 class AttemptIn(BaseModel): answers: list[int | None]
 def quiz_or_404(qid, s):
@@ -1463,7 +1476,25 @@ def quiz_or_404(qid, s):
 def quiz_fields(b):
     if not b.title.strip(): raise HTTPException(400, "Give the quiz a title")
     if not 1 <= b.pass_percent <= 100: raise HTTPException(400, "Pass mark must be between 1 and 100")
-    return {"title": b.title.strip()[:200], "pass_percent": b.pass_percent, "published": b.published}
+    return {"title": b.title.strip()[:200], "pass_percent": b.pass_percent, "published": b.published, "reveal": b.reveal}
+IMG_URL = re.compile(r"/api/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)")
+def img_or_none(v, label):
+    v = (v or "").strip()
+    if v and not IMG_URL.fullmatch(v): raise HTTPException(400, f"{label}: upload the image here first")
+    return v or None
+def topic_fits(q, tid, s):  # a question's topic must be in the quiz's unit, or anywhere in the course for a course test
+    qs = s.query(Topic.id).filter(Topic.id == tid)
+    qs = qs.filter(Topic.unit_id == q.unit_id) if q.unit_id else qs.join(Unit, Unit.id == Topic.unit_id).filter(Unit.course_id == q.course_id)
+    return qs.first() is not None
+def clean_question(q, x, i, s):  # -> the column values of one question, or a 400 naming what is wrong
+    opts = [o.strip() for o in x.options]; oimg = [img_or_none(v, f"Question {i}, answer {k + 1}") for k, v in enumerate(x.option_images[:len(opts)])]
+    oimg += [None] * (len(opts) - len(oimg))
+    if not x.text.strip() and not x.image: raise HTTPException(400, f"Question {i} has no text")
+    if not 2 <= len(opts) <= 6 or not all(o or im for o, im in zip(opts, oimg)): raise HTTPException(400, f"Question {i} needs 2 to 6 answers, each with text or an image")
+    if not 0 <= x.correct < len(opts): raise HTTPException(400, f"Question {i}: mark which answer is correct")
+    if x.topic_id is not None and not topic_fits(q, x.topic_id, s): raise HTTPException(400, f"Question {i}: pick a topic from this {'unit' if q.unit_id else 'course'}")
+    return {"text": x.text.strip(), "options": json.dumps(opts), "correct": x.correct, "explanation": x.explanation.strip(), "topic_id": x.topic_id,
+            "area": x.area.strip()[:150] or None, "image": img_or_none(x.image, f"Question {i}"), "option_images": json.dumps(oimg) if any(oimg) else None}
 # ---- strengths and weak areas: what a student has mastered, and what needs another round of study ----
 STRONG, WEAK = 80, 60  # at or above STRONG is a strength; below WEAK needs another round of study; in between is getting there
 def area_status(pct): return "strong" if pct >= STRONG else "needs_study" if pct < WEAK else "getting_there"
@@ -1476,26 +1507,42 @@ def latest_batches(s, user_ids, quiz_ids):
     for x in s.query(Question).filter(Question.quiz_id.in_(set(quizzes) or {0})): qm[x.quiz_id][x.id] = x
     return [(a.user_id, quizzes[a.quiz_id], qm[a.quiz_id], json.loads(a.detail)) for a in atts if a.quiz_id in quizzes]
 def area_context(batches, s):
-    tids = {x.topic_id for _, _, qm, _ in batches for x in qm.values() if x.topic_id}; uids = {q.unit_id for _, q, _, _ in batches}
-    topics = {t.id: t for t in s.query(Topic).filter(Topic.id.in_(tids or {0}))}; units = {x.id: x for x in s.query(Unit).filter(Unit.id.in_(uids or {0}))}
-    courses = {c.id: c.name for c in s.query(Course).filter(Course.id.in_({x.course_id for x in units.values()} or {0}))}
+    tids = {x.topic_id for _, _, qm, _ in batches for x in qm.values() if x.topic_id}
+    topics = {t.id: t for t in s.query(Topic).filter(Topic.id.in_(tids or {0}))}
+    uids = {q.unit_id for _, q, _, _ in batches if q.unit_id} | {t.unit_id for t in topics.values() if t.unit_id}
+    units = {x.id: x for x in s.query(Unit).filter(Unit.id.in_(uids or {0}))}
+    cids = {x.course_id for x in units.values()} | {q.course_id for _, q, _, _ in batches if not q.unit_id}
+    courses = {c.id: c.name for c in s.query(Course).filter(Course.id.in_(cids or {0}))}
     return topics, units, courses
 def tally(batches, ctx, staff):
-    """Groups one person's answers by topic; a question with no topic (or whose topic is a draft they can't see, was deleted or moved) counts under its unit."""
+    """Groups one person's answers by topic. A question with no topic (or whose topic is a draft they can't see, was deleted or moved out of the quiz's
+    unit or course) counts under its area label if it has one, else under its unit, else under the course test itself."""
     topics, units, courses = ctx; acc = {}
     for _, q, qm, detail in batches:
-        un = units.get(q.unit_id)
-        for qid, ok in detail:
-            x = qm.get(qid)
+        un = units.get(q.unit_id) if q.unit_id else None; cid = un.course_id if un else (q.course_id if not q.unit_id else None)
+        for d in detail:
+            qid, ok = d[0], d[1]; x = qm.get(qid)
             if not x: continue
             t = topics.get(x.topic_id) if x.topic_id else None
-            if t and (t.unit_id != q.unit_id or (t.published is False and not staff)): t = None
-            key = ("t", t.id) if t else ("u", q.unit_id)
-            a = acc.setdefault(key, {"key": key, "topic_id": t.id if t else None, "unit_id": q.unit_id, "unit": un.name if un else "", "course_id": un.course_id if un else None,
-                                     "course": courses.get(un.course_id, "") if un else "", "title": t.title if t else ((un.name + " · general questions") if un else q.title), "correct": 0, "total": 0})
+            if t and (t.published is False and not staff): t = None
+            if t and (t.unit_id != q.unit_id if q.unit_id else (units.get(t.unit_id) is None or units[t.unit_id].course_id != cid)): t = None
+            tu = units.get(t.unit_id) if t else un
+            if t: key, title = ("t", t.id), t.title
+            elif x.area: key, title = ("a", cid, x.area.strip().lower()), x.area.strip()
+            elif q.unit_id: key, title = ("u", q.unit_id), (un.name + " · general questions") if un else q.title
+            else: key, title = ("q", q.id), q.title + " · general questions"
+            a = acc.setdefault(key, {"key": key, "topic_id": t.id if t else None, "unit_id": tu.id if tu else None, "unit": tu.name if tu else "", "course_id": cid,
+                                     "course": courses.get(cid, ""), "title": title, "area": key[0] == "a", "correct": 0, "total": 0})
             a["correct"] += ok; a["total"] += 1
     for a in acc.values(): a["percent"] = round(100 * a["correct"] / a["total"]); a["status"] = area_status(a["percent"])
     return acc
+def area_summary(areas):  # one plain sentence on what the learner is good at and what to revisit
+    good = [a["title"] for a in sorted(areas, key=lambda a: -a["percent"]) if a["status"] == "strong"][:3]; weak = [a["title"] for a in areas if a["status"] == "needs_study"][:3]
+    if not areas: return ""
+    if good and weak: return f"Good at {', '.join(good)}. Needs another round: {', '.join(weak)}."
+    if good: return f"Good at {', '.join(good)}." + ("" if len(good) == len(areas) else " Keep going on the rest.")
+    if weak: return f"Needs another round: {', '.join(weak)}."
+    return "Getting there in every area. One more round of practice should make them strong."
 def areas_for(batches, s, staff, uid=None):
     ctx = area_context(batches, s); acc = tally(batches, ctx, staff)
     study = {}
@@ -1519,7 +1566,9 @@ def my_insights(u: User = Depends(me), s: Session = Depends(db)):
     courses = [{"course_id": cid, "course": L[0]["course"], "percent": round(100 * sum(a["correct"] for a in L) / sum(a["total"] for a in L)), "areas": L} for cid, L in by.items()]
     return {"quizzes_taken": len(qids), "courses": courses, "strong": sorted([a for a in areas if a["status"] == "strong"], key=lambda a: (-a["percent"], a["title"])),
             "getting_there": [a for a in areas if a["status"] == "getting_there"], "needs_study": [a for a in areas if a["status"] == "needs_study"]}
-def course_quiz_ids(cid, s): return [q.id for q in s.query(Quiz).join(Unit, Unit.id == Quiz.unit_id).filter(Unit.course_id == cid, Quiz.published == True)]  # noqa: E712
+def course_quiz_ids(cid, s):  # published unit quizzes and course tests of a course
+    return [q.id for q in s.query(Quiz).join(Unit, Unit.id == Quiz.unit_id).filter(Unit.course_id == cid, Quiz.published == True)] + \
+           [i for (i,) in s.query(Quiz.id).filter(Quiz.unit_id.is_(None), Quiz.course_id == cid, Quiz.published == True)]  # noqa: E712
 def course_users(c, s):
     sems = {x.id: x for x in s.query(Semester)}; links = defaultdict(list)
     for l in s.query(CourseLink).filter_by(course_id=c.id): links[c.id].append(l.semester_id)
@@ -1529,8 +1578,11 @@ def class_weak_areas(cid: int, u: User = Depends(staff), s: Session = Depends(db
     c = s.get(Course, cid)
     if not c: raise HTTPException(404, "Course not found")
     need_edit(u, cid, s)
-    aud = [x for x in course_users(c, s) if x.active]; batches = latest_batches(s, [x.id for x in aud], course_quiz_ids(cid, s)); ctx = area_context(batches, s)
-    per = defaultdict(list)
+    aud = [x for x in course_users(c, s) if x.active]; batches = latest_batches(s, [x.id for x in aud], course_quiz_ids(cid, s))
+    n, areas = class_areas(batches, s)
+    return {"course": c.name, "students_with_results": n, "areas": areas}
+def class_areas(batches, s):  # every student's areas added up: (students with results, rows weakest first)
+    ctx = area_context(batches, s); per = defaultdict(list)
     for b in batches: per[b[0]].append(b)
     agg = {}
     for uid, bs in per.items():
@@ -1538,12 +1590,17 @@ def class_weak_areas(cid: int, u: User = Depends(staff), s: Session = Depends(db
             g = agg.setdefault(key, {**{k: v for k, v in a.items() if k not in ("key", "status", "percent")}, "correct": 0, "total": 0, "students": 0, "strong": 0, "getting_there": 0, "needs_study": 0})
             g["correct"] += a["correct"]; g["total"] += a["total"]; g["students"] += 1; g[a["status"]] += 1
     rows = sorted(agg.values(), key=lambda g: (round(100 * g["correct"] / g["total"]), g["title"]))
-    return {"course": c.name, "students_with_results": len(per), "areas": [{**g, "percent": round(100 * g["correct"] / g["total"])} for g in rows]}
+    return len(per), [{**g, "percent": round(100 * g["correct"] / g["total"])} for g in rows]
 @app.post("/api/quizzes")
 def new_quiz(b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
-    un = s.get(Unit, b.unit_id)
-    if not un: raise HTTPException(400, "Choose a unit for this quiz")
-    need_edit(u, un.course_id, s); q = Quiz(unit_id=un.id, course_id=un.course_id, **quiz_fields(b)); s.add(q); s.commit(); return {"id": q.id}
+    if b.unit_id:
+        un = s.get(Unit, b.unit_id)
+        if not un: raise HTTPException(400, "Choose a unit for this quiz")
+        need_edit(u, un.course_id, s); q = Quiz(unit_id=un.id, course_id=un.course_id, **quiz_fields(b))
+    else:
+        if not b.course_id or not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course or unit for this quiz")
+        need_edit(u, b.course_id, s); q = Quiz(unit_id=None, course_id=b.course_id, **quiz_fields(b))
+    s.add(q); s.commit(); return {"id": q.id}
 @app.put("/api/quizzes/{qid}")
 def edit_quiz(qid: int, b: QuizIn, u: User = Depends(staff), s: Session = Depends(db)):
     q = quiz_or_404(qid, s); need_edit(u, quiz_course_id(q, s), s)
@@ -1555,17 +1612,11 @@ def delete_quiz(qid: int, u: User = Depends(staff), s: Session = Depends(db)):
 @app.put("/api/quizzes/{qid}/questions")
 def set_questions(qid: int, b: QuestionsIn, u: User = Depends(staff), s: Session = Depends(db)):
     q = quiz_or_404(qid, s); need_edit(u, quiz_course_id(q, s), s)
-    if len(b.questions) > 100: raise HTTPException(400, "A quiz can have up to 100 questions")
-    for i, x in enumerate(b.questions, 1):
-        opts = [o.strip() for o in x.options]
-        if not x.text.strip(): raise HTTPException(400, f"Question {i} has no text")
-        if not 2 <= len(opts) <= 6 or not all(opts): raise HTTPException(400, f"Question {i} needs 2 to 6 answers, none empty")
-        if not 0 <= x.correct < len(opts): raise HTTPException(400, f"Question {i}: mark which answer is correct")
-        if x.topic_id is not None and not s.query(Topic.id).filter(Topic.id == x.topic_id, Topic.unit_id == q.unit_id).first(): raise HTTPException(400, f"Question {i}: pick a topic from this unit")
-    s.query(Question).filter_by(quiz_id=qid).delete()
-    for i, x in enumerate(b.questions):
-        s.add(Question(quiz_id=qid, pos=i, text=x.text.strip(), options=json.dumps([o.strip() for o in x.options]), correct=x.correct, explanation=x.explanation.strip(), topic_id=x.topic_id))
-    s.commit(); return {"ok": True, "count": len(b.questions)}
+    if len(b.questions) > max_questions(q): raise HTTPException(400, f"A quiz can have up to {max_questions(q)} questions")
+    rows = [clean_question(q, x, i, s) for i, x in enumerate(b.questions, 1)]
+    s.query(Question).filter_by(quiz_id=qid).delete()  # past attempts keep their scores; their per-question review covers the questions that still match
+    for i, v in enumerate(rows): s.add(Question(quiz_id=qid, pos=i, **v))
+    s.commit(); return {"ok": True, "count": len(rows)}
 # ---- shared question bank ----
 def q_sig(text, opts, correct): return hashlib.sha1(json.dumps([text.strip().lower(), [o.strip().lower() for o in opts], correct]).encode()).hexdigest()
 def check_question(x, label="Question"):
@@ -1631,8 +1682,8 @@ def questions_from_bank(qid: int, b: FromBank, u: User = Depends(staff), s: Sess
     ids = list(dict.fromkeys(b.ids))
     if not ids: raise HTTPException(400, "Choose at least one question")
     have = s.query(Question).filter_by(quiz_id=qid).count()
-    if have + len(ids) > 100: raise HTTPException(400, "A quiz can have up to 100 questions")
-    if b.topic_id is not None and not s.query(Topic.id).filter(Topic.id == b.topic_id, Topic.unit_id == q.unit_id).first(): raise HTTPException(400, "Pick a topic from this unit")
+    if have + len(ids) > max_questions(q): raise HTTPException(400, f"A quiz can have up to {max_questions(q)} questions")
+    if b.topic_id is not None and not topic_fits(q, b.topic_id, s): raise HTTPException(400, f"Pick a topic from this {'unit' if q.unit_id else 'course'}")
     rows = {x.id: x for x in s.query(BankQuestion).filter(BankQuestion.id.in_(ids))}
     if len(rows) != len(ids): raise HTTPException(404, "Some of those questions are no longer in the bank")
     for i, bid in enumerate(ids):
@@ -1646,11 +1697,20 @@ def get_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)):
         if not q.published: raise HTTPException(404, "Quiz not found")
         check_course_access(u, cid, s); quiz_unit_open(q, s)
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
-    mine = s.query(Attempt).filter_by(quiz_id=qid, user_id=u.id).all()
-    return {"id": q.id, "title": q.title, "pass_percent": q.pass_percent, "published": bool(q.published), "unit_id": q.unit_id, "can_edit": staff_view,
-            "questions": [{"id": x.id, "text": x.text, "options": json.loads(x.options), **({"correct": x.correct, "explanation": x.explanation, "topic_id": x.topic_id} if staff_view else {})} for x in qs],
-            **({"topics": [{"id": t.id, "title": t.title} for t in s.query(Topic).filter_by(unit_id=q.unit_id).order_by(*ORDER[Topic])]} if staff_view else {}),
-            "attempts": len(mine), "best": max([a.percent for a in mine], default=None)}
+    mine = s.query(Attempt).filter_by(quiz_id=qid, user_id=u.id).order_by(Attempt.id).all()
+    co = s.get(Course, cid) if cid else None
+    return {"id": q.id, "title": q.title, "pass_percent": q.pass_percent, "published": bool(q.published), "reveal": bool(q.reveal), "unit_id": q.unit_id, "course_id": cid,
+            "course": co.name if co else "", "kind": "unit" if q.unit_id else "course", "can_edit": staff_view,
+            "questions": [{**question_view(x), **({"correct": x.correct, "explanation": x.explanation, "topic_id": x.topic_id, "area": x.area or ""} if staff_view else {})} for x in qs],
+            **({"topics": quiz_topics(q, s)} if staff_view else {}),
+            "attempts": len(mine), "best": max([a.percent for a in mine], default=None), "latest": mine[-1].percent if mine else None, "latest_id": mine[-1].id if mine else None}
+def question_view(x):  # what anyone taking the quiz may see of a question
+    return {"id": x.id, "text": x.text, "options": json.loads(x.options), "image": x.image or "", "option_images": [v or "" for v in json.loads(x.option_images)] if x.option_images else []}
+def quiz_topics(q, s):  # the topics a question of this quiz may be tied to
+    if q.unit_id: return [{"id": t.id, "title": t.title} for t in s.query(Topic).filter_by(unit_id=q.unit_id).order_by(*ORDER[Topic])]
+    units = s.query(Unit).filter_by(course_id=q.course_id).order_by(*ORDER[Unit]).all(); by = defaultdict(list)
+    for t in s.query(Topic).filter(Topic.unit_id.in_([x.id for x in units] or [0])).order_by(*ORDER[Topic]): by[t.unit_id].append(t)
+    return [{"id": t.id, "title": t.title, "unit": un.name} for un in units for t in by[un.id]]
 @app.post("/api/quizzes/{qid}/attempt")
 def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Depends(db)):
     q = quiz_or_404(qid, s); cid = quiz_course_id(q, s)
@@ -1660,13 +1720,228 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     if not qs: raise HTTPException(400, "This quiz has no questions yet")
     if len(b.answers) != len(qs): raise HTTPException(400, "Answer every question or leave it blank")
-    key = u.role == "admin" or can_edit(u, cid, s)  # only people who can edit the quiz get the answer key back
+    if any(a is not None and not 0 <= a < len(json.loads(x.options)) for a, x in zip(b.answers, qs)): raise HTTPException(400, "One of the answers is not a choice of its question")
+    key = u.role == "admin" or can_edit(u, cid, s) or bool(q.reveal)  # the answer key goes back only to people who can edit the quiz, or to everyone when the quiz reveals it
     results = [{"chosen": a, "ok": a == x.correct, **({"correct": x.correct, "explanation": x.explanation} if key else {})} for a, x in zip(b.answers, qs)]
     score = sum(r["ok"] for r in results); pct = round(100 * score / len(qs))
-    detail = [[x.id, int(r["ok"])] for x, r in zip(qs, results)]
-    s.add(Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct, detail=json.dumps(detail))); s.commit()
+    detail = [[x.id, int(r["ok"]), a] for x, r, a in zip(qs, results, b.answers)]
+    at = Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct, detail=json.dumps(detail)); s.add(at); s.commit()
     areas = areas_for([(u.id, q, {x.id: x for x in qs}, detail)], s, u.role != "student", u.id)
-    return {"score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "results": results, "areas": areas}
+    return {"attempt_id": at.id, "score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "reveal": key, "results": results, "areas": areas,
+            "summary": area_summary(areas)}
+
+# ---- MCQ tests from a CSV: parse and preview, then the questions are saved with PUT /api/quizzes/{id}/questions ----
+class QuizCsvIn(BaseModel): csv: str; unit_id: int = 0; course_id: int = 0
+LETTERS = "abcdef"
+CSV_ALIASES = {"question": ("question", "question_text", "q"), "correct": ("correct", "answer", "correct_answer", "key"), "explanation": ("explanation", "solution", "reason"),
+               "topic": ("topic",), "area": ("area", "skill", "concept", "tag", "subject_area"), "unit": ("unit",), "image": ("question_image", "image", "q_image")}
+for _l in LETTERS:
+    CSV_ALIASES["opt_" + _l] = (_l, "option_" + _l, "answer_" + _l, "choice_" + _l, "opt_" + _l)
+    CSV_ALIASES["img_" + _l] = (_l + "_image", "option_" + _l + "_image", "image_" + _l, "choice_" + _l + "_image", "answer_" + _l + "_image")
+def head_key(h): return re.sub(r"[^a-z0-9]+", "_", (h or "").strip().lower()).strip("_")
+def image_ref(v):  # a CSV image cell -> (url, file name): an uploaded url is used as it is, anything else is a file name to upload in the preview
+    v = (v or "").strip()
+    if not v: return "", ""
+    if IMG_URL.fullmatch(v): return v, ""
+    return "", re.split(r"[\\/]", v)[-1][:200]
+def read_csv_rows(text):
+    text = text.lstrip("\ufeff")
+    if len(text) > 2_000_000: raise HTTPException(400, "The file is too large. Keep it under 2 MB.")
+    try: dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+    except csv.Error: dialect = csv.excel
+    return [r for r in csv.reader(io.StringIO(text), dialect) if any((c or "").strip() for c in r)]
+@app.post("/api/quizzes/parse-csv")
+def parse_quiz_csv(b: QuizCsvIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """Reads an MCQ CSV and returns the questions for a preview. Nothing is saved. Image cells name files that are uploaded in the preview."""
+    if b.unit_id:
+        un = s.get(Unit, b.unit_id)
+        if not un: raise HTTPException(400, "Choose a unit")
+        cid, topics = un.course_id, [(t, un) for t in s.query(Topic).filter_by(unit_id=un.id)]
+    else:
+        if not b.course_id or not s.get(Course, b.course_id): raise HTTPException(400, "Choose a course")
+        cid = b.course_id; units = {x.id: x for x in s.query(Unit).filter_by(course_id=cid)}
+        topics = [(t, units[t.unit_id]) for t in s.query(Topic).filter(Topic.unit_id.in_(list(units) or [0]))]
+    need_edit(u, cid, s)
+    rows = read_csv_rows(b.csv)
+    if not rows: raise HTTPException(400, "The file is empty")
+    head = [head_key(h) for h in rows[0]]; col = {}
+    for name, keys in CSV_ALIASES.items():
+        hit = next((i for i, h in enumerate(head) if h in keys), None)
+        if hit is not None: col[name] = hit
+    opt_cols = [l for l in LETTERS if "opt_" + l in col]
+    if "question" not in col or len(opt_cols) < 2 or "correct" not in col:
+        raise HTTPException(400, "The first row must name the columns: question, a, b, c, d, correct. Optional: explanation, topic, area, question_image, a_image to f_image. Download the template to see the format.")
+    top = 100 if b.unit_id else MAX_QUESTIONS
+    if len(rows) - 1 > top: raise HTTPException(400, f"Too many questions. A {'unit quiz' if b.unit_id else 'course test'} can have up to {top}.")
+    cell = lambda r, k: (r[col[k]] if k in col and col[k] < len(r) else "").strip()
+    by_title = defaultdict(list)
+    for t, un in topics: by_title[t.title.strip().lower()].append((t, un))
+    out, errors, warnings = [], [], []
+    for n, r in enumerate(rows[1:], start=2):
+        text, (qimg, qname) = cell(r, "question"), image_ref(cell(r, "image"))
+        opts = [(cell(r, "opt_" + l), *image_ref(cell(r, "img_" + l))) for l in opt_cols]
+        while opts and not any(opts[-1]): opts.pop()  # answers left blank at the end are not there
+        if not text and not (qimg or qname): errors.append({"row": n, "error": "No question text"}); continue
+        if len(opts) < 2: errors.append({"row": n, "error": "Needs at least two answers"}); continue
+        gap = next((LETTERS[i].upper() for i, o in enumerate(opts) if not any(o)), None)
+        if gap: errors.append({"row": n, "error": f"Answer {gap} is empty. Give it text or an image, or move the later answers up"}); continue
+        raw = cell(r, "correct"); k = -1
+        if re.fullmatch(r"[A-Fa-f]", raw): k = LETTERS.index(raw.lower())
+        elif re.fullmatch(r"[1-6]", raw): k = int(raw) - 1
+        elif raw: k = next((i for i, o in enumerate(opts) if o[0] and o[0].lower() == raw.lower()), -1)
+        if re.fullmatch(r"[A-Fa-f]\s*[,;/&]\s*[A-Fa-f].*", raw): errors.append({"row": n, "error": "Only one correct answer is allowed"}); continue
+        if not 0 <= k < len(opts): errors.append({"row": n, "error": f"\"correct\" must be a letter from A to {LETTERS[len(opts) - 1].upper()}, its number, or the exact answer text"}); continue
+        tname, uname, area, tid, ttitle = cell(r, "topic"), cell(r, "unit").lower(), cell(r, "area")[:150], None, ""
+        if tname:
+            hits = [x for x in by_title.get(tname.lower(), []) if not uname or x[1].name.strip().lower() == uname]
+            if len(hits) > 1: warnings.append(f"Row {n}: more than one topic is called \"{tname}\". Add a unit column to pick one. The first was used.")
+            if hits: tid, ttitle = hits[0][0].id, hits[0][0].title
+            else:
+                warnings.append(f"Row {n}: no topic called \"{tname}\" in this {'unit' if b.unit_id else 'course'}, so it is grouped as the area \"{tname[:150]}\"")
+                area = area or tname[:150]
+        out.append({"row": n, "text": text, "options": [o[0] for o in opts], "correct": k, "explanation": cell(r, "explanation"), "topic_id": tid, "topic": ttitle, "area": area,
+                    "image": qimg, "image_name": qname, "option_images": [o[1] for o in opts], "option_image_names": [o[2] for o in opts]})
+    names = sorted({x["image_name"] for x in out if x["image_name"]} | {m for x in out for m in x["option_image_names"] if m}, key=str.lower)
+    return {"questions": out, "count": len(out), "errors": errors[:200], "error_count": len(errors), "warnings": warnings[:200], "images_needed": names}
+
+# ---- results: final scores with a drill-down from the class to one student's answers ----
+def quiz_for_staff(qid, u, s):
+    q = quiz_or_404(qid, s); cid = quiz_course_id(q, s); need_edit(u, cid, s)
+    return q, cid
+def students_in(cid, s):  # active students who have the course in their list
+    c = s.get(Course, cid) if cid else None
+    return [x for x in course_users(c, s) if x.active] if c else []
+def attempt_row(a, q): return {"id": a.id, "at": iso(a.at), "score": a.score, "total": a.total, "percent": a.percent, "passed": a.percent >= q.pass_percent}
+def iso(t): return t.isoformat() + "Z" if t else None
+def stats(vals):
+    if not vals: return {"average": None, "median": None, "highest": None, "lowest": None}
+    v = sorted(vals); m = len(v) // 2
+    return {"average": round(sum(v) / len(v)), "median": v[m] if len(v) % 2 else round((v[m - 1] + v[m]) / 2), "highest": v[-1], "lowest": v[0]}
+@app.get("/api/quizzes/{qid}/results")
+def quiz_results(qid: int, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
+    """One test for the class: summary, every student's best and latest score with strengths, each question's answers, and the class's areas.
+    The final score is a student's best attempt; strengths and question analysis use each student's latest attempt, so a retake replaces the earlier result."""
+    q, cid = quiz_for_staff(qid, u, s)
+    qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all(); qm = {x.id: x for x in qs}
+    atts = s.query(Attempt).filter_by(quiz_id=qid).order_by(Attempt.id).all()
+    people = {x.id: x for x in s.query(User).filter(User.id.in_({a.user_id for a in atts} or {0}), User.role == "student")}
+    by = defaultdict(list)
+    for a in atts:
+        if a.user_id in people: by[a.user_id].append(a)
+    aud = students_in(cid, s); ctx_batches = [(uid, q, qm, json.loads(L[-1].detail)) for uid, L in by.items() if L[-1].detail]
+    ctx = area_context(ctx_batches, s); mine = {b[0]: tally([b], ctx, True) for b in ctx_batches}
+    students = []
+    for uid, L in by.items():
+        best = max(L, key=lambda a: (a.percent, a.id)); areas = mine.get(uid, {}).values()
+        students.append({"user_id": uid, "name": people[uid].name, "email": people[uid].email, "attempts": len(L), "best": best.percent, "best_id": best.id, "latest": L[-1].percent,
+                         "latest_id": L[-1].id, "passed": best.percent >= q.pass_percent, "last_at": iso(L[-1].at),
+                         "strong": [a["title"] for a in areas if a["status"] == "strong"], "needs_study": [a["title"] for a in areas if a["status"] == "needs_study"]})
+    students.sort(key=lambda r: (-r["best"], r["name"].lower()))
+    not_taken = sorted([x for x in aud if x.id not in by], key=lambda x: x.name.lower())
+    if format == "csv":
+        return csv_response(f"results-{q.title}.csv".replace(" ", "_"), ["Name", "Email", "Attempts", "Final score % (best)", "Latest %", "Passed", "Last attempt", "Strong areas", "Needs another round of study"],
+                            [[r["name"], r["email"], r["attempts"], r["best"], r["latest"], "yes" if r["passed"] else "no", r["last_at"] or "", "; ".join(r["strong"]), "; ".join(r["needs_study"])] for r in students] +
+                            [[x.name, x.email, 0, "", "", "not taken", "", "", ""] for x in not_taken])
+    best = [r["best"] for r in students]; dist = [0] * 10
+    for v in best: dist[min(v // 10, 9)] += 1
+    qstat = {x.id: {"answered": 0, "blank": 0, "correct": 0, "total": 0, "picks": [0] * len(json.loads(x.options)), "picks_known": 0} for x in qs}
+    for _, _, _, detail in ctx_batches:
+        for d in detail:
+            st = qstat.get(d[0])
+            if not st: continue
+            st["total"] += 1; st["correct"] += d[1]
+            if len(d) > 2:
+                st["picks_known"] += 1
+                if d[2] is None: st["blank"] += 1
+                elif 0 <= d[2] < len(st["picks"]): st["picks"][d[2]] += 1; st["answered"] += 1
+    topics = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({x.topic_id for x in qs if x.topic_id} or {0}))}
+    questions = [{**question_view(x), "pos": i + 1, "correct": x.correct, "explanation": x.explanation or "", "area": topics.get(x.topic_id) or x.area or "",
+                  **qstat[x.id], "percent": round(100 * qstat[x.id]["correct"] / qstat[x.id]["total"]) if qstat[x.id]["total"] else None} for i, x in enumerate(qs)]
+    n, areas = class_areas(ctx_batches, s)
+    return {"id": q.id, "title": q.title, "course_id": cid, "pass_percent": q.pass_percent, "published": bool(q.published), "questions_count": len(qs),
+            "summary": {"students": len(set(x.id for x in aud) | set(by)), "took": len(by), "not_taken": len(not_taken), "attempts": sum(len(L) for L in by.values()),
+                        "passed": sum(r["passed"] for r in students), "pass_rate": round(100 * sum(r["passed"] for r in students) / len(students)) if students else None,
+                        **stats(best), "average_latest": round(sum(r["latest"] for r in students) / len(students)) if students else None,
+                        "distribution": [{"label": f"{i * 10}–{i * 10 + 9 if i < 9 else 100}", "count": c} for i, c in enumerate(dist)]},
+            "students": students, "not_taken": [{"user_id": x.id, "name": x.name, "email": x.email} for x in not_taken[:200]],
+            "questions": questions, "areas": areas, "students_with_results": n}
+@app.get("/api/quizzes/{qid}/attempts")
+def quiz_attempts(qid: int, user_id: int = 0, u: User = Depends(me), s: Session = Depends(db)):  # one person's attempts, newest first: your own, or a student's for staff who can edit the quiz
+    q = quiz_or_404(qid, s); who = user_id or u.id
+    if who != u.id: quiz_for_staff(qid, u, s)
+    p = s.get(User, who)
+    return {"quiz": q.title, "user": p.name if p else "", "pass_percent": q.pass_percent,
+            "items": [attempt_row(a, q) for a in s.query(Attempt).filter_by(quiz_id=qid, user_id=who).order_by(Attempt.id.desc()).limit(100)]}
+@app.get("/api/attempts/{aid}")
+def attempt_detail(aid: int, u: User = Depends(me), s: Session = Depends(db)):
+    """Question-by-question review of one attempt. The answer key is shown to staff who can edit the quiz, or to the student when the quiz reveals it."""
+    a = s.get(Attempt, aid)
+    if not a: raise HTTPException(404, "Attempt not found")
+    q = quiz_or_404(a.quiz_id, s); cid = quiz_course_id(q, s); staff_view = u.role == "admin" or can_edit(u, cid, s)
+    if a.user_id != u.id and not staff_view: raise HTTPException(403, "You can only see your own attempts")
+    key = staff_view or bool(q.reveal)
+    qm = {x.id: x for x in s.query(Question).filter_by(quiz_id=q.id)}; detail = json.loads(a.detail) if a.detail else []
+    topics = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({x.topic_id for x in qm.values() if x.topic_id} or {0}))}
+    items, gone = [], 0
+    for d in detail:
+        x = qm.get(d[0])
+        if not x: gone += 1; continue
+        items.append({**question_view(x), "ok": bool(d[1]), "chosen": d[2] if len(d) > 2 else None, "chosen_known": len(d) > 2, "area": topics.get(x.topic_id) or x.area or "",
+                      **({"correct": x.correct, "explanation": x.explanation or ""} if key else {})})
+    areas = areas_for([(a.user_id, q, qm, detail)], s, u.role != "student", a.user_id) if detail else []
+    p = s.get(User, a.user_id); co = s.get(Course, cid) if cid else None
+    return {**attempt_row(a, q), "quiz_id": q.id, "quiz": q.title, "course": co.name if co else "", "user": p.name if p else "", "user_id": a.user_id, "pass_percent": q.pass_percent,
+            "reveal": key, "questions": items, "changed": gone, "no_detail": not detail, "areas": areas, "summary": area_summary(areas)}
+def course_tests(cid, s, published_only=True):  # course tests first, then unit quizzes in unit order
+    units = s.query(Unit).filter_by(course_id=cid).order_by(*ORDER[Unit]).all(); un = {x.id: x for x in units}; rank = {x.id: i for i, x in enumerate(units)}
+    qs = s.query(Quiz).filter(or_(and_(Quiz.unit_id.is_(None), Quiz.course_id == cid), Quiz.unit_id.in_(list(un) or [0])))
+    if published_only: qs = qs.filter(Quiz.published == True)  # noqa: E712
+    return sorted([(q, un.get(q.unit_id)) for q in qs], key=lambda x: (x[1] is not None, rank.get(x[0].unit_id, 0), x[0].id))
+@app.get("/api/courses/{cid}/gradebook")
+def gradebook(cid: int, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
+    """Every student's final (best) score in every published test and quiz of a course. The final course score is the average over the tests a student took."""
+    c = s.get(Course, cid)
+    if not c: raise HTTPException(404, "Course not found")
+    need_edit(u, cid, s)
+    tests = course_tests(cid, s); tids = [q.id for q, _ in tests]; aud = students_in(cid, s)
+    best = defaultdict(dict)
+    for qid, uid, b in s.query(Attempt.quiz_id, Attempt.user_id, func.max(Attempt.percent)).filter(Attempt.quiz_id.in_(tids or [0])).group_by(Attempt.quiz_id, Attempt.user_id): best[uid][qid] = b
+    extra = [x for x in s.query(User).filter(User.id.in_(set(best) - {x.id for x in aud} or {0}), User.role == "student")]  # took a test, no longer in the course
+    rows = []
+    for x in sorted(aud + extra, key=lambda x: x.name.lower()):
+        got = best.get(x.id, {}); vals = [got[t] for t in tids if t in got]
+        rows.append({"user_id": x.id, "name": x.name, "email": x.email, "scores": [got.get(t) for t in tids], "taken": len(vals), "final": round(sum(vals) / len(vals)) if vals else None,
+                     "passed": sum(got[q.id] >= q.pass_percent for q, _ in tests if q.id in got)})
+    cols = [{"id": q.id, "title": q.title, "unit": un.name if un else "", "kind": "unit" if un else "course", "pass_percent": q.pass_percent,
+             **stats([r["scores"][i] for r in rows if r["scores"][i] is not None]), "took": sum(r["scores"][i] is not None for r in rows)} for i, (q, un) in enumerate(tests)]
+    if format == "csv":
+        return csv_response(f"gradebook-{c.name}.csv".replace(" ", "_"), ["Name", "Email"] + [t["title"] for t in cols] + ["Tests taken", "Final score % (average of tests taken)"],
+                            [[r["name"], r["email"]] + ["" if v is None else v for v in r["scores"]] + [r["taken"], "" if r["final"] is None else r["final"]] for r in rows])
+    return {"course": c.name, "tests": cols, "students": rows, "summary": stats([r["final"] for r in rows if r["final"] is not None])}
+@app.get("/api/me/scores")
+def my_scores(u: User = Depends(me), s: Session = Depends(db)):
+    """Your final score in each course you can see, with each test's best and latest result for the drill-down."""
+    mine = defaultdict(list)
+    for a in s.query(Attempt).filter_by(user_id=u.id).order_by(Attempt.id): mine[a.quiz_id].append(a)
+    out, seen = [], set()
+    for p in tree(u, s):
+        for sm in p["semesters"]:
+            for c in sm["courses"]:
+                if c["id"] in seen or (c["archived"] and u.role == "student"): continue
+                seen.add(c["id"])
+                found = [(q, "") for q in c.get("tests", [])] + [(q, un["name"]) for un in c["units"] for q in un["quizzes"]]
+                tests = []
+                for q, unit in found:
+                    if not q["published"] or not q["questions"]: continue
+                    L = mine.get(q["id"], [])
+                    tests.append({"id": q["id"], "title": q["title"], "unit": unit, "kind": "unit" if unit else "course", "questions": q["questions"], "pass_percent": q["pass_percent"],
+                                  "attempts": len(L), "best": max([a.percent for a in L], default=None), "latest": L[-1].percent if L else None, "latest_id": L[-1].id if L else None,
+                                  "passed": bool(L) and max(a.percent for a in L) >= q["pass_percent"], "nav": [p["id"], sm["id"], c["id"]]})
+                if not tests: continue
+                done = [t["best"] for t in tests if t["best"] is not None]
+                out.append({"course_id": c["id"], "course": c["name"], "program": p["name"], "term": sm["name"], "tests": tests, "taken": len(done),
+                            "final": round(sum(done) / len(done)) if done else None, "passed": sum(t["passed"] for t in tests)})
+    return {"courses": out}
 
 def drop_topics(s, cond):  # topics with their reading progress, bookmarks and saved AI answers (SQLite would not cascade them)
     ids = [i for (i,) in s.query(Topic.id).filter(cond)]
@@ -1690,7 +1965,7 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
     if kind in ("programs", "semesters", "courses"): resync_parent_copies(s.connection())
     def drop_course(c):  # children are found through their real parents, never through the copied course/program ids
         uids = [i for (i,) in s.query(Unit.id).filter_by(course_id=c.id)] or [0]
-        drop_quizzes(s, Quiz.unit_id.in_(uids)); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete()
+        drop_quizzes(s, or_(Quiz.unit_id.in_(uids), and_(Quiz.unit_id.is_(None), Quiz.course_id == c.id))); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete()
         drop_topics(s, or_(Topic.unit_id.in_(uids), and_(Topic.unit_id.is_(None), Topic.course_id == c.id)))
         s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
@@ -1882,6 +2157,12 @@ def my_today(u: User = Depends(me), s: Session = Depends(db)):
         if key not in cand or cand[key][0] < prio: cand[key] = (prio, item)
     for p, sm, c in courses:
         first_new = None
+        for q in c.get("tests", []):  # course tests, like unit quizzes
+            if not q["published"] or not q["questions"]: continue
+            base = {"course": c["name"], "unit": "", "nav": [p["id"], sm["id"], c["id"]]}
+            if q["best"] is not None: bests.append(q["best"])
+            if q["best"] is None: offer(40, ("q", q["id"]), {**base, "kind": "quiz_new", "title": q["title"], "reason": f"Test not tried yet · {q['questions']} questions", "quiz_id": q["id"]})
+            elif q["best"] < q["pass_percent"]: offer(45, ("q", q["id"]), {**base, "kind": "quiz_retake", "title": q["title"], "reason": f"Best so far {q['best']}%, pass mark {q['pass_percent']}%", "quiz_id": q["id"]})
         for un in c["units"]:
             nav = [p["id"], sm["id"], c["id"], un["id"]]; base = {"course": c["name"], "unit": un["name"], "nav": nav}
             for q in un["quizzes"]:
