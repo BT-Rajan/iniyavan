@@ -671,6 +671,10 @@ def progress_row(s, uid, tid):  # the student's row for a topic, made at most on
 def check_program(pid, s):
     if pid is not None and not s.get(Program, pid): raise HTTPException(400, "Choose a valid program")
     return pid
+def fit_sem(s, pid, sem):  # a student's number must exist in their program: up to 8 for semesters and years, 12 for grades
+    p = s.get(Program, pid) if pid and sem else None
+    if p and sem > term_max(p): raise HTTPException(400, f"{p.name} goes up to {term_label(p).lower()} {term_max(p)}")
+    return sem
 class NewUser(BaseModel):
     name: str; email: str; password: str; role: str = "student"; active: bool = True; program_id: int | None = None; semester: int | None = None
 class UserPatch(BaseModel):
@@ -737,7 +741,7 @@ def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
     if b.role not in ROLES: raise HTTPException(400, "Role must be student, faculty or admin")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
-    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=to_sem(b.semester), must_change=b.role != "admin")); s.commit(); return {"ok": True}
+    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=fit_sem(s, b.program_id, to_sem(b.semester)), must_change=b.role != "admin")); s.commit(); return {"ok": True}
 @app.patch("/api/admin/users/{uid}")
 def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -759,6 +763,7 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
     sent = b.dict(exclude_unset=True)
     if "program_id" in sent: u.program_id = check_program(b.program_id, s)
     if "semester" in sent: u.semester = to_sem(b.semester)
+    if "program_id" in sent or "semester" in sent: fit_sem(s, u.program_id, u.semester)
     if b.password:
         if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
         u.pw = hp(b.password); u.must_change = u.id != a.id
@@ -778,7 +783,7 @@ def bulk_users(b: BulkIn, a: User = Depends(admin), s: Session = Depends(db)):
     prog = sem = None
     if b.action == "set_placement":
         if b.program_id is None: raise HTTPException(400, "Choose a program")
-        prog = check_program(b.program_id, s); sem = to_sem(b.semester)
+        prog = check_program(b.program_id, s); sem = fit_sem(s, prog, to_sem(b.semester))
     users = {u.id: u for u in s.query(User).filter(User.id.in_(ids))}
     changed, skipped, creds = 0, [], []
     for i in ids:
@@ -830,7 +835,10 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
         if v.get("program") and not prog: bad("Unknown program '" + v["program"][:40] + "'. Names must match the Programs tab"); continue
         try: sem = to_sem(v.get("semester"))
         except HTTPException: bad(f"Semester, year or grade must be a number from 1 to {TOP_TERM}"); continue
-        seen.add(e); u = existing.get(e)
+        u = existing.get(e)
+        try: fit_sem(s, prog.id if prog else u.program_id if u else None, sem or (u.semester if u and prog else None))
+        except HTTPException as x: bad(x.detail); continue
+        seen.add(e)
         if u:
             if u.id == a.id and role and role != u.role: bad("You can't change your own role"); continue
             if v.get("name"): u.name = name

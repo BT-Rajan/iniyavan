@@ -70,3 +70,15 @@ def test_csv_import_makes_a_grade_program_and_reads_grade_numbers(env):
     env.csv("program,semester,course,unit,topic,content\nSchool,Grade 10,Maths,U1,Algebra,a\nSchool,Grade XII,Physics,U1,Motion,m\n")
     with Session_() as s: got = {p.name: p.pattern for p in s.query(Program)}; n = {x.name: x.semester_no for x in s.query(Semester)}
     assert got["School"] == "grade" and n["Grade 10"] == 10 and n["Grade XII"] == 12
+
+def test_a_students_number_must_exist_in_their_program(env):
+    be = make(env, name="B.E. X").json()["id"]; sch = make(env, name="School X", pattern="grade").json()["id"]
+    add = lambda e, p, n: env.c.post("/api/admin/users", headers=env.admin, json={"name": "S", "email": e, "password": "password1", "program_id": p, "semester": n})
+    r = add("a@x.com", be, 12); assert r.status_code == 400 and "semester 8" in r.json()["detail"]
+    assert add("b@x.com", sch, 12).status_code == 200
+    uid = next(u["id"] for u in env.c.get("/api/admin/users?q=b@x.com", headers=env.admin).json()["items"])
+    assert env.c.patch(f"/api/admin/users/{uid}", headers=env.admin, json={"program_id": be}).status_code == 400  # grade 12 does not fit a semester program
+    assert env.c.patch(f"/api/admin/users/{uid}", headers=env.admin, json={"program_id": be, "semester": 3}).status_code == 200
+    assert env.c.post("/api/admin/users/bulk", headers=env.admin, json={"ids": [uid], "action": "set_placement", "program_id": be, "semester": 9}).status_code == 400
+    r = env.c.post("/api/admin/users/import", headers=env.admin, json={"csv": "name,email,program,semester\nC,c@x.com,B.E. X,10\nD,d@x.com,School X,10\n", "dry_run": True}).json()
+    assert r["created"] == 1 and r["errors"][0]["row"] == 2
