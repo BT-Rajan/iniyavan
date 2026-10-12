@@ -633,7 +633,7 @@ Ravi S,ravi@example.com,Welcome#2026,student,B.E. Mechanical Engineering,1
 const TERM_MAX={Grade:12},maxOf=term=>TERM_MAX[term]||8,upTo=n=>Array.from({length:n},(_,i)=>i+1)
 const termOf=(progs,id)=>progs.find(p=>String(p.id)===String(id))?.term||'Semester',semsOf=(progs,id)=>upTo(id?maxOf(termOf(progs,id)):Math.max(8,...progs.map(p=>maxOf(p.term))))
 const PATTERN={semester:['Semesters','Semester',8,'Semester pattern, for example B.E., B.Tech or M.E. Students move up one semester at a time.'],
-  year:['Years','Year',4,'Annual pattern, for example M.B.B.S, B.Sc or law degrees. Students move up one year at a time.'],
+  year:['Years','Year',4,'Annual pattern, for example M.B.B.S, B.Sc or law degrees, up to 8 years. For a school, choose School grades. Students move up one year at a time.'],
   grade:['School grades','Grade',12,'School pattern, Grade 1 to Grade 12. Students move up one grade at a time.']}
 
 const BULK_TEXT={disable:['Disable these accounts?','They can no longer sign in. Their progress and quiz results are kept, and you can enable them again.','Disable'],
@@ -833,7 +833,7 @@ function ProgramSheet({p,close,done,toast}){
     <p className="known" style={{marginTop:6}}>{PATTERN[pat][3]}</p>
     {isNew?<><label htmlFor="nt">How many {lab.toLowerCase()}s?</label><select id="nt" value={terms} onChange={e=>{setTerms(+e.target.value);setTouched(true)}}>{[0,...upTo(maxOf(lab))].map(n=><option key={n} value={n}>{n===0?'None yet, I will add them myself':n}</option>)}</select>
       <p className="known" style={{marginTop:6}}>{terms?`${lab} 1${terms>1?` to ${lab} ${terms}`:''} ${terms>1?'are':'is'} created for you, so you can go straight to adding courses.`:'You can add them one by one later.'}</p></>
-      :p.pattern&&pat!==p.pattern&&<p className="known" style={{marginTop:6}}>Terms still named “{PATTERN[p.pattern]?.[1]||'Semester'} n” are renamed to “{lab} n”. Terms you named yourself keep their names.</p>}
+      :p.pattern&&pat!==p.pattern&&<p className="known" style={{marginTop:6}}>Terms still named “{PATTERN[p.pattern]?.[1]||'Semester'} n” are renamed to “{lab} n”. Terms you named yourself keep their names.{pat==='grade'&&' Any of Grade 1 to Grade 12 the program does not have yet are added.'}</p>}
     <button className="btn" disabled={busy||!name.trim()} onClick={save}>{isNew?'Add program':'Save changes'}</button></Sheet>}
 
 function Branding({toast,onSaved}){

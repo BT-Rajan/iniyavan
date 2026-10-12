@@ -82,3 +82,10 @@ def test_a_students_number_must_exist_in_their_program(env):
     assert env.c.post("/api/admin/users/bulk", headers=env.admin, json={"ids": [uid], "action": "set_placement", "program_id": be, "semester": 9}).status_code == 400
     r = env.c.post("/api/admin/users/import", headers=env.admin, json={"csv": "name,email,program,semester\nC,c@x.com,B.E. X,10\nD,d@x.com,School X,10\n", "dry_run": True}).json()
     assert r["created"] == 1 and r["errors"][0]["row"] == 2
+
+def test_switching_a_program_to_grades_fills_in_grade_1_to_12(env):
+    p = make(env, name="School Y", pattern="year", terms=8).json()["id"]
+    assert env.c.put(f"/api/programs/{p}", headers=env.admin, json={"name": "School Y", "pattern": "grade"}).status_code == 200
+    assert terms(env, p) == [(i, f"Grade {i}") for i in range(1, 13)]
+    e = make(env, name="Empty Y", pattern="year", terms=0).json()["id"]  # a program the admin is setting up by hand is left empty
+    env.c.put(f"/api/programs/{e}", headers=env.admin, json={"name": "Empty Y", "pattern": "grade"}); assert terms(env, e) == []

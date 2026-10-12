@@ -1330,7 +1330,7 @@ def new_topic(b: TopicIn, u: User = Depends(staff), s: Session = Depends(db)):
     t = Topic(**{**f, "published": b.published, "position": next_pos(s, Topic, unit_id=b.unit_id)}); t.created_by = u.id; s.add(t); s.flush()
     record_version(s, t, None, u.id, "Created"); s.commit(); return {"id": t.id}
 @app.put("/api/programs/{rid}")
-def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = Depends(db)):
+def edit_program(rid: int, b: ProgramIn, a: User = Depends(admin), s: Session = Depends(db)):
     p = s.get(Program, rid)
     if not p: raise HTTPException(404, "Not found")
     vals = {"name": program_name(b.name, s, rid)}
@@ -1343,6 +1343,10 @@ def edit_program(rid: int, b: ProgramIn, _: User = Depends(admin), s: Session = 
             for x in terms:
                 if re.fullmatch(r"(Semester|Year|Grade) \d+", x.name or ""): x.name = f"{PATTERNS[pat]} {x.semester_no}" if x.semester_no else x.name
             vals["pattern"] = pat
+            if pat == "grade" and terms:  # a school runs Grade 1 to 12: fill in the grades it does not have yet
+                have = {x.semester_no for x in terms}
+                for i in range(1, MAX_TERMS[pat] + 1):
+                    if i not in have: s.add(Semester(name=f"Grade {i}", program_id=rid, semester_no=i, created_by=a.id))
     return update(p, vals, s)
 @app.put("/api/semesters/{rid}")
 def edit_semester(rid: int, b: SemesterIn, _: User = Depends(admin), s: Session = Depends(db)):
