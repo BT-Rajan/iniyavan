@@ -189,3 +189,30 @@ def test_learning_is_measured_rewarded_and_reviewed(env, monkeypatch):
         steps = {p.topic_id: (p.review_step, (p.review_due - main.dt.datetime.utcnow()).days) for p in s.query(main.StudyProgress).filter(main.StudyProgress.topic_id.in_(tids[:2]))}
     assert steps[t0][0] == 2 and steps[t0][1] in (2, 3) and steps[tids[1]][0] == 1  # good reviews push the next one out
     assert main.level_of(99)["level"] == 1 and main.level_of(300)["level"] == 3
+
+def test_gaps_quizzes_on_staff_topics_fixing_topics_flags_and_ai_left(env, monkeypatch):
+    from tests.test_access import CSV, ids, enrol
+    setup(env, monkeypatch); env.csv(CSV); i = ids(); enrol("stu@x.com", i["prog"]["Mech"], 1)
+    w = i["topic"]["Water"]
+    q = env.c.post(f"/api/topics/{w}/practice", headers=env.stu, json={"kind": "mcq"}).json()
+    assert q["topic"] == "Water" and len(q["questions"]) == 5 and "Topic: Water" in FakeAI.calls[-1][1]
+    r = env.c.post(f"/api/study/quizzes/{q['id']}/attempt", headers=env.stu, json={"answers": [0] * 5}).json(); assert r["percent"] == 100 and r["xp"]["gained"] == 5
+    assert env.c.post(f"/api/topics/{i['topic']['Limits']}/practice", headers=env.stu, json={"kind": "mcq"}).status_code == 403  # not their program
+    env.c.put(f"/api/topics/{w}/publish", headers=env.admin, json={"published": False})
+    assert env.c.post(f"/api/topics/{w}/practice", headers=env.stu, json={"kind": "quiz"}).status_code == 404 and env.c.get(f"/api/study/quizzes/{q['id']}", headers=env.stu).status_code == 404
+    # the owner fixes a topic without redoing the setup
+    cid, tids = ready(env, monkeypatch)
+    assert env.c.put(f"/api/study/topics/{tids[0]}", headers=env.stu, json={"title": "Hardness", "content": "Fixed text."}).status_code == 200
+    t = env.c.get(f"/api/study/topics/{tids[0]}", headers=env.stu).json(); assert (t["title"], t["content"], t["can_edit"]) == ("Hardness", "Fixed text.", True)
+    env.add_user("x2@x.com"); assert env.c.put(f"/api/study/topics/{tids[0]}", headers=env.login("x2@x.com"), json={"title": "x"}).status_code == 404
+    assert env.c.delete(f"/api/study/topics/{tids[1]}", headers=env.stu).status_code == 200
+    d = env.c.get(f"/api/study/courses/{cid}", headers=env.stu).json(); assert [len(u["topics"]) for u in d["units"]] == [1, 2]
+    # a flagged question never comes back in a review
+    m = env.c.post(f"/api/study/topics/{tids[0]}/quizzes", headers=env.stu, json={"kind": "mcq"}).json()
+    for k in range(4): env.c.post(f"/api/study/quizzes/{m['id']}/flag", headers=env.stu, json={"index": k})
+    env.c.post(f"/api/study/quizzes/{m['id']}/attempt", headers=env.stu, json={"answers": [1] * 5})
+    with Session_() as s:
+        for p in s.query(main.StudyProgress).filter(main.StudyProgress.review_due.isnot(None)): p.review_due -= main.dt.timedelta(days=2)
+        s.commit()
+    rv = env.c.post(f"/api/study/courses/{cid}/review", headers=env.stu).json(); assert [x["text"] for x in rv["questions"]] == ["Q4?"]
+    me = env.c.get("/api/study/me", headers=env.stu).json(); assert me["ai_available"] is True and me["ai_left"] == main.STUDY_AI_DAILY - 3  # practice on Water, the slice, one quick check

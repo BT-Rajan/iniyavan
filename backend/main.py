@@ -508,7 +508,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL")),
               ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern),
               ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")]),
-              ("0018_mcq_tests", mcq_columns), ("0019_topic_content_format", content_format_columns)]
+              ("0018_mcq_tests", mcq_columns), ("0019_topic_content_format", content_format_columns),
+              ("0020_practice_on_staff_topics", lambda c: _addcol("study_quizzes", "src_topic_id", "INT NULL")(c) if "study_quizzes" in inspect(c).get_table_names() else None)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -2560,6 +2561,7 @@ class StudyQuiz(Base):  # a set of questions the AI wrote for one person on one 
     __tablename__ = "study_quizzes"
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("study_topics.id", ondelete="CASCADE"), index=True, nullable=True)  # null for a review set
     course_id = Column(Integer, index=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); kind = Column(String(10))  # mcq, quiz or review
+    src_topic_id = Column(Integer, nullable=True, index=True)  # set instead of topic_id for a quick check or quiz on a topic of a staff-made course
     questions = Column(BIG)  # JSON [{text, options, correct, explanation, concept, topic_id}]
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 class StudyAttempt(Base):
@@ -2584,6 +2586,10 @@ STUDY_PROMPTS = {
            "Give every unit and topic a short, clear title in the material's language, and every topic a one-line summary. "
            "Follow the student's instructions when they give any. Reply with JSON only, exactly in this shape: "
            '{"units":[{"title":"...","topics":[{"title":"...","summary":"...","from":1,"to":3}]}]}'),
+ "explain": ("You are a warm, clear tutor helping a student who is learning on their own from their own notes. Explain the topic so it clicks: "
+             "start with the big idea in one or two sentences, then explain it step by step in simple words, give one example or comparison from everyday life, "
+             "and end with 3 short recap bullets. Stay faithful to the material and do not add facts that contradict it. Write in the same language as the material. "
+             "Use Markdown; show comparisons as a table with every row on its own line."),
  "questions": ("You write multiple-choice questions to check that a student has understood one topic of their own study material. "
                "Use only facts that are in the material; never invent facts. Each question has 4 options (2 for true/false), exactly one correct, "
                "plausible wrong options, a one or two sentence explanation of the right answer that quotes or points to the material, "
@@ -2591,6 +2597,10 @@ STUDY_PROMPTS = {
                '{"questions":[{"text":"...","options":["...","...","...","..."],"correct":0,"explanation":"...","concept":"..."}]}'),
 }
 
+def study_ai_left(u, s):  # AI requests left today for own-course help; None when not limited
+    if u.role != "student" or (u.self_registered and u.ai_key): return None
+    return max(0, STUDY_AI_DAILY - s.query(func.count(StudyAICall.id)).filter(StudyAICall.user_id == u.id, StudyAICall.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar())
+def study_ai_status(u, s): return {"ai_available": bool(key_for(u, s)), "ai_left": study_ai_left(u, s), "ai_own_key": bool(u.self_registered)}
 def study_ai_key(u, s):
     key = key_or_fail(u, s)
     if not (u.self_registered and u.ai_key) and u.role == "student":
@@ -2766,7 +2776,7 @@ def study_list(u: User = Depends(me), s: Session = Depends(db)):
 @app.get("/api/study/courses/{cid}")
 def study_get(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     c = study_course_or_404(cid, u, s); mine = c.owner_id == u.id or u.role == "admin"
-    out = {**study_row(c, s, u), "can_edit": mine, "notes": (c.notes or "") if mine else "", "sliced_by": c.sliced_by or ""}
+    out = {**study_row(c, s, u), "can_edit": mine, "notes": (c.notes or "") if mine else "", "sliced_by": c.sliced_by or "", **study_ai_status(u, s)}
     if mine: out.update(sources=json.loads(c.sources or "[]"), paragraphs=len(json.loads(c.paras or "[]")), plan=plan_view(c))
     if c.status == "ready":
         prog = {p.topic_id: p for p in s.query(StudyProgress).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_(s.query(StudyTopic.id).filter_by(course_id=c.id)))}
@@ -2905,7 +2915,7 @@ def study_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     i = order.index(tid); pick = lambda j: {"id": order[j], "title": s.get(StudyTopic, order[j]).title} if 0 <= j < len(order) else None
     atts = s.query(StudyAttempt, StudyQuiz).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyQuiz.topic_id == tid, StudyAttempt.user_id == u.id).order_by(StudyAttempt.id.desc()).limit(20).all()
     return {"id": t.id, "title": t.title, "summary": t.summary or "", "content": t.content or "", "course_id": c.id, "course": c.title, "unit": un.title if un else "",
-            "completed": bool(p and p.completed_at), "has_explain": bool(t.explain), "stars": study_stars(s, u.id, [tid]).get(tid, 0), "prev": pick(i - 1), "next": pick(i + 1), "position": i + 1, "total": len(order),
+            "completed": bool(p and p.completed_at), "has_explain": bool(t.explain), "stars": study_stars(s, u.id, [tid]).get(tid, 0), "can_edit": c.owner_id == u.id or u.role == "admin", **study_ai_status(u, s), "prev": pick(i - 1), "next": pick(i + 1), "position": i + 1, "total": len(order),
             "attempts": [{"id": a.id, "quiz_id": q.id, "kind": q.kind, "score": a.score, "total": a.total, "percent": a.percent, "at": iso(a.at)} for a, q in atts]}
 class DoneIn(BaseModel): completed: bool
 @app.put("/api/study/topics/{tid}/progress")
@@ -2915,7 +2925,7 @@ def study_done(tid: int, b: DoneIn, u: User = Depends(me), s: Session = Depends(
     p.completed_at = dt.datetime.utcnow() if b.completed else None; s.add(p); s.commit(); return {"ok": True}
 @app.get("/api/study/topics/{tid}/explain")
 async def study_explain(tid: int, u: User = Depends(me), s: Session = Depends(db)):
-    t = study_topic_or_404(tid, u, s); c = s.get(StudyCourse, t.course_id); prompt = prompt_for(s, "explain")
+    t = study_topic_or_404(tid, u, s); c = s.get(StudyCourse, t.course_id); prompt = STUDY_PROMPTS["explain"]
     h = hashlib.sha256("|".join([t.title, t.content or "", prompt]).encode()).hexdigest()
     if t.explain and t.explain_hash == h: return {"text": t.explain, "cached": True}
     text = await study_ask(u, s, "explain", prompt, f"Course: {c.title}\nUnit: {s.get(StudyUnit, t.unit_id).title}\nTopic: {t.title}\n\nTopic content:\n{t.content}", max_tokens=4000)
@@ -2932,26 +2942,75 @@ def clean_questions(raw, want):
             out.append({"text": text[:1000], "options": [o[:400] for o in opts], "correct": k, "explanation": str(q.get("explanation") or "").strip()[:1000], "concept": str(q.get("concept") or "").strip()[:80]})
     return out[:want]
 class NewQuizIn(BaseModel): kind: str = "mcq"
+async def write_questions(u, s, kind, title, material, earlier):
+    if kind not in QUIZ_SIZE: raise HTTPException(400, "kind must be mcq or quiz")
+    if not (material or "").strip(): raise HTTPException(400, "This topic has no notes to ask about yet")
+    n = QUIZ_SIZE[kind]; seen = [q for (raw,) in earlier for q in json.loads(raw)]
+    msg = (f"Topic: {title}\n\nMaterial:\n{material}\n\nWrite {n} questions" + (", a mix of 4-option questions and a few true/false ones" if kind == "quiz" else "") + "." +
+           (("\nAsk about different points than these earlier questions:\n" + "\n".join("- " + q["text"] for q in seen[:15])) if seen else ""))
+    qs = clean_questions(ai_json(await study_ask(u, s, kind, STUDY_PROMPTS["questions"], msg, max_tokens=6000)), n)
+    if len(qs) < max(2, n // 2): raise HTTPException(502, "The AI did not write enough usable questions. Try again.")
+    return qs
 @app.post("/api/study/topics/{tid}/quizzes")
 async def study_new_quiz(tid: int, b: NewQuizIn, u: User = Depends(me), s: Session = Depends(db)):
     t = study_topic_or_404(tid, u, s)
-    if b.kind not in QUIZ_SIZE: raise HTTPException(400, "kind must be mcq or quiz")
-    n = QUIZ_SIZE[b.kind]; seen = [q for (raw,) in s.query(StudyQuiz.questions).filter_by(topic_id=tid, user_id=u.id).order_by(StudyQuiz.id.desc()).limit(3) for q in json.loads(raw)]
-    msg = (f"Topic: {t.title}\n\nMaterial:\n{t.content}\n\nWrite {n} questions" + (", a mix of 4-option questions and a few true/false ones" if b.kind == "quiz" else "") + "." +
-           (("\nAsk about different points than these earlier questions:\n" + "\n".join("- " + q["text"] for q in seen[:15])) if seen else ""))
-    qs = clean_questions(ai_json(await study_ask(u, s, b.kind, STUDY_PROMPTS["questions"], msg, max_tokens=6000)), n)
-    if len(qs) < max(2, n // 2): raise HTTPException(502, "The AI did not write enough usable questions. Try again.")
+    qs = await write_questions(u, s, b.kind, t.title, t.content, s.query(StudyQuiz.questions).filter_by(topic_id=tid, user_id=u.id).order_by(StudyQuiz.id.desc()).limit(3).all())
     for x in qs: x["topic_id"] = tid
     q = StudyQuiz(topic_id=tid, course_id=t.course_id, user_id=u.id, kind=b.kind, questions=json.dumps(qs, ensure_ascii=False)); s.add(q); s.commit()
     return study_quiz_view(q, u, s)
+@app.post("/api/topics/{tid}/practice")
+async def staff_topic_practice(tid: int, b: NewQuizIn, u: User = Depends(me), s: Session = Depends(db)):
+    """A quick check or quiz the AI writes on demand from a topic of a staff-made course, just like on the courses students build."""
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
+    body = html_text(t.content) if fmt_of(t) == "html" else (t.content or "")
+    qs = await write_questions(u, s, b.kind, t.title, body, s.query(StudyQuiz.questions).filter_by(src_topic_id=tid, user_id=u.id).order_by(StudyQuiz.id.desc()).limit(3).all())
+    q = StudyQuiz(topic_id=None, src_topic_id=tid, course_id=None, user_id=u.id, kind=b.kind, questions=json.dumps(qs, ensure_ascii=False)); s.add(q); s.commit()
+    return study_quiz_view(q, u, s)
+class FlagIn(BaseModel): index: int
+@app.post("/api/study/quizzes/{qid}/flag")
+def study_flag(qid: int, b: FlagIn, u: User = Depends(me), s: Session = Depends(db)):  # "this question is wrong": it never comes back in a review
+    q = study_quiz_or_404(qid, u, s); qs = json.loads(q.questions)
+    if not 0 <= b.index < len(qs): raise HTTPException(400, "Out of range")
+    qs[b.index]["flagged"] = True; q.questions = json.dumps(qs, ensure_ascii=False); s.commit(); return {"ok": True}
+class StudyTopicIn(BaseModel): title: str | None = None; content: str | None = None
+@app.put("/api/study/topics/{tid}")
+def study_topic_edit(tid: int, b: StudyTopicIn, u: User = Depends(me), s: Session = Depends(db)):  # the owner fixes a topic without redoing the setup
+    t = s.get(StudyTopic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    study_course_or_404(t.course_id, u, s, edit=True)
+    if b.title is not None:
+        if not b.title.strip() or len(b.title.strip()) > 200: raise HTTPException(400, "Give the topic a title (up to 200 characters)")
+        t.title = b.title.strip()
+    if b.content is not None:
+        if not b.content.strip(): raise HTTPException(400, "A topic needs some text")
+        t.content = b.content.strip()
+    s.commit(); return {"ok": True}
+@app.delete("/api/study/topics/{tid}")
+def study_topic_delete(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(StudyTopic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    c = study_course_or_404(t.course_id, u, s, edit=True)
+    if s.query(StudyTopic).filter_by(course_id=c.id).count() <= 1: raise HTTPException(400, "A course needs at least one topic. Delete the course instead.")
+    qids = [i for (i,) in s.query(StudyQuiz.id).filter_by(topic_id=tid)] or [0]
+    s.query(StudyAttempt).filter(StudyAttempt.quiz_id.in_(qids)).delete(synchronize_session=False)
+    for m in (StudyQuiz, StudyProgress): s.query(m).filter(m.topic_id == tid).delete(synchronize_session=False)
+    uid = t.unit_id; s.delete(t); s.flush()
+    if not s.query(StudyTopic.id).filter_by(unit_id=uid).first(): s.query(StudyUnit).filter_by(id=uid).delete()
+    s.commit(); return {"ok": True}
 def study_quiz_or_404(qid, u, s):
     q = s.get(StudyQuiz, qid)
     if not q or q.user_id != u.id: raise HTTPException(404, "Quiz not found")  # a set belongs to the person who asked for it
-    if q.topic_id: study_topic_or_404(q.topic_id, u, s)
+    if q.src_topic_id:
+        t = s.get(Topic, q.src_topic_id)
+        if not t: raise HTTPException(404, "Quiz not found")
+        check_topic_access(u, t, s)
+    elif q.topic_id: study_topic_or_404(q.topic_id, u, s)
     else: study_course_or_404(q.course_id, u, s)
     return q
 def study_quiz_view(q, u, s):
-    t = s.get(StudyTopic, q.topic_id) if q.topic_id else None; c = s.get(StudyCourse, q.course_id) if q.course_id else None
+    t = s.get(StudyTopic, q.topic_id) if q.topic_id else s.get(Topic, q.src_topic_id) if q.src_topic_id else None; c = s.get(StudyCourse, q.course_id) if q.course_id else None
     names = {x.id: x.title for x in s.query(StudyTopic).filter(StudyTopic.id.in_({x.get("topic_id") for x in json.loads(q.questions)} - {None} or {0}))}
     return {"id": q.id, "kind": q.kind, "topic_id": t.id if t else None, "topic": t.title if t else ("Review · " + (c.title if c else "")), "pass_percent": QUIZ_PASS,
             "questions": [{"text": x["text"], "options": x["options"], **({"topic": names.get(x.get("topic_id"), "")} if not t else {})} for x in json.loads(q.questions)]}
@@ -2976,7 +3035,9 @@ def study_attempt(qid: int, b: StudyAnswersIn, u: User = Depends(me), s: Session
     xp0, stars0 = study_xp(s, u.id), study_stars(s, u.id, [q.topic_id]).get(q.topic_id, 0) if q.topic_id else 0
     a = StudyAttempt(quiz_id=q.id, user_id=u.id, answers=json.dumps(b.answers), score=score, total=len(qs), percent=pct); s.add(a)
     per = defaultdict(lambda: [0, 0])  # topic -> [right, asked]: each topic in the set moves on its own review schedule
-    for x, r_ in zip(qs, results): k = x.get("topic_id") or q.topic_id; per[k][0] += r_["ok"]; per[k][1] += 1
+    for x, r_ in zip(qs, results):
+        k = x.get("topic_id") or q.topic_id
+        if k: per[k][0] += r_["ok"]; per[k][1] += 1  # checks on staff-made topics have no review schedule of their own
     now, completed_now = dt.datetime.utcnow(), False
     for tid, (ok, n) in per.items():
         p = s.query(StudyProgress).filter_by(user_id=u.id, topic_id=tid).first() or StudyProgress(user_id=u.id, topic_id=tid); s.add(p)
@@ -3058,7 +3119,7 @@ def study_me(u: User = Depends(me), s: Session = Depends(db)):
         t = next((t for t in order if t.id not in done), None)
         if t: nxt = {"course_id": c.id, "course": c.title, "topic_id": t.id, "topic": t.title, "done": len(done), "topics": len(order)}; break
     week = [{"date": (today - dt.timedelta(days=i)).isoformat(), "label": (today - dt.timedelta(days=i)).strftime("%a")[0], "active": (today - dt.timedelta(days=i)) in days, "today": i == 0} for i in range(6, -1, -1)]
-    return {"xp": level_of(study_xp(s, u.id)), "streak": streak_of(days, today), "active_today": today in days, "week": week, "courses": len(courses),
+    return {**study_ai_status(u, s), "xp": level_of(study_xp(s, u.id)), "streak": streak_of(days, today), "active_today": today in days, "week": week, "courses": len(courses),
             "reviews_due": len(due), "review_courses": [{"course_id": cid, "course": cmap[cid].title, "due": n} for cid, n in due_by.items()], "next": nxt}
 @app.post("/api/study/courses/{cid}/review")
 def study_review(cid: int, u: User = Depends(me), s: Session = Depends(db)):
@@ -3068,7 +3129,7 @@ def study_review(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     if not due: raise HTTPException(400, "Nothing is due for review in this course right now")
     picked = []
     for _, t in due:
-        pool = [x for (raw,) in s.query(StudyQuiz.questions).filter(StudyQuiz.topic_id == t.id, StudyQuiz.user_id == u.id, StudyQuiz.kind.in_(("mcq", "quiz"))) for x in json.loads(raw)]
+        pool = [x for (raw,) in s.query(StudyQuiz.questions).filter(StudyQuiz.topic_id == t.id, StudyQuiz.user_id == u.id, StudyQuiz.kind.in_(("mcq", "quiz"))) for x in json.loads(raw) if not x.get("flagged")]
         for x in random.sample(pool, min(2, len(pool))): picked.append({**x, "topic_id": t.id})
         if len(picked) >= 10: break
     if not picked: raise HTTPException(400, "Do a quick check on these topics first, then they can be reviewed")

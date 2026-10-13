@@ -117,6 +117,13 @@ Studying a course: topics in order with **Mark as completed**, previous/next, an
 - **Points and levels.** 10 per topic completed, 1 per right answer, 20 per topic with a passed quiz, 30 more per mastered topic, 5 per review. Level 2 starts at 100 points, level 3 at 300, then 600, 1000 and so on. Points are worked out from what the student did, so they can't drift. After a check the student sees the points gained, new stars, "Topic completed", "Mastered!" or a new level, and when the topic comes back for review.
 - **Streak.** Opening topics and taking checks in these courses count toward the day streak on Home, like the staff-made courses.
 
+**Smaller things that keep a student unstuck:**
+- **Checks on every topic.** Topics in staff-made courses also have **Quick check · 5** and **Full quiz · 10**, written by the AI from the topic's notes on demand.
+- **Fix a topic later.** The owner of a course can edit a topic's title and text, or delete it, from the topic page without redoing the setup. Progress and stars stay.
+- **Explanations fit the material.** Explain in student-built courses uses its own tutor prompt for any subject, written in the material's language.
+- **Knowing what AI is left.** When 10 or fewer of the day's AI requests are left, topic pages say how many. Without an AI key, the AI buttons are off with the reason, and the wizard suggests slicing by headings.
+- **Flow.** After a check, **Next topic** goes straight on. Courses with more than 12 topics have a **Find a topic** box. **This question is wrong** on any answered question keeps it out of future reviews.
+
 Sharing: a course is private. Its owner can share it with **My classmates** (students in the same program); they can study it and take their own quizzes, but only the owner can change it. Admins can open and delete any of them through the API.
 
 AI use follows the usual rules: self-registered students use their own DeepSeek key; others use the admin's key and are limited to `STUDY_AI_DAILY` (default 40) AI requests a day for their own courses. Limits: 50 courses per student, 20 MB per file, 1.5 million characters of material per course. API under `/api/study/...`; the tables are created on first start.

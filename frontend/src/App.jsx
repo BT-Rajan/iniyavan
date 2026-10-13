@@ -697,8 +697,9 @@ function StudyWizard({id,toast,back,done}){
     {step===2&&<>
       <h3 className="sec first">How should it be sliced?</h3><p className="known" style={{marginTop:0}}>The AI groups your {pl(c.paragraphs,'paragraph')} into units and the smallest topics that make sense on their own. It keeps your own words; it only decides where each topic starts and ends and what to call it.</p>
       <label htmlFor="nts">Notes for the AI</label><textarea id="nts" value={notes} onChange={e=>setNotes(e.target.value)} placeholder={NOTES_HINT}/>
-      <button className="btn" disabled={!!busy} onClick={()=>slice('ai')}><Sparkles size={16}/> Slice with AI</button>
-      <button className="btn ghost" disabled={!!busy} onClick={()=>slice('headings')}>Slice by headings instead (no AI)</button>
+      <AiNote o={c}/>
+      <button className={'btn'+(c.ai_available&&c.ai_left!==0?'':' ghost')} disabled={!!busy||!c.ai_available||c.ai_left===0} onClick={()=>slice('ai')}><Sparkles size={16}/> Slice with AI</button>
+      <button className={'btn'+(c.ai_available&&c.ai_left!==0?' ghost':'')} disabled={!!busy} onClick={()=>slice('headings')}>Slice by headings instead (no AI)</button>
       <button className="btn ghost" onClick={()=>setStep(1)}>Back to material</button></>}
     {step===3&&plan&&<>
       <h3 className="sec first">Check the outline</h3><p className="known" style={{marginTop:0}}>{pl(plan.units.length,'unit')}, {pl(flat.length,'topic')}{c.sliced_by==='headings'?' · sliced by headings':''}. Rename anything, merge a topic into the next one, or remove one you don't need. Not right? Change the notes and slice again.</p>
@@ -715,7 +716,7 @@ function StudyWizard({id,toast,back,done}){
     {peek&&<Sheet close={()=>setPeek(null)}><h3>{peek.title}</h3><div className="prose"><Md>{peek.content}</Md></div><button className="btn ghost" onClick={()=>setPeek(null)}>Close</button></Sheet>}</div></>}
 function StudyCourse({id,topic:first,toast,back,setup}){
   const confirm=useConfirm()
-  const [c,setC]=useState(null),[p,setP]=useState(null),[topic,setTopic]=useState(first||null),[ren,setRen]=useState(null),[rev,setRev]=useState(null)
+  const [c,setC]=useState(null),[p,setP]=useState(null),[topic,setTopic]=useState(first||null),[ren,setRen]=useState(null),[rev,setRev]=useState(null),[find,setFind]=useState('')
   const load=()=>{api('/study/courses/'+id).then(setC).catch(e=>{toast(e.message);back()});api(`/study/courses/${id}/progress`).then(setP).catch(()=>{})}
   useEffect(()=>{if(!topic&&!rev)load()},[id,topic,rev])
   if(rev)return <StudyQuizPlay quiz={rev} toast={toast} back={()=>setRev(null)}/>
@@ -732,7 +733,8 @@ function StudyCourse({id,topic:first,toast,back,setup}){
       {c.reviews_due>0&&<button className="btn" onClick={async()=>{try{setRev(await api(`/study/courses/${id}/review`,{method:'POST'}))}catch(e){toast(e.message)}}}><RotateCcw size={16}/> Review {pl(c.reviews_due,'topic')} due</button>}
       {p&&p.quizzed>0&&<p className="known" style={{margin:'8px 0 0'}}>Quiz average {p.average}% over {pl(p.quizzed,'topic')}.{p.summary&&' '+p.summary}</p>}
       {next&&<button className={'btn'+(c.reviews_due?' ghost':'')} onClick={()=>setTopic(next.id)}><Play size={16}/> {done?'Continue':'Start'}: {next.title}</button>}<p className="known" style={{margin:'8px 0 0'}}>{STAR_HELP}</p></div>
-    {c.units.map((u,ui)=><section key={u.id}><h3 className={'sec'+(ui?'':' first')}>{u.title}</h3>
+    {all.length>12&&<div className="search" style={{marginTop:14}}><Search size={18}/><input type="search" aria-label="Find a topic" placeholder="Find a topic" value={find} onChange={e=>setFind(e.target.value)}/></div>}
+    {c.units.map(u=>({...u,topics:u.topics.filter(t=>!find.trim()||(t.title+' '+(t.summary||'')).toLowerCase().includes(find.trim().toLowerCase()))})).filter(u=>u.topics.length).map((u,ui)=><section key={u.id}><h3 className={'sec'+(ui?'':' first')}>{u.title}</h3>
       {u.topics.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}{t.due&&<span className="pill sm" style={{marginLeft:6}}>Review due</span>}<small>{t.summary||''}{t.best!=null?(t.summary?' · ':'')+'best quiz '+t.best+'%':''}</small></div><Stars n={t.stars}/><ChevronRight size={18}/></button>)}</section>)}
     {p&&p.areas.length>0&&<><h3 className="sec">From your quizzes</h3><p className="known" style={{marginTop:0}}>Your best quiz score in each topic, weakest first.</p>
       {p.areas.map(a=><button key={a.topic_id} className="row rowbtn" onClick={()=>setTopic(a.topic_id)}><div>{a.title}<span className={'pill sm '+(a.status==='strong'?'okp':a.status==='needs_study'?'off':'')} style={{marginLeft:6}}>{AREA_LABEL[a.status]}</span><small>Best quiz {a.percent}%</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>)}</>}
@@ -743,48 +745,65 @@ function StudyCourse({id,topic:first,toast,back,setup}){
       <button className="btn danger" onClick={del}>Delete course</button></>}
     {ren!=null&&<Sheet close={()=>setRen(null)}><h3>Rename course</h3><label htmlFor="rnm">Course name</label><input id="rnm" autoFocus value={ren} onChange={e=>setRen(e.target.value)}/>
       <button className="btn" disabled={!ren.trim()} onClick={async()=>{try{await api('/study/courses/'+id,{method:'PUT',body:{title:ren}});setRen(null);load()}catch(e){toast(e.message)}}}>Save</button><button className="btn ghost" onClick={()=>setRen(null)}>Cancel</button></Sheet>}</div></>}
+const AiNote=({o})=>!o?null:!o.ai_available?<p className="known" role="note">{o.ai_own_key?'Add your own DeepSeek API key under “My AI key” in the menu to use explanations, quick checks and quizzes.':'AI help is switched off right now. Ask your admin to add an AI key.'}</p>
+  :o.ai_left!=null&&o.ai_left<=10?<p className="known" role="note">{o.ai_left?`${pl(o.ai_left,'AI request')} left today for your own courses.`:'You have used today\'s AI requests for your own courses. Reviews still work; new questions come back tomorrow.'}</p>:null
 function StudyTopicPage({id,toast,back,go}){
-  const [t,setT]=useState(null),[tab,setTab]=useState('notes'),[ex,setEx]=useState(null),[busy,setBusy]=useState(''),[quiz,setQuiz]=useState(null)
+  const confirm=useConfirm()
+  const [t,setT]=useState(null),[tab,setTab]=useState('notes'),[ex,setEx]=useState(null),[busy,setBusy]=useState(''),[quiz,setQuiz]=useState(null),[ed,setEd]=useState(null)
   const load=()=>api('/study/topics/'+id).then(setT).catch(e=>{toast(e.message);back()})
   useEffect(()=>{setT(null);setEx(null);setTab('notes');load();window.scrollTo(0,0)},[id])
   useEffect(()=>{if(!quiz&&t)load()},[quiz])
-  if(quiz)return <StudyQuizPlay quiz={quiz} toast={toast} back={()=>setQuiz(null)} again={k=>make(k)}/>
+  if(quiz)return <StudyQuizPlay quiz={quiz} toast={toast} back={()=>setQuiz(null)} again={k=>make(k)} next={t?.next&&{title:t.next.title,go:()=>{setQuiz(null);go(t.next.id)}}}/>
   if(!t)return <><Bar title="Topic" back={back}/><div className="main"><Skeleton/></div></>
   const explain=async()=>{setBusy('explain');try{setEx(await api(`/study/topics/${id}/explain`))}catch(e){toast(e.message)}setBusy('')}
   async function make(kind){setBusy(kind);try{setQuiz(await api(`/study/topics/${id}/quizzes`,{method:'POST',body:{kind}}))}catch(e){toast(e.message)}setBusy('')}
   const done=async on=>{try{await api(`/study/topics/${id}/progress`,{method:'PUT',body:{completed:on}});setT({...t,completed:on});toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
+  const saveEd=async()=>{try{await api('/study/topics/'+id,{method:'PUT',body:ed});setEd(null);setEx(null);toast('Topic saved');load()}catch(e){toast(e.message)}}
+  const delTopic=async()=>{if(!await confirm({title:`Delete “${t.title}”?`,body:'The topic, your progress and your checks on it are removed. This can\'t be undone.',ok:'Delete topic',danger:true}))return
+    try{await api('/study/topics/'+id,{method:'DELETE'});toast('Topic deleted');back()}catch(e){toast(e.message)}}
+  const noAi=!t.ai_available||t.ai_left===0
   return <><Bar title={t.title} sub={t.course+' › '+t.unit+' · '+t.position+' of '+t.total} back={back}/><div className="main">
     <div className="mast" style={{marginBottom:10}}><Stars n={t.stars} big/><small className="known">{['Not started yet','Completed','Quiz passed','Mastered'][t.stars]} · {STAR_HELP}</small></div>
     <Tabs label="Topic sections" items={[['notes','Notes'],['explain','Explain']]} value={tab} onChange={setTab}/>
     {tab==='notes'&&<div className="prose"><Md>{t.content}</Md></div>}
     {tab==='explain'&&(ex?<div className="prose">{ex.cached&&<span className="chip">Saved explanation · no AI request used</span>}<Md>{ex.text}</Md></div>
-      :<button className="btn" disabled={!!busy} onClick={explain}><Sparkles size={16}/> {busy==='explain'?'Thinking…':'Explain it to me'}</button>)}
+      :t.has_explain||!noAi?<button className="btn" disabled={!!busy} onClick={explain}><Sparkles size={16}/> {busy==='explain'?'Thinking…':'Explain it to me'}</button>:<AiNote o={t}/>)}
     <h3 className="sec">Check yourself</h3>
-    <div className="two"><button className="btn" disabled={!!busy} onClick={()=>make('mcq')}><ClipboardList size={16}/> {busy==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!busy} onClick={()=>make('quiz')}><Target size={16}/> {busy==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
+    <AiNote o={t}/>
+    <div className="two"><button className="btn" disabled={!!busy||noAi} onClick={()=>make('mcq')}><ClipboardList size={16}/> {busy==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!busy||noAi} onClick={()=>make('quiz')}><Target size={16}/> {busy==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
     <p className="known">Quick check: 5 practice MCQs with the answer right after each one; 4 right marks the topic completed. Full quiz: 10 questions scored at the end; pass it for ★★, score 90% for ★★★. New questions every time, and the topic comes back for review before you forget it.</p>
     {t.attempts.length>0&&<><h3 className="sec">Your results here</h3>{t.attempts.slice(0,5).map(a=><div className="row" key={a.id}><div>{a.kind==='quiz'?'Quiz':'Practice MCQs'} · {a.score} / {a.total} · {a.percent}%<small>{when(a.at)}</small><Bar2 v={a.percent}/></div></div>)}</>}
     <div style={{marginTop:16}}>{t.completed?<button className="btn ghost" onClick={()=>done(false)}>Mark as not completed</button>:<button className="btn" onClick={()=>done(true)}><Check size={16}/> Mark as completed</button>}</div>
-    <div className="two">{t.prev?<button className="btn ghost" onClick={()=>go(t.prev.id)}><ChevronLeft size={16}/> Previous</button>:<span/>}{t.next&&<button className="btn ghost" onClick={()=>go(t.next.id)}>Next <ChevronRight size={16}/></button>}</div></div></>}
-function StudyQuizPlay({quiz,toast,back,again}){
+    <div className="two">{t.prev?<button className="btn ghost" onClick={()=>go(t.prev.id)}><ChevronLeft size={16}/> Previous</button>:<span/>}{t.next&&<button className="btn ghost" onClick={()=>go(t.next.id)}>Next <ChevronRight size={16}/></button>}</div>
+    {t.can_edit&&<div className="two"><button className="btn ghost" onClick={()=>setEd({title:t.title,content:t.content})}><Pencil size={16}/> Edit topic</button><button className="btn ghost" onClick={delTopic}><Trash2 size={16}/> Delete topic</button></div>}
+    {ed&&<Sheet close={()=>setEd(null)}><h3>Edit topic</h3><label htmlFor="ett">Title</label><input id="ett" value={ed.title} onChange={e=>setEd({...ed,title:e.target.value})}/>
+      <label htmlFor="etc">Text</label><textarea id="etc" style={{minHeight:260}} value={ed.content} onChange={e=>setEd({...ed,content:e.target.value})}/>
+      <p className="known">Markdown works: # for headings, - for lists, **bold**. Your progress and stars stay.</p>
+      <button className="btn" disabled={!ed.title.trim()||!ed.content.trim()} onClick={saveEd}>Save</button><button className="btn ghost" onClick={()=>setEd(null)}>Cancel</button></Sheet>}</div></>}
+function StudyQuizPlay({quiz,toast,back,again,next}){
   const mcq=quiz.kind!=='quiz',[ans,setAns]=useState(quiz.questions.map(()=>null)),[fb,setFb]=useState({}),[res,setRes]=useState(null),[busy,setBusy]=useState(false)
+  const [flagged,setFlagged]=useState({})
+  const flag=async i=>{try{await api(`/study/quizzes/${quiz.id}/flag`,{method:'POST',body:{index:i}});setFlagged(f=>({...f,[i]:true}));toast('Thanks. That question won\'t come back in your reviews.')}catch(e){toast(e.message)}}
   const pick=async(i,k)=>{if(res||(mcq&&fb[i]))return;setAns(a=>a.map((v,n)=>n===i?k:v));if(!mcq)return
     try{const r=await api(`/study/quizzes/${quiz.id}/check`,{method:'POST',body:{index:i,answer:k}});setFb(f=>({...f,[i]:r}))}catch(e){toast(e.message)}}
   const submit=async()=>{setBusy(true);try{setRes(await api(`/study/quizzes/${quiz.id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
   const left=ans.filter(a=>a==null).length,review=quiz.kind==='review',label=review?'Review':mcq?'Quick check':'Full quiz'
-  const cheer=res&&[res.xp.level_up&&`Level ${res.xp.level}!`,res.stars.after>res.stars.before&&['','Topic completed','Quiz passed','Mastered!'][res.stars.after],res.completed_now&&res.stars.after<2&&'Topic completed'].filter(Boolean)
+  const cheer=res&&[res.xp.level_up&&`Level ${res.xp.level}!`,res.stars.after>res.stars.before&&['','Topic completed','Quiz passed','Mastered!'][res.stars.after],res.completed_now&&res.stars.after<2&&'Topic completed'].filter((x,i,all)=>x&&all.indexOf(x)===i)
   return <><Bar title={label} sub={quiz.topic+' · '+pl(quiz.questions.length,'question')} back={back}/><div className="main">
     {res&&<div className={'qbox score'+(cheer.length?' win':'')} style={{marginTop:0}} role="status">
       {cheer.length>0&&<div className="cheer"><span aria-hidden="true">🎉</span> {cheer.join(' · ')}</div>}
       <h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2>
       <p className="known" style={{margin:'6px 0'}}><b className="xp">+{res.xp.gained} XP</b> · level {res.xp.level}{res.stars.after>0&&<> · <Stars n={res.stars.after}/></>}</p>
       <p className="known">{review?'Review done.':mcq?(res.percent>=80?'Nicely done.':'Practice done. Read the tricky parts again.'):res.passed?'Passed. Well done!':`Below ${res.pass_percent}%. Read the topic again and try a new quiz.`}{res.summary&&' '+res.summary}{res.next_review&&' '+res.next_review+'.'}</p>
-      <div className="two">{again&&<button className="btn" onClick={()=>again(quiz.kind)}>New {mcq?'questions':'quiz'}</button>}<button className={'btn'+(again?' ghost':'')} onClick={back}>{review?'Done':'Back to the topic'}</button></div></div>}
+      {next&&<button className="btn" onClick={next.go}>Next topic: {next.title} <ChevronRight size={16}/></button>}
+      <div className="two">{again&&<button className={'btn'+(next?' ghost':'')} onClick={()=>again(quiz.kind)}>New {mcq?'questions':'quiz'}</button>}<button className={'btn'+(again||next?' ghost':'')} onClick={back}>{review?'Done':'Back to the topic'}</button></div></div>}
     {res&&!mcq&&res.areas.length>0&&<><h3 className="sec">What you know well and what to revisit</h3><AreaList areas={res.areas} onStudy={null} staff/></>}
     {quiz.questions.map((x,i)=>{const f=mcq?fb[i]:res&&res.results[i]
       return <div className="qbox" key={i}><b>Question {i+1}{f?(f.ok?' · Right':' · Wrong'):''}</b>{x.topic&&<small className="known" style={{display:'block'}}>{x.topic}</small>}<div className="prose"><Md>{x.text}</Md></div>
         {x.options.map((o,k)=>{const cls=f?(k===f.correct?' ok':k===ans[i]?' bad':''):ans[i]===k?' sel':''
           return <button key={k} className={'opt'+cls} disabled={!!f||!!res} aria-pressed={ans[i]===k} onClick={()=>pick(i,k)}><b className="olet">{LET[k]}</b><span className="obody"><Md>{o}</Md></span>{f&&k===f.correct&&<span className="otag ok"><Check size={14}/> Correct</span>}</button>})}
-        {f&&f.explanation&&<div className="known"><Md>{f.explanation}</Md></div>}</div>})}
+        {f&&f.explanation&&<div className="known"><Md>{f.explanation}</Md></div>}
+        {f&&(flagged[i]?<p className="known" style={{margin:'4px 0 0'}}>Reported.</p>:<button className="tool" onClick={()=>flag(i)}>This question is wrong</button>)}</div>})}
     {!res&&<><button className="btn" disabled={busy||(mcq&&Object.keys(fb).length<quiz.questions.length)} onClick={submit}>{busy?'Checking…':mcq?'See my score':'Submit answers'}</button>
       {mcq?<p className="known">Pick an answer to see right away if it is right.{Object.keys(fb).length<quiz.questions.length?` ${quiz.questions.length-Object.keys(fb).length} to go.`:''}</p>:left>0&&<p className="known">{left} unanswered. Blank answers count as wrong.</p>}</>}</div></>}
 function BankSheet({close,onAdd,toast}){
@@ -842,6 +861,7 @@ function HistorySheet({tid,close,done,toast}){
       :list.map(x=><button key={x.id} className="row" style={{width:'100%',textAlign:'left',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):'Before history began'}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">Current</span>}<ChevronRight size={16}/></button>)}
     <button className="btn ghost" onClick={close}>Close</button></Sheet>}
 function Topic({id:first,back,toast,role}){
+  const [practice,setPractice]=useState(null),[checking,setChecking]=useState('')
   const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
   const opened=useRef(false),jump=nid=>{opened.current=false;setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
@@ -849,6 +869,8 @@ function Topic({id:first,back,toast,role}){
   const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
   useEffect(()=>{api('/ai/status').then(r=>{setAiOk(r.available);setOwnKey(!!r.own_key)}).catch(()=>{})},[id])
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
+  async function practise(kind){setChecking(kind);try{setPractice(await api(`/topics/${id}/practice`,{method:'POST',body:{kind}}))}catch(e){toast(e.message)}setChecking('')}
+  if(practice)return <StudyQuizPlay quiz={practice} toast={toast} back={()=>setPractice(null)} again={k=>practise(k)}/>
   if(editing)return <TopicEditor role={role} toast={toast} edit={{id}} done={()=>{setEditing(false);setV(v+1)}} cancel={()=>setEditing(false)}/>
   if(gone)return <><Bar title="Unavailable" back={back}/><div className="main"><div className="hero"><h2>{gone}</h2><p>It has been archived. Check back later or ask your teacher.</p></div></div></>
   if(!t)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
@@ -872,6 +894,8 @@ function Topic({id:first,back,toast,role}){
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
     {tab==='notes'&&<div className="prose">{t.content?<Body text={t.content} format={t.content_format}/>:<Md>No notes yet.</Md>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
+    {role==='student'&&aiOk!==false&&<><h3 className="sec">Check yourself</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
+      <p className="known" style={{marginTop:4}}>The AI writes new questions from this topic's notes each time. Quick check: the answer right after each question. Full quiz: scored at the end.</p></>}
     {t.nav&&t.nav.total>1&&<nav className="pager" aria-label="Topics in this unit"><button className="btn ghost" disabled={!t.nav.prev} onClick={()=>jump(t.nav.prev.id)} aria-label={t.nav.prev?'Previous topic: '+t.nav.prev.title:'No previous topic'}><ChevronLeft size={18}/><span>{t.nav.prev?t.nav.prev.title:'Previous'}</span></button>
       <small>{t.nav.position} of {t.nav.total}</small>
       <button className={'btn'+(t.nav.next?'':' ghost')} disabled={!t.nav.next} onClick={()=>jump(t.nav.next.id)} aria-label={t.nav.next?'Next topic: '+t.nav.next.title:'No next topic'}><span>{t.nav.next?t.nav.next.title:'Next'}</span><ChevronRight size={18}/></button></nav>}</div></>}
