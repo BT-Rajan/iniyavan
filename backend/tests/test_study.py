@@ -160,3 +160,32 @@ def test_headings_slicer_skips_a_lone_title_and_excerpts_are_plain(env):
     plan = main.headings_plan(paras)
     assert [u["title"] for u in plan["units"]] == ["Lesson 1", "Part A", "Part B"] and [t["title"] for t in plan["units"][1]["topics"]] == ["Part A", "Detail"]
     assert main.plain_excerpt(["### Detail", "| x | y |\n|---|---|"]) == "Detail x y"
+
+def test_learning_is_measured_rewarded_and_reviewed(env, monkeypatch):
+    cid, tids = ready(env, monkeypatch); t0 = tids[0]
+    me = env.c.get("/api/study/me", headers=env.stu).json()
+    assert (me["xp"]["total"], me["xp"]["level"], me["reviews_due"], me["next"]["topic_id"], me["streak"]) == (0, 1, 0, t0, 0)
+    q = env.c.post(f"/api/study/topics/{t0}/quizzes", headers=env.stu, json={"kind": "quiz"}).json()
+    r = env.c.post(f"/api/study/quizzes/{q['id']}/attempt", headers=env.stu, json={"answers": [0] * 10}).json()
+    # 100%: topic completed by the quiz (10), 10 right answers, passed (20) and mastered (30)
+    assert r["completed_now"] is True and r["stars"] == {"before": 0, "after": 3} and r["xp"]["gained"] == 70 and r["next_review"] == "Review it again tomorrow"
+    m = env.c.post(f"/api/study/topics/{tids[1]}/quizzes", headers=env.stu, json={"kind": "mcq"}).json()
+    r2 = env.c.post(f"/api/study/quizzes/{m['id']}/attempt", headers=env.stu, json={"answers": [0, 0, 1, 1, 1]}).json()
+    assert r2["completed_now"] is False and r2["stars"]["after"] == 0  # 40% in practice: not learnt yet, no stars
+    d = env.c.get(f"/api/study/courses/{cid}", headers=env.stu).json()
+    assert [t["stars"] for u in d["units"] for t in u["topics"]][:2] == [3, 0] and d["mastery"] == 25 and d["reviews_due"] == 0
+    me = env.c.get("/api/study/me", headers=env.stu).json(); assert me["xp"]["total"] == 72 and me["streak"] == 1 and me["active_today"] and me["next"]["topic_id"] == tids[1]
+    assert env.c.post(f"/api/study/courses/{cid}/review", headers=env.stu).status_code == 400  # nothing due yet
+    # a day later both come back: topic 1 after its first good result, topic 2 because practice went badly
+    with Session_() as s:
+        for p in s.query(main.StudyProgress).filter(main.StudyProgress.review_due.isnot(None)): p.review_due -= main.dt.timedelta(days=2)
+        s.commit()
+    assert env.c.get("/api/study/me", headers=env.stu).json()["reviews_due"] == 2
+    calls = len(FakeAI.calls); rv = env.c.post(f"/api/study/courses/{cid}/review", headers=env.stu).json()
+    assert len(FakeAI.calls) == calls and rv["kind"] == "review" and len(rv["questions"]) == 4 and {x["topic"] for x in rv["questions"]} == {"What hardness is", "Boiling"}
+    assert env.c.post(f"/api/study/quizzes/{rv['id']}/check", headers=env.stu, json={"index": 0, "answer": 0}).json()["ok"] is True
+    rr = env.c.post(f"/api/study/quizzes/{rv['id']}/attempt", headers=env.stu, json={"answers": [0] * 4}).json(); assert rr["xp"]["gained"] == 4 + 5
+    with Session_() as s:
+        steps = {p.topic_id: (p.review_step, (p.review_due - main.dt.datetime.utcnow()).days) for p in s.query(main.StudyProgress).filter(main.StudyProgress.topic_id.in_(tids[:2]))}
+    assert steps[t0][0] == 2 and steps[t0][1] in (2, 3) and steps[tids[1]][0] == 1  # good reviews push the next one out
+    assert main.level_of(99)["level"] == 1 and main.level_of(300)["level"] == 3

@@ -53,7 +53,7 @@ const Logo=({src,size=40})=>src?<img className="logo" src={src} alt="" width={si
 const Lockup=({logo,name,size=40})=><div className="lockup"><Logo src={logo} size={size}/><b>{name}</b></div>
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null)
   const confirm=useCallback(o=>new Promise(res=>setAsk({o,res})),[])  // in-app replacement for window.confirm: await confirm({title,body,ok,danger})
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
   useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
@@ -65,14 +65,14 @@ export default function App(){
   if(resetTok)return <ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/>
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
-  const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
+  const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)}
   const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['progress',TrendingUp,'My progress'],['build',Upload,'Build a course']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')} onStudy={openStudy}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
     {page==='search'&&<SearchPage user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
-    {page==='build'&&user.role==='student'&&<StudyHome toast={toast}/>}
+    {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
@@ -343,7 +343,8 @@ function StaffHome({user,toast,open}){
     {o?.courses>0&&<><h3 className="sec">{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
 const FOCUS={overdue:[AlertTriangle,'Overdue','Open it'],due_soon:[Clock,'Due soon','Open it'],weak:[Target,'Needs review','Review'],resume:[Play,'Continue','Continue'],quiz_retake:[RotateCcw,'Retake the quiz','Retake'],quiz_new:[ClipboardList,'Quiz','Take the quiz'],next:[ArrowRight,'Next up','Start']}
-function Dashboard({user,toast,onOpen,onSearch}){
+function Dashboard({user,toast,onOpen,onSearch,onStudy}){
+  const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
   const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[planErr,setPlanErr]=useState(''),[topic,setTopic]=useState(null)
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{});api('/me/today').then(r=>{setToday(r);setPlanErr('')}).catch(e=>setPlanErr(e.message))},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
@@ -358,6 +359,8 @@ function Dashboard({user,toast,onOpen,onSearch}){
   const sub=!today?'Here is where you are today':today.streak>1?`${today.streak}-day study streak. Keep it going`:today.active_today?'You have studied today. Nice start':focus.length?'Here is what to do next':'Here is where you are today'
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={sub}/><div className="main">
     <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
+    {sme&&sme.courses>0&&<><h3 className="sec first">Your own courses</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}
+    {sme&&!sme.courses&&<button className="row rowbtn" onClick={()=>onStudy(null)}><span className="dot" style={{background:'var(--acc)'}}><Upload size={18}/></span><div>Build a course from your own notes<small>Upload a PDF or Word file and study it with quick checks, quizzes and reviews</small></div><ChevronRight size={18}/></button>}
     {!tree&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {tree&&!courses.length&&<p className="known">{user.self_registered&&!user.placed?'Your account is ready. An admin will place you in your program and semester or year, and your courses will appear here.':'You are not enrolled in a course yet. Ask your admin to add you to one.'}</p>}
     {planErr&&courses.length>0&&<p className="known" role="alert">Today's plan could not load ({planErr}). Your courses are below. If this keeps happening, tell your admin.</p>}
@@ -617,20 +620,36 @@ function MyScores({onCourse}){  // a student's final score per course
   if(!d||!d.courses.length)return null
   return <><h3 className="sec first">Scores</h3>{d.courses.map(x=><button key={x.course_id} className="row rowbtn" onClick={()=>onCourse(x)}><div>{x.course}<small>{x.final==null?'No tests taken yet':'Final score '+x.final+'%'} · {x.taken} of {x.tests.length} taken · {x.passed} passed</small>{x.final!=null&&<Bar2 v={x.final}/>}</div><ChevronRight size={18}/></button>)}</>}
 // ---- courses students build from their own material ----
+const Stars=({n,big})=><span className={'stars'+(big?' big':'')} role="img" aria-label={`${n} of 3 stars`}>{[1,2,3].map(i=><span key={i} className={i<=n?'on':''} aria-hidden="true">★</span>)}</span>
+const STAR_HELP='★ topic completed · ★★ quiz passed · ★★★ mastered (90%+ in a quiz)'
+// streak, level, this week, reviews due and the next step: the self-learner's "what now?" in one card
+function LearnCard({me,onContinue,onReview,compact}){
+  if(!me)return null
+  const x=me.xp
+  return <div className="learn"><div className={'lrow'+(compact?' one':'')}>
+      {!compact&&<div className="lstat"><b><Flame size={20} className={'flame'+(me.streak?' on':'')} aria-hidden="true"/> {me.streak}</b><small>{me.active_today?'day streak · studied today':me.streak?'day streak · study today to keep it':'day streak · start one today'}</small></div>}
+      <div className="lstat"><b><span className="lvl">Lv {x.level}</span> {x.total} XP</b><div className="meter" role="progressbar" aria-label="Progress to the next level" aria-valuemin={0} aria-valuemax={x.span} aria-valuenow={x.into}><i style={{width:Math.round(100*x.into/x.span)+'%'}}/></div><small>{x.span-x.into} XP to level {x.level+1}</small></div></div>
+    {!compact&&<div className="week" aria-label="Days studied this week">{me.week.map(d=><span key={d.date} className={(d.active?'on':'')+(d.today?' today':'')} title={d.date}>{d.label}</span>)}</div>}
+    {me.reviews_due>0&&<button className="btn" onClick={()=>onReview(me.review_courses[0].course_id)}><RotateCcw size={16}/> Review {pl(me.reviews_due,'topic')} due{me.review_courses.length>1?' (start with '+me.review_courses[0].course+')':''}</button>}
+    {me.next&&<button className={'btn'+(me.reviews_due?' ghost':'')} onClick={()=>onContinue(me.next)}><Play size={16}/> {me.next.done?'Continue':'Start'}: {me.next.topic}<small className="sub">{me.next.course} · {me.next.done} of {me.next.topics} done</small></button>}</div>}
 const STEPS=['Name','Material','Slice','Preview'],AREA_LABEL={strong:'Strong',getting_there:'Getting there',needs_study:'Revisit'}
 const Steps=({at})=><ol className="steps" aria-label="Setup steps">{STEPS.map((s,i)=><li key={s} className={i<at?'done':i===at?'on':''} aria-current={i===at?'step':undefined}><span>{i<at?<Check size={14}/>:i+1}</span>{s}</li>)}</ol>
 const NOTES_HINT='Optional. For example: "One topic per verse", "Keep the vocabulary table in one topic", "Units should follow the chapters", "Make topics very short".'
-function StudyHome({toast}){
-  const [d,setD]=useState(null),[open,setOpen]=useState(null),[make,setMake]=useState(false),[title,setTitle]=useState(''),[busy,setBusy]=useState(false)
-  const load=()=>api('/study/courses').then(setD).catch(e=>toast(e.message))
-  useEffect(()=>{if(!open)load()},[open])
-  if(open)return open.wizard?<StudyWizard id={open.id} toast={toast} back={()=>setOpen(null)} done={()=>setOpen({id:open.id})}/>:<StudyCourse id={open.id} toast={toast} back={()=>setOpen(null)} setup={()=>setOpen({id:open.id,wizard:true})}/>
+function StudyHome({toast,start}){
+  const [d,setD]=useState(null),[me,setMe]=useState(null),[open,setOpen]=useState(start&&start.id?start:null),[make,setMake]=useState(false),[title,setTitle]=useState(''),[busy,setBusy]=useState(false),[rev,setRev]=useState(null)
+  const load=()=>{api('/study/courses').then(setD).catch(e=>toast(e.message));api('/study/me').then(setMe).catch(()=>{})}
+  useEffect(()=>{if(!open&&!rev)load()},[open,rev])
+  const review=async cid=>{try{setRev(await api(`/study/courses/${cid}/review`,{method:'POST'}))}catch(e){toast(e.message)}}
+  useEffect(()=>{if(start?.review)review(start.review)},[])  // Home's "Review" button starts the review straight away
+  if(rev)return <StudyQuizPlay quiz={rev} toast={toast} back={()=>setRev(null)}/>
+  if(open)return open.wizard?<StudyWizard id={open.id} toast={toast} back={()=>setOpen(null)} done={()=>setOpen({id:open.id})}/>:<StudyCourse id={open.id} topic={open.topic} toast={toast} back={()=>setOpen(null)} setup={()=>setOpen({id:open.id,wizard:true})}/>
   const create=async()=>{setBusy(true);try{const r=await api('/study/courses',{method:'POST',body:{title}});setMake(false);setTitle('');setOpen({id:r.id,wizard:true})}catch(e){toast(e.message)}setBusy(false)}
   const card=(c,i)=><button key={c.id} className="row rowbtn" onClick={()=>setOpen({id:c.id,wizard:c.mine&&c.status!=='ready'})}><span className="dot" style={{background:COL[i%5]}}>{c.title[0]}</span>
     <div>{c.title}{c.status!=='ready'&&<span className="pill sm" style={{marginLeft:6}}>Setup not finished</span>}{c.mine&&c.share==='program'&&<span className="pill sm okp" style={{marginLeft:6}}>Shared</span>}
       <small>{c.status==='ready'?`${c.completed} of ${c.topics} topics completed`:'Continue the setup'}{!c.mine?' · by '+c.owner:''}</small>{c.status==='ready'&&c.topics>0&&<Bar2 v={100*c.completed/c.topics}/>}</div><ChevronRight size={18}/></button>
   return <><Bar title="Build a course" sub="Turn your own notes into a course"/><div className="main">
-    <p className="known" style={{marginTop:0}}>Upload your notes, textbook chapters or handouts. The AI slices them into units and small topics, you check and adjust the outline, and then you study it with explanations, practice MCQs and quizzes.</p>
+    {me&&me.courses>0&&<LearnCard me={me} onContinue={n=>setOpen({id:n.course_id,topic:n.topic_id})} onReview={review}/>}
+    <p className="known" style={{marginTop:me&&me.courses>0?16:0}}>Upload your notes, textbook chapters or handouts. The AI slices them into units and small topics, you check and adjust the outline, and then you study it with explanations, practice MCQs and quizzes.</p>
     <button className="btn lead" onClick={()=>setMake(true)}><Upload size={16}/> New course from my material</button>
     {!d?<Skeleton/>:<>{d.mine.length>0&&<><h3 className="sec">My courses</h3>{d.mine.map(card)}</>}
       {d.shared.length>0&&<><h3 className="sec">Shared by classmates</h3>{d.shared.map(card)}</>}
@@ -694,11 +713,12 @@ function StudyWizard({id,toast,back,done}){
       <button className="btn" disabled={!!busy} onClick={finish}><Check size={16}/> Finish: build my course</button>
       {dirty&&<button className="btn ghost" disabled={!!busy} onClick={async()=>{try{await savePlan();toast('Outline saved')}catch(e){toast(e.message)}}}>Save outline and finish later</button>}</>}
     {peek&&<Sheet close={()=>setPeek(null)}><h3>{peek.title}</h3><div className="prose"><Md>{peek.content}</Md></div><button className="btn ghost" onClick={()=>setPeek(null)}>Close</button></Sheet>}</div></>}
-function StudyCourse({id,toast,back,setup}){
+function StudyCourse({id,topic:first,toast,back,setup}){
   const confirm=useConfirm()
-  const [c,setC]=useState(null),[p,setP]=useState(null),[topic,setTopic]=useState(null),[ren,setRen]=useState(null)
+  const [c,setC]=useState(null),[p,setP]=useState(null),[topic,setTopic]=useState(first||null),[ren,setRen]=useState(null),[rev,setRev]=useState(null)
   const load=()=>{api('/study/courses/'+id).then(setC).catch(e=>{toast(e.message);back()});api(`/study/courses/${id}/progress`).then(setP).catch(()=>{})}
-  useEffect(()=>{if(!topic)load()},[id,topic])
+  useEffect(()=>{if(!topic&&!rev)load()},[id,topic,rev])
+  if(rev)return <StudyQuizPlay quiz={rev} toast={toast} back={()=>setRev(null)}/>
   if(topic)return <StudyTopicPage id={topic} toast={toast} back={()=>setTopic(null)} go={setTopic}/>
   if(!c)return <><Bar title="Course" back={back}/><div className="main"><Skeleton/></div></>
   if(c.status!=='ready')return <><Bar title={c.title} back={back}/><div className="main"><p className="known">This course is being set up.</p>{c.can_edit&&<button className="btn" onClick={setup}>Continue the setup</button>}</div></>
@@ -708,11 +728,12 @@ function StudyCourse({id,toast,back,setup}){
   const reopen=async()=>{if(!await confirm({title:'Change the setup?',body:'You go back to the outline. Your topics stay as they are until you finish the setup again.',ok:'Change the setup'}))return;try{await api(`/study/courses/${id}/reopen`,{method:'POST'});setup()}catch(e){toast(e.message)}}
   const next=all.find(t=>t.status!=='completed')
   return <><Bar title={c.title} sub={c.mine?'Your course':'Shared by '+c.owner} back={back}/><div className="main">
-    <div className="qbox" style={{marginTop:0}}><b>{done} of {all.length} topics completed</b><Bar2 v={all.length?100*done/all.length:0}/>
+    <div className="qbox" style={{marginTop:0}}><div className="mast"><div><b>{c.mastery}% mastered</b><small>{done} of {all.length} topics completed</small></div><Stars n={c.mastery>=90?3:c.mastery>=60?2:c.mastery>0?1:0} big/></div><Bar2 v={c.mastery}/>
+      {c.reviews_due>0&&<button className="btn" onClick={async()=>{try{setRev(await api(`/study/courses/${id}/review`,{method:'POST'}))}catch(e){toast(e.message)}}}><RotateCcw size={16}/> Review {pl(c.reviews_due,'topic')} due</button>}
       {p&&p.quizzed>0&&<p className="known" style={{margin:'8px 0 0'}}>Quiz average {p.average}% over {pl(p.quizzed,'topic')}.{p.summary&&' '+p.summary}</p>}
-      {next&&<button className="btn" onClick={()=>setTopic(next.id)}><Play size={16}/> {done?'Continue':'Start'}: {next.title}</button>}</div>
+      {next&&<button className={'btn'+(c.reviews_due?' ghost':'')} onClick={()=>setTopic(next.id)}><Play size={16}/> {done?'Continue':'Start'}: {next.title}</button>}<p className="known" style={{margin:'8px 0 0'}}>{STAR_HELP}</p></div>
     {c.units.map((u,ui)=><section key={u.id}><h3 className={'sec'+(ui?'':' first')}>{u.title}</h3>
-      {u.topics.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.summary||''}{t.best!=null?(t.summary?' · ':'')+'best quiz '+t.best+'%':''}</small></div><span className="marks"><Mark s={t.status}/></span><ChevronRight size={18}/></button>)}</section>)}
+      {u.topics.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}{t.due&&<span className="pill sm" style={{marginLeft:6}}>Review due</span>}<small>{t.summary||''}{t.best!=null?(t.summary?' · ':'')+'best quiz '+t.best+'%':''}</small></div><Stars n={t.stars}/><ChevronRight size={18}/></button>)}</section>)}
     {p&&p.areas.length>0&&<><h3 className="sec">From your quizzes</h3><p className="known" style={{marginTop:0}}>Your best quiz score in each topic, weakest first.</p>
       {p.areas.map(a=><button key={a.topic_id} className="row rowbtn" onClick={()=>setTopic(a.topic_id)}><div>{a.title}<span className={'pill sm '+(a.status==='strong'?'okp':a.status==='needs_study'?'off':'')} style={{marginLeft:6}}>{AREA_LABEL[a.status]}</span><small>Best quiz {a.percent}%</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>)}</>}
     {c.can_edit&&<><h3 className="sec">Course settings</h3>
@@ -733,28 +754,34 @@ function StudyTopicPage({id,toast,back,go}){
   async function make(kind){setBusy(kind);try{setQuiz(await api(`/study/topics/${id}/quizzes`,{method:'POST',body:{kind}}))}catch(e){toast(e.message)}setBusy('')}
   const done=async on=>{try{await api(`/study/topics/${id}/progress`,{method:'PUT',body:{completed:on}});setT({...t,completed:on});toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
   return <><Bar title={t.title} sub={t.course+' › '+t.unit+' · '+t.position+' of '+t.total} back={back}/><div className="main">
+    <div className="mast" style={{marginBottom:10}}><Stars n={t.stars} big/><small className="known">{['Not started yet','Completed','Quiz passed','Mastered'][t.stars]} · {STAR_HELP}</small></div>
     <Tabs label="Topic sections" items={[['notes','Notes'],['explain','Explain']]} value={tab} onChange={setTab}/>
     {tab==='notes'&&<div className="prose"><Md>{t.content}</Md></div>}
     {tab==='explain'&&(ex?<div className="prose">{ex.cached&&<span className="chip">Saved explanation · no AI request used</span>}<Md>{ex.text}</Md></div>
       :<button className="btn" disabled={!!busy} onClick={explain}><Sparkles size={16}/> {busy==='explain'?'Thinking…':'Explain it to me'}</button>)}
     <h3 className="sec">Check yourself</h3>
-    <div className="two"><button className="btn" disabled={!!busy} onClick={()=>make('mcq')}><ClipboardList size={16}/> {busy==='mcq'?'Writing questions…':'Practice MCQs'}</button><button className="btn ghost" disabled={!!busy} onClick={()=>make('quiz')}><Target size={16}/> {busy==='quiz'?'Writing the quiz…':'Take a quiz'}</button></div>
-    <p className="known">Practice MCQs: 5 questions with the answer right after each one. Quiz: 10 questions, scored at the end, with what you know well and what to revisit. Each time you get new questions.</p>
+    <div className="two"><button className="btn" disabled={!!busy} onClick={()=>make('mcq')}><ClipboardList size={16}/> {busy==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!busy} onClick={()=>make('quiz')}><Target size={16}/> {busy==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
+    <p className="known">Quick check: 5 practice MCQs with the answer right after each one; 4 right marks the topic completed. Full quiz: 10 questions scored at the end; pass it for ★★, score 90% for ★★★. New questions every time, and the topic comes back for review before you forget it.</p>
     {t.attempts.length>0&&<><h3 className="sec">Your results here</h3>{t.attempts.slice(0,5).map(a=><div className="row" key={a.id}><div>{a.kind==='quiz'?'Quiz':'Practice MCQs'} · {a.score} / {a.total} · {a.percent}%<small>{when(a.at)}</small><Bar2 v={a.percent}/></div></div>)}</>}
     <div style={{marginTop:16}}>{t.completed?<button className="btn ghost" onClick={()=>done(false)}>Mark as not completed</button>:<button className="btn" onClick={()=>done(true)}><Check size={16}/> Mark as completed</button>}</div>
     <div className="two">{t.prev?<button className="btn ghost" onClick={()=>go(t.prev.id)}><ChevronLeft size={16}/> Previous</button>:<span/>}{t.next&&<button className="btn ghost" onClick={()=>go(t.next.id)}>Next <ChevronRight size={16}/></button>}</div></div></>}
 function StudyQuizPlay({quiz,toast,back,again}){
-  const mcq=quiz.kind==='mcq',[ans,setAns]=useState(quiz.questions.map(()=>null)),[fb,setFb]=useState({}),[res,setRes]=useState(null),[busy,setBusy]=useState(false)
+  const mcq=quiz.kind!=='quiz',[ans,setAns]=useState(quiz.questions.map(()=>null)),[fb,setFb]=useState({}),[res,setRes]=useState(null),[busy,setBusy]=useState(false)
   const pick=async(i,k)=>{if(res||(mcq&&fb[i]))return;setAns(a=>a.map((v,n)=>n===i?k:v));if(!mcq)return
     try{const r=await api(`/study/quizzes/${quiz.id}/check`,{method:'POST',body:{index:i,answer:k}});setFb(f=>({...f,[i]:r}))}catch(e){toast(e.message)}}
   const submit=async()=>{setBusy(true);try{setRes(await api(`/study/quizzes/${quiz.id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
-  const left=ans.filter(a=>a==null).length,label=mcq?'Practice MCQs':'Quiz'
+  const left=ans.filter(a=>a==null).length,review=quiz.kind==='review',label=review?'Review':mcq?'Quick check':'Full quiz'
+  const cheer=res&&[res.xp.level_up&&`Level ${res.xp.level}!`,res.stars.after>res.stars.before&&['','Topic completed','Quiz passed','Mastered!'][res.stars.after],res.completed_now&&res.stars.after<2&&'Topic completed'].filter(Boolean)
   return <><Bar title={label} sub={quiz.topic+' · '+pl(quiz.questions.length,'question')} back={back}/><div className="main">
-    {res&&<div className="qbox" style={{marginTop:0}}><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{mcq?'Practice done.':res.passed?'Passed. Well done!':`Below ${res.pass_percent}%. Read the topic again and try a new quiz.`}{res.summary&&' '+res.summary}</p>
-      <div className="two"><button className="btn" onClick={()=>again(quiz.kind)}>New {mcq?'questions':'quiz'}</button><button className="btn ghost" onClick={back}>Back to the topic</button></div></div>}
+    {res&&<div className={'qbox score'+(cheer.length?' win':'')} style={{marginTop:0}} role="status">
+      {cheer.length>0&&<div className="cheer"><span aria-hidden="true">🎉</span> {cheer.join(' · ')}</div>}
+      <h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2>
+      <p className="known" style={{margin:'6px 0'}}><b className="xp">+{res.xp.gained} XP</b> · level {res.xp.level}{res.stars.after>0&&<> · <Stars n={res.stars.after}/></>}</p>
+      <p className="known">{review?'Review done.':mcq?(res.percent>=80?'Nicely done.':'Practice done. Read the tricky parts again.'):res.passed?'Passed. Well done!':`Below ${res.pass_percent}%. Read the topic again and try a new quiz.`}{res.summary&&' '+res.summary}{res.next_review&&' '+res.next_review+'.'}</p>
+      <div className="two">{again&&<button className="btn" onClick={()=>again(quiz.kind)}>New {mcq?'questions':'quiz'}</button>}<button className={'btn'+(again?' ghost':'')} onClick={back}>{review?'Done':'Back to the topic'}</button></div></div>}
     {res&&!mcq&&res.areas.length>0&&<><h3 className="sec">What you know well and what to revisit</h3><AreaList areas={res.areas} onStudy={null} staff/></>}
     {quiz.questions.map((x,i)=>{const f=mcq?fb[i]:res&&res.results[i]
-      return <div className="qbox" key={i}><b>Question {i+1}{f?(f.ok?' · Right':' · Wrong'):''}</b><div className="prose"><Md>{x.text}</Md></div>
+      return <div className="qbox" key={i}><b>Question {i+1}{f?(f.ok?' · Right':' · Wrong'):''}</b>{x.topic&&<small className="known" style={{display:'block'}}>{x.topic}</small>}<div className="prose"><Md>{x.text}</Md></div>
         {x.options.map((o,k)=>{const cls=f?(k===f.correct?' ok':k===ans[i]?' bad':''):ans[i]===k?' sel':''
           return <button key={k} className={'opt'+cls} disabled={!!f||!!res} aria-pressed={ans[i]===k} onClick={()=>pick(i,k)}><b className="olet">{LET[k]}</b><span className="obody"><Md>{o}</Md></span>{f&&k===f.correct&&<span className="otag ok"><Check size={14}/> Correct</span>}</button>})}
         {f&&f.explanation&&<div className="known"><Md>{f.explanation}</Md></div>}</div>})}

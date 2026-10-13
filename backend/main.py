@@ -2264,6 +2264,8 @@ def study_days(s, uid, since):  # {local day: activity count}: topics opened, to
     for (t,) in s.query(Progress.completed_at).filter(Progress.user_id == uid, Progress.completed_at.isnot(None)): days[local_day(t)] += 1
     for (t,) in s.query(Progress.last_read).filter(Progress.user_id == uid, Progress.last_read.isnot(None)): days[local_day(t)] += 1  # opens made before day tracking began
     for (t,) in s.query(Attempt.at).filter(Attempt.user_id == uid): days[local_day(t)] += 1
+    for (t,) in s.query(StudyAttempt.at).filter(StudyAttempt.user_id == uid): days[local_day(t)] += 1  # courses students build count toward the streak too
+    for (t,) in s.query(StudyProgress.opened_at).filter(StudyProgress.user_id == uid, StudyProgress.opened_at.isnot(None)): days[local_day(t)] += 1
     return {d: n for d, n in days.items() if d >= since}
 def streak_of(days, today):
     d = today if today in days else today - dt.timedelta(days=1)  # no study yet today does not break a streak that is still alive
@@ -2552,12 +2554,13 @@ class StudyProgress(Base):
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     topic_id = Column(Integer, ForeignKey("study_topics.id", ondelete="CASCADE"), index=True)
     opened_at = Column(DateTime, default=dt.datetime.utcnow); completed_at = Column(DateTime, nullable=True)
+    review_due = Column(DateTime, nullable=True); review_step = Column(Integer, default=0)  # spaced review: when this topic should come back, and how far apart reviews have grown
     __table_args__ = (UniqueConstraint("user_id", "topic_id", name="uq_study_progress"),)
 class StudyQuiz(Base):  # a set of questions the AI wrote for one person on one topic: mcq (practice, instant feedback) or quiz (scored at the end)
     __tablename__ = "study_quizzes"
-    id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("study_topics.id", ondelete="CASCADE"), index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); kind = Column(String(10))
-    questions = Column(BIG)  # JSON [{text, options, correct, explanation, concept}]
+    id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("study_topics.id", ondelete="CASCADE"), index=True, nullable=True)  # null for a review set
+    course_id = Column(Integer, index=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); kind = Column(String(10))  # mcq, quiz or review
+    questions = Column(BIG)  # JSON [{text, options, correct, explanation, concept, topic_id}]
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 class StudyAttempt(Base):
     __tablename__ = "study_attempts"
@@ -2767,11 +2770,13 @@ def study_get(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     if mine: out.update(sources=json.loads(c.sources or "[]"), paragraphs=len(json.loads(c.paras or "[]")), plan=plan_view(c))
     if c.status == "ready":
         prog = {p.topic_id: p for p in s.query(StudyProgress).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_(s.query(StudyTopic.id).filter_by(course_id=c.id)))}
-        best = study_best(s, u.id, c.id)
+        best = study_best(s, u.id, c.id); now = dt.datetime.utcnow()
         units = s.query(StudyUnit).filter_by(course_id=c.id).order_by(StudyUnit.position, StudyUnit.id).all(); by = defaultdict(list)
         for t in s.query(StudyTopic).filter_by(course_id=c.id).order_by(StudyTopic.position, StudyTopic.id): by[t.unit_id].append(t)
+        stars = study_stars(s, u.id, [t.id for L in by.values() for t in L])
         out["units"] = [{"id": un.id, "title": un.title, "topics": [{"id": t.id, "title": t.title, "summary": t.summary or "", "status": "completed" if prog.get(t.id) and prog[t.id].completed_at else "in_progress" if t.id in prog else "not_started",
-                                                                   "best": best.get(t.id)} for t in by[un.id]]} for un in units]
+                                                                   "best": best.get(t.id), "stars": stars.get(t.id, 0), "due": bool(prog.get(t.id) and prog[t.id].review_due and prog[t.id].review_due <= now)} for t in by[un.id]]} for un in units]
+        out["mastery"] = round(100 * sum(stars.values()) / (3 * len(stars))) if stars else 0; out["reviews_due"] = sum(t["due"] for un in out["units"] for t in un["topics"])
     return out
 @app.put("/api/study/courses/{cid}")
 def study_edit(cid: int, b: StudyCourseIn, u: User = Depends(me), s: Session = Depends(db)):
@@ -2791,9 +2796,9 @@ def study_delete(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     c = study_course_or_404(cid, u, s, edit=True); drop_study_content(s, c.id); s.delete(c); s.commit(); return {"ok": True}
 def drop_study_content(s, cid):  # units, topics and everything hanging off them (SQLite does not cascade)
     tids = [i for (i,) in s.query(StudyTopic.id).filter_by(course_id=cid)] or [0]
-    qids = [i for (i,) in s.query(StudyQuiz.id).filter(StudyQuiz.topic_id.in_(tids))] or [0]
+    qids = [i for (i,) in s.query(StudyQuiz.id).filter(or_(StudyQuiz.topic_id.in_(tids), StudyQuiz.course_id == cid))] or [0]
     s.query(StudyAttempt).filter(StudyAttempt.quiz_id.in_(qids)).delete(synchronize_session=False)
-    for m in (StudyQuiz, StudyProgress): s.query(m).filter(m.topic_id.in_(tids)).delete(synchronize_session=False)
+    s.query(StudyQuiz).filter(StudyQuiz.id.in_(qids)).delete(synchronize_session=False); s.query(StudyProgress).filter(StudyProgress.topic_id.in_(tids)).delete(synchronize_session=False)
     s.query(StudyTopic).filter_by(course_id=cid).delete(); s.query(StudyUnit).filter_by(course_id=cid).delete()
 
 # -- wizard step 2: material --
@@ -2900,7 +2905,7 @@ def study_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     i = order.index(tid); pick = lambda j: {"id": order[j], "title": s.get(StudyTopic, order[j]).title} if 0 <= j < len(order) else None
     atts = s.query(StudyAttempt, StudyQuiz).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyQuiz.topic_id == tid, StudyAttempt.user_id == u.id).order_by(StudyAttempt.id.desc()).limit(20).all()
     return {"id": t.id, "title": t.title, "summary": t.summary or "", "content": t.content or "", "course_id": c.id, "course": c.title, "unit": un.title if un else "",
-            "completed": bool(p and p.completed_at), "has_explain": bool(t.explain), "prev": pick(i - 1), "next": pick(i + 1), "position": i + 1, "total": len(order),
+            "completed": bool(p and p.completed_at), "has_explain": bool(t.explain), "stars": study_stars(s, u.id, [tid]).get(tid, 0), "prev": pick(i - 1), "next": pick(i + 1), "position": i + 1, "total": len(order),
             "attempts": [{"id": a.id, "quiz_id": q.id, "kind": q.kind, "score": a.score, "total": a.total, "percent": a.percent, "at": iso(a.at)} for a, q in atts]}
 class DoneIn(BaseModel): completed: bool
 @app.put("/api/study/topics/{tid}/progress")
@@ -2936,22 +2941,27 @@ async def study_new_quiz(tid: int, b: NewQuizIn, u: User = Depends(me), s: Sessi
            (("\nAsk about different points than these earlier questions:\n" + "\n".join("- " + q["text"] for q in seen[:15])) if seen else ""))
     qs = clean_questions(ai_json(await study_ask(u, s, b.kind, STUDY_PROMPTS["questions"], msg, max_tokens=6000)), n)
     if len(qs) < max(2, n // 2): raise HTTPException(502, "The AI did not write enough usable questions. Try again.")
-    q = StudyQuiz(topic_id=tid, user_id=u.id, kind=b.kind, questions=json.dumps(qs, ensure_ascii=False)); s.add(q); s.commit()
+    for x in qs: x["topic_id"] = tid
+    q = StudyQuiz(topic_id=tid, course_id=t.course_id, user_id=u.id, kind=b.kind, questions=json.dumps(qs, ensure_ascii=False)); s.add(q); s.commit()
     return study_quiz_view(q, u, s)
 def study_quiz_or_404(qid, u, s):
     q = s.get(StudyQuiz, qid)
     if not q or q.user_id != u.id: raise HTTPException(404, "Quiz not found")  # a set belongs to the person who asked for it
-    study_topic_or_404(q.topic_id, u, s); return q
+    if q.topic_id: study_topic_or_404(q.topic_id, u, s)
+    else: study_course_or_404(q.course_id, u, s)
+    return q
 def study_quiz_view(q, u, s):
-    t = s.get(StudyTopic, q.topic_id)
-    return {"id": q.id, "kind": q.kind, "topic_id": t.id, "topic": t.title, "pass_percent": QUIZ_PASS, "questions": [{"text": x["text"], "options": x["options"]} for x in json.loads(q.questions)]}
+    t = s.get(StudyTopic, q.topic_id) if q.topic_id else None; c = s.get(StudyCourse, q.course_id) if q.course_id else None
+    names = {x.id: x.title for x in s.query(StudyTopic).filter(StudyTopic.id.in_({x.get("topic_id") for x in json.loads(q.questions)} - {None} or {0}))}
+    return {"id": q.id, "kind": q.kind, "topic_id": t.id if t else None, "topic": t.title if t else ("Review · " + (c.title if c else "")), "pass_percent": QUIZ_PASS,
+            "questions": [{"text": x["text"], "options": x["options"], **({"topic": names.get(x.get("topic_id"), "")} if not t else {})} for x in json.loads(q.questions)]}
 @app.get("/api/study/quizzes/{qid}")
 def study_quiz(qid: int, u: User = Depends(me), s: Session = Depends(db)): return study_quiz_view(study_quiz_or_404(qid, u, s), u, s)
 class CheckIn(BaseModel): index: int; answer: int
 @app.post("/api/study/quizzes/{qid}/check")
 def study_check(qid: int, b: CheckIn, u: User = Depends(me), s: Session = Depends(db)):  # practice MCQs: right or wrong at once, with the explanation
     q = study_quiz_or_404(qid, u, s)
-    if q.kind != "mcq": raise HTTPException(400, "A quiz shows its answers after you submit it")
+    if q.kind not in ("mcq", "review"): raise HTTPException(400, "A quiz shows its answers after you submit it")
     qs = json.loads(q.questions)
     if not 0 <= b.index < len(qs) or not 0 <= b.answer < len(qs[b.index]["options"]): raise HTTPException(400, "Out of range")
     x = qs[b.index]; return {"ok": b.answer == x["correct"], "correct": x["correct"], "explanation": x["explanation"]}
@@ -2963,12 +2973,24 @@ def study_attempt(qid: int, b: StudyAnswersIn, u: User = Depends(me), s: Session
     if any(a is not None and not 0 <= a < len(x["options"]) for a, x in zip(b.answers, qs)): raise HTTPException(400, "One of the answers is not a choice of its question")
     results = [{"chosen": a, "ok": a == x["correct"], "correct": x["correct"], "explanation": x["explanation"], "concept": x.get("concept", "")} for a, x in zip(b.answers, qs)]
     score = sum(r["ok"] for r in results); pct = round(100 * score / len(qs))
-    a = StudyAttempt(quiz_id=q.id, user_id=u.id, answers=json.dumps(b.answers), score=score, total=len(qs), percent=pct); s.add(a); s.commit()
+    xp0, stars0 = study_xp(s, u.id), study_stars(s, u.id, [q.topic_id]).get(q.topic_id, 0) if q.topic_id else 0
+    a = StudyAttempt(quiz_id=q.id, user_id=u.id, answers=json.dumps(b.answers), score=score, total=len(qs), percent=pct); s.add(a)
+    per = defaultdict(lambda: [0, 0])  # topic -> [right, asked]: each topic in the set moves on its own review schedule
+    for x, r_ in zip(qs, results): k = x.get("topic_id") or q.topic_id; per[k][0] += r_["ok"]; per[k][1] += 1
+    now, completed_now = dt.datetime.utcnow(), False
+    for tid, (ok, n) in per.items():
+        p = s.query(StudyProgress).filter_by(user_id=u.id, topic_id=tid).first() or StudyProgress(user_id=u.id, topic_id=tid); s.add(p)
+        schedule_review(p, ok / n, now)
+        if q.kind != "review" and not p.completed_at and pct >= (QUIZ_PASS if q.kind == "quiz" else 80): p.completed_at = now; completed_now = True  # a good check marks the topic learnt
+    s.commit()
+    xp1 = study_xp(s, u.id); stars1 = study_stars(s, u.id, [q.topic_id]).get(q.topic_id, 0) if q.topic_id else 0
     acc = {}
     for r in results:
         k = r["concept"] or "General"; g = acc.setdefault(k.lower(), {"title": k, "correct": 0, "total": 0}); g["correct"] += r["ok"]; g["total"] += 1
     areas = sorted([{**g, "percent": round(100 * g["correct"] / g["total"]), "status": area_status(round(100 * g["correct"] / g["total"]))} for g in acc.values()], key=lambda g: (g["percent"], g["title"]))
-    return {"attempt_id": a.id, "score": score, "total": len(qs), "percent": pct, "passed": pct >= QUIZ_PASS, "pass_percent": QUIZ_PASS, "results": results, "areas": areas, "summary": area_summary(areas)}
+    return {"attempt_id": a.id, "score": score, "total": len(qs), "percent": pct, "passed": pct >= QUIZ_PASS, "pass_percent": QUIZ_PASS, "results": results, "areas": areas, "summary": area_summary(areas),
+            "completed_now": completed_now, "stars": {"before": stars0, "after": stars1}, "xp": {"gained": xp1 - xp0, **level_of(xp1), "level_up": level_of(xp1)["level"] > level_of(xp0)["level"]},
+            "next_review": next_review_phrase(per, u, s)}
 @app.get("/api/study/courses/{cid}/progress")
 def study_progress(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     """Your progress in a course: topics completed, and each topic's best quiz score sorted into strong, getting there and needs another round."""
@@ -2978,6 +3000,81 @@ def study_progress(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     areas = sorted([{"topic_id": tid, "title": names[tid], "percent": p, "status": area_status(p)} for tid, p in best.items() if tid in names], key=lambda a: (a["percent"], a["title"]))
     return {"course": c.title, "topics": len(topics), "completed": done, "quizzed": len(areas), "average": round(sum(a["percent"] for a in areas) / len(areas)) if areas else None,
             "areas": areas, "summary": area_summary(areas)}
+REVIEW_DAYS = [1, 3, 7, 14, 30]  # spaced review: each good review pushes the next one further out; a poor one brings the topic back tomorrow
+def schedule_review(p, ratio, now):
+    step = p.review_step or 0
+    if ratio >= 0.8: step = min(step + 1, len(REVIEW_DAYS))
+    elif ratio < 0.6: step = 0
+    p.review_step = step; p.review_due = now + dt.timedelta(days=REVIEW_DAYS[max(step - 1, 0)])
+def next_review_phrase(per, u, s):
+    ds = [p.review_due for p in s.query(StudyProgress).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_(list(per) or [0])) if p.review_due]
+    if not ds: return ""
+    n = (local_day(min(ds)) - local_day(dt.datetime.utcnow())).days
+    return "Review it again tomorrow" if n <= 1 else f"Review it again in {n} days"
+def study_stars(s, uid, tids):  # 1 star: completed; 2: passed a quiz (60%+); 3: mastered (90%+ in a quiz)
+    tids = [t for t in tids if t]
+    if not tids: return {}
+    done = {t for (t,) in s.query(StudyProgress.topic_id).filter(StudyProgress.user_id == uid, StudyProgress.topic_id.in_(tids), StudyProgress.completed_at.isnot(None))}
+    best = dict(s.query(StudyQuiz.topic_id, func.max(StudyAttempt.percent)).join(StudyAttempt, StudyAttempt.quiz_id == StudyQuiz.id)
+                .filter(StudyQuiz.topic_id.in_(tids), StudyQuiz.kind == "quiz", StudyAttempt.user_id == uid).group_by(StudyQuiz.topic_id).all())
+    return {t: 3 if (best.get(t) or 0) >= 90 else 2 if (best.get(t) or 0) >= QUIZ_PASS else 1 if t in done else 0 for t in tids}
+def study_xp(s, uid):
+    """Points worked out from what the student did, so they never drift: 10 per topic completed, 1 per right answer, 20 per topic with a passed quiz,
+    30 more per mastered topic, 5 per review finished."""
+    done = s.query(func.count(StudyProgress.id)).filter(StudyProgress.user_id == uid, StudyProgress.completed_at.isnot(None)).scalar() or 0
+    right = s.query(func.coalesce(func.sum(StudyAttempt.score), 0)).filter(StudyAttempt.user_id == uid).scalar() or 0
+    best = [p for _, p in s.query(StudyQuiz.topic_id, func.max(StudyAttempt.percent)).join(StudyAttempt, StudyAttempt.quiz_id == StudyQuiz.id)
+            .filter(StudyAttempt.user_id == uid, StudyQuiz.kind == "quiz").group_by(StudyQuiz.topic_id)]
+    reviews = s.query(func.count(StudyAttempt.id)).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyAttempt.user_id == uid, StudyQuiz.kind == "review").scalar() or 0
+    return 10 * done + int(right) + 20 * sum(p >= QUIZ_PASS for p in best) + 30 * sum(p >= 90 for p in best) + 5 * reviews
+def level_of(xp):  # level n starts at 50·n·(n−1) points: 0, 100, 300, 600, 1000 …
+    n = 1
+    while 50 * (n + 1) * n <= xp: n += 1
+    lo, hi = 50 * n * (n - 1), 50 * (n + 1) * n
+    return {"total": xp, "level": n, "into": xp - lo, "span": hi - lo}
+def visible_study_courses(u, s):  # ready courses this person studies: their own and those classmates share
+    mine = s.query(StudyCourse).filter_by(owner_id=u.id, status="ready").all()
+    shared = []
+    if u.program_id:
+        mates = [i for (i,) in s.query(User.id).filter(User.program_id == u.program_id, User.id != u.id)]
+        shared = s.query(StudyCourse).filter(StudyCourse.owner_id.in_(mates or [0]), StudyCourse.share == "program", StudyCourse.status == "ready").all()
+    return mine + shared
+def due_topics(u, s, cids, now=None):
+    now = now or dt.datetime.utcnow()
+    return s.query(StudyProgress, StudyTopic).join(StudyTopic, StudyTopic.id == StudyProgress.topic_id).filter(
+        StudyProgress.user_id == u.id, StudyProgress.review_due.isnot(None), StudyProgress.review_due <= now, StudyTopic.course_id.in_(list(cids) or [0])).order_by(StudyProgress.review_due).all()
+@app.get("/api/study/me")
+def study_me(u: User = Depends(me), s: Session = Depends(db)):
+    """Home for a self-learner: level and points, streak, this week, reviews due, and the one thing to do next."""
+    now = dt.datetime.utcnow(); today = local_day(now); days = study_days(s, u.id, today - dt.timedelta(days=400))
+    courses = visible_study_courses(u, s); cmap = {c.id: c for c in courses}
+    due = due_topics(u, s, cmap, now); due_by = defaultdict(int)
+    for _, t in due: due_by[t.course_id] += 1
+    nxt = None
+    last = s.query(StudyProgress, StudyTopic).join(StudyTopic, StudyTopic.id == StudyProgress.topic_id).filter(StudyProgress.user_id == u.id, StudyTopic.course_id.in_(list(cmap) or [0])).order_by(StudyProgress.opened_at.desc()).first()
+    for c in ([cmap[last[1].course_id]] if last else []) + [c for c in courses if not last or c.id != last[1].course_id]:
+        order = s.query(StudyTopic).join(StudyUnit, StudyUnit.id == StudyTopic.unit_id).filter(StudyTopic.course_id == c.id).order_by(StudyUnit.position, StudyUnit.id, StudyTopic.position, StudyTopic.id).all()
+        done = {t for (t,) in s.query(StudyProgress.topic_id).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_([t.id for t in order] or [0]), StudyProgress.completed_at.isnot(None))}
+        t = next((t for t in order if t.id not in done), None)
+        if t: nxt = {"course_id": c.id, "course": c.title, "topic_id": t.id, "topic": t.title, "done": len(done), "topics": len(order)}; break
+    week = [{"date": (today - dt.timedelta(days=i)).isoformat(), "label": (today - dt.timedelta(days=i)).strftime("%a")[0], "active": (today - dt.timedelta(days=i)) in days, "today": i == 0} for i in range(6, -1, -1)]
+    return {"xp": level_of(study_xp(s, u.id)), "streak": streak_of(days, today), "active_today": today in days, "week": week, "courses": len(courses),
+            "reviews_due": len(due), "review_courses": [{"course_id": cid, "course": cmap[cid].title, "due": n} for cid, n in due_by.items()], "next": nxt}
+@app.post("/api/study/courses/{cid}/review")
+def study_review(cid: int, u: User = Depends(me), s: Session = Depends(db)):
+    """A review set from the student's own earlier questions on the topics that are due, at most two per topic and ten in all. No AI request is used."""
+    import random
+    c = study_course_or_404(cid, u, s); due = due_topics(u, s, [c.id])
+    if not due: raise HTTPException(400, "Nothing is due for review in this course right now")
+    picked = []
+    for _, t in due:
+        pool = [x for (raw,) in s.query(StudyQuiz.questions).filter(StudyQuiz.topic_id == t.id, StudyQuiz.user_id == u.id, StudyQuiz.kind.in_(("mcq", "quiz"))) for x in json.loads(raw)]
+        for x in random.sample(pool, min(2, len(pool))): picked.append({**x, "topic_id": t.id})
+        if len(picked) >= 10: break
+    if not picked: raise HTTPException(400, "Do a quick check on these topics first, then they can be reviewed")
+    random.shuffle(picked)
+    q = StudyQuiz(topic_id=None, course_id=c.id, user_id=u.id, kind="review", questions=json.dumps(picked[:10], ensure_ascii=False)); s.add(q); s.commit()
+    return study_quiz_view(q, u, s)
 def read_head():  # the commit this server's code is at (None when it is not a git checkout)
     try: return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=5).stdout.strip() or None
     except Exception: return None
