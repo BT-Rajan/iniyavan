@@ -6,3 +6,4 @@ cryptography
 pyjwt
 httpx
 python-dotenv
+nh3
