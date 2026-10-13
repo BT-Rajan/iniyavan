@@ -210,3 +210,12 @@ code{font-size:.92em;background:var(--s2);padding:1px 5px;border-radius:4px}
 .htmlc pre{overflow-x:auto;background:var(--s2);padding:10px;border-radius:var(--r-ctl,8px)}
 .htmlc [dir=rtl]{text-align:right}
 textarea.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+/* building a course from your own material */
+.steps{display:flex;gap:6px;list-style:none;padding:0;margin:0 0 16px;font-size:12px;color:var(--mut)}
+.steps li{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.steps li span{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--s2);font-weight:700}
+.steps li.on{color:var(--tx);font-weight:600}.steps li.on span{background:var(--acc);color:var(--acc-tx)}.steps li.done span{background:var(--okbg);color:var(--ok)}
+.utitle{font-weight:700}
+.ptopic{border-top:1px solid var(--line);padding:10px 0 4px;margin-top:10px}.ptopic small{display:block;margin-top:4px}
+.excerpt{font-size:13px;color:var(--mut);margin:6px 0;overflow-wrap:anywhere}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}

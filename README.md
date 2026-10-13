@@ -98,6 +98,21 @@ Topics have a Published flag. Drafts are visible to admins and the course's owne
 ## Quizzes
 Admins and faculty (for their own courses) add multiple-choice quizzes to a unit: open the unit, tap **Add quiz**, set a title and pass mark, write questions with 2 to 6 answers, tick the correct one and add an optional explanation (Markdown and `$math$` work). A quiz stays a draft until **Published** is ticked. Students open it from the unit, answer, and are graded on the server, so the correct answers are never sent to the browser before they submit. They then see their score, pass or fail and which of their answers were right; the correct answers and explanations are sent to students only when the quiz is set to show them (admins and the course's faculty always see them). Students can try again as often as they like; the best score shows on the unit. Quizzes follow the same program and semester rules as topics and disappear with their unit or course.
 
+## Students build their own courses
+Students have **Build a course** in the menu. It turns their own notes, textbook chapters or handouts into a course they study in the app, next to the courses staff set up.
+
+1. **Name** the course.
+2. **Material:** upload PDFs (with selectable text; scanned pages can't be read), Word (.docx) files, or .txt/.md files, and/or paste text. Several files are joined in the order they are added. Word headings, lists and tables are kept.
+3. **Slice:** the AI groups the material into units and the smallest topics that make sense on their own. The student can write notes for it ("one topic per verse", "keep the vocabulary table together"). The AI only decides where each topic starts and ends and what to call it: topics keep the student's own words, nothing is rewritten or invented. Without AI, **Slice by headings** uses the document's headings.
+4. **Preview:** every unit and topic with its size and the start of its text, **Read it all**, rename, **Merge with next** and **Remove**. Change the notes and slice again as often as needed; **Save outline and finish later** keeps the work.
+5. **Finish** builds the course. **Change the setup** goes back to the outline later; finishing again replaces the topics (after asking), with their progress and quiz results.
+
+Studying a course: topics in order with **Mark as completed**, previous/next, and an AI **Explain** (saved, so it is asked once per topic). On any topic, **Practice MCQs** gives 5 AI-written questions with the answer and explanation right after each one; **Take a quiz** gives 10 questions scored at the end (pass mark 60%), with what the student knows well and what to revisit. Every request writes new questions, asked to differ from the last ones, and the AI is told to use only facts in the material. The course page shows topics completed, the quiz average and each topic's best quiz score sorted into strong, getting there and revisit.
+
+Sharing: a course is private. Its owner can share it with **My classmates** (students in the same program); they can study it and take their own quizzes, but only the owner can change it. Admins can open and delete any of them through the API.
+
+AI use follows the usual rules: self-registered students use their own DeepSeek key; others use the admin's key and are limited to `STUDY_AI_DAILY` (default 40) AI requests a day for their own courses. Limits: 50 courses per student, 20 MB per file, 1.5 million characters of material per course. API under `/api/study/...`; the tables are created on first start.
+
 ## Topics from an HTML file and a config file
 In the topic editor (Add topic, or Edit topic), **Fill from files** takes an HTML file for the content and a config `.md` file for everything else. Choose them together, with any images the HTML uses, and the form fills in. Check it, then save. Nothing is saved until you do.
 
