@@ -202,3 +202,11 @@ code{font-size:.92em;background:var(--s2);padding:1px 5px;border-radius:4px}
 /* A row with many action buttons (archive, reorder, publish, share, edit, delete): the title keeps a readable width and the buttons wrap under it on a phone */
 .card{flex-wrap:wrap}.card .hit{flex:1 1 180px}
 .acts{display:flex;flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end;gap:8px;min-width:0;margin-left:auto}.acts:empty{display:none}
+/* topics uploaded as HTML: the file's structure with the app's look */
+.htmlc{overflow-wrap:anywhere}.htmlc img{max-width:100%;height:auto;border-radius:var(--r-ctl,8px)}
+.htmlc table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:14px 0;font-size:.95em}
+.htmlc th,.htmlc td{border:1px solid var(--line);padding:6px 10px;vertical-align:top;text-align:start}.htmlc th{background:var(--s2)}
+.htmlc blockquote{border-inline-start:3px solid var(--acc);margin:12px 0;padding:4px 14px;color:var(--mut)}
+.htmlc pre{overflow-x:auto;background:var(--s2);padding:10px;border-radius:var(--r-ctl,8px)}
+.htmlc [dir=rtl]{text-align:right}
+textarea.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}

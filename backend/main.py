@@ -1,5 +1,5 @@
 from collections import defaultdict
-import base64, csv, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, datetime as dt, httpx, jwt
+import base64, csv, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, datetime as dt, httpx, jwt, nh3
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -109,6 +109,7 @@ class Topic(Base):
     course_id = Column("subject_id", Integer, ForeignKey("subjects.id", ondelete="CASCADE"))
     unit_id = Column(Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=True)
     content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
+    content_format = Column(String(10), default="markdown")  # "markdown", or "html" for content uploaded as an HTML file (stored cleaned, never with scripts or styles)
     published = Column(Boolean, default=True)  # drafts are visible to admins and the course's owner only
     position = Column(Integer, nullable=True)  # order within the unit, set by the course's owner
     learning_due_at = Column(DateTime, nullable=True)  # learn-by deadline, a UTC instant like every timestamp here; null = no deadline
@@ -117,6 +118,7 @@ class TopicVersion(Base):  # a snapshot of a topic's text each time it is saved,
     __tablename__ = "topic_versions"
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
     title = Column(String(200)); content = Column(Text); sample_content = Column(Text); question_pattern = Column(Text); guideline = Column(Text)
+    content_format = Column(String(10), default="markdown")
     saved_by = Column(Integer, nullable=True); saved_at = Column(DateTime, default=dt.datetime.utcnow); note = Column(String(200), default="")
 class Quiz(Base):  # a multiple-choice quiz attached to a unit, or an MCQ test for a whole course (unit_id null; course_id is then its real parent)
     __tablename__ = "quizzes"
@@ -492,6 +494,10 @@ def registration_columns(c):  # users.institution, id_number, phone, self_regist
 def mcq_columns(c):  # course-level MCQ tests: images, areas and revealing answers
     _addcol("quizzes", "reveal", "TINYINT(1) NOT NULL DEFAULT 0")(c)
     for col, typ in (("area", "VARCHAR(150) NULL"), ("image", "VARCHAR(300) NULL"), ("option_images", "TEXT NULL")): _addcol("quiz_questions", col, typ)(c)
+def content_format_columns(c):  # topics can hold an uploaded HTML file; HTML runs longer, so MariaDB/MySQL get MEDIUMTEXT (16 MB) for the content
+    for t in ("topics", "topic_versions"):
+        _addcol(t, "content_format", "VARCHAR(10) NOT NULL DEFAULT 'markdown'")(c)
+        if c.dialect.name != "sqlite": c.execute(text(f"ALTER TABLE {t} MODIFY content MEDIUMTEXT"))
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
@@ -502,7 +508,7 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0013_questions_topic_id", _addcol("quiz_questions", "topic_id", "INT NULL")), ("0014_attempts_detail", _addcol("quiz_attempts", "detail", "TEXT NULL")),
               ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern),
               ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")]),
-              ("0018_mcq_tests", mcq_columns)]
+              ("0018_mcq_tests", mcq_columns), ("0019_topic_content_format", content_format_columns)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -1163,6 +1169,7 @@ class CourseIn(BaseModel): name: str; semester_id: int; faculty_owner_id: int | 
 class UnitIn(BaseModel): name: str; course_id: int
 class TopicIn(BaseModel):
     title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""; published: bool = True
+    content_format: str = "markdown"  # "markdown" or "html"; HTML is cleaned when it is saved
     learning_due_at: dt.datetime | None = None  # ISO 8601 with a time zone; null removes the deadline; leave out to keep it
 M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Unit, "topics": Topic}
 @app.get("/api/tree")
@@ -1266,7 +1273,7 @@ def course_fields(b, s):
     sem = s.get(Semester, b.semester_id)
     if not sem: raise HTTPException(400, "Choose a semester for this course")
     return {"name": b.name, "semester_id": sem.id, "program_id": sem.program_id}
-VFIELDS = ("title", "content", "sample_content", "question_pattern", "guideline")
+VFIELDS = ("title", "content", "sample_content", "question_pattern", "guideline", "content_format")
 VERSIONS_KEPT = 100
 def topic_state(t): return {k: getattr(t, k) or "" for k in VFIELDS}
 def record_version(s, t, before, user_id, note=""):
@@ -1281,13 +1288,34 @@ def record_version(s, t, before, user_id, note=""):
     old = [i for (i,) in s.query(TopicVersion.id).filter_by(topic_id=t.id).order_by(TopicVersion.id.desc()).offset(VERSIONS_KEPT)]
     if old: s.query(TopicVersion).filter(TopicVersion.id.in_(old)).delete(synchronize_session=False)
     return True
-def topic_fields(b, s):
+FORMATS = ("markdown", "html")
+def fmt_of(t): return "html" if getattr(t, "content_format", None) == "html" else "markdown"
+HTML_TAGS = {"p", "br", "hr", "div", "span", "section", "article", "header", "footer", "aside", "main", "figure", "figcaption", "blockquote", "pre", "code", "kbd", "samp",
+             "h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em", "i", "u", "s", "del", "ins", "mark", "small", "sub", "sup", "abbr", "cite", "q", "dfn", "time", "bdi", "bdo",
+             "ul", "ol", "li", "dl", "dt", "dd", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col", "a", "img", "details", "summary", "ruby", "rt", "rp", "input"}
+HTML_ATTRS = {"*": {"dir", "lang", "title"}, "a": {"href"}, "img": {"src", "alt", "width", "height"}, "td": {"colspan", "rowspan", "align"}, "th": {"colspan", "rowspan", "align", "scope"},
+              "ol": {"start", "type", "reversed"}, "li": {"value"}, "col": {"span"}, "colgroup": {"span"}, "time": {"datetime"}, "abbr": {"title"}, "input": {"type", "checked", "disabled"}}
+def clean_html(raw):
+    """An uploaded HTML file -> the safe part of its body: no scripts, styles, event handlers, forms or javascript: links; only http(s), mailto and relative links."""
+    raw = raw or ""
+    m = re.search(r"<body[^>]*>(.*)</body>", raw, re.S | re.I)
+    out = nh3.clean(m.group(1) if m else raw, tags=HTML_TAGS, attributes=HTML_ATTRS, url_schemes={"http", "https", "mailto"}, link_rel="noopener noreferrer",
+                    set_tag_attribute_values={"input": {"disabled": "disabled"}})
+    return re.sub(r"<input(?![^>]*type=\"checkbox\")[^>]*>", "", out).strip()  # only task-list checkboxes, never a real form field
+def html_text(h): return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", re.sub(r"<(br|/p|/li|/tr|/h\d|/div)[^>]*>", "\n", h or "")))).strip()
+def shown_content(t): return clean_html(t.content) if fmt_of(t) == "html" else t.content  # cleaned again on the way out, whatever path saved it
+def topic_fields(b, s, keep_fmt=None):
     un = s.get(Unit, b.unit_id)
     if not un: raise HTTPException(400, "Choose a unit for this topic")
     title = (b.title or "").strip()
     if not title or len(title) > 200: raise HTTPException(400, "Give the topic a title (up to 200 characters)")
     f = {**b.dict(exclude_unset=True), "title": title, "course_id": un.course_id}  # fields left out are left alone
     if "learning_due_at" in f: f["learning_due_at"] = due_value(b.learning_due_at)
+    if "content_format" in f or "content" in f:
+        fmt = f.get("content_format") or keep_fmt or "markdown"  # content sent without a format keeps the topic's format
+        if fmt not in FORMATS: raise HTTPException(400, "Content format must be markdown or html")
+        f["content_format"] = fmt
+        if fmt == "html" and "content" in f: f["content"] = clean_html(f["content"])
     return f
 def update(row, vals, s):
     if not row: raise HTTPException(404, "Not found")
@@ -1390,7 +1418,7 @@ def edit_topic(rid: int, b: TopicIn, u: User = Depends(staff), s: Session = Depe
     x = s.get(Topic, rid)
     if not x: raise HTTPException(404, "Not found")
     old = topic_course_id(x, s); need_edit(u, old, s)
-    f = topic_fields(b, s); need_edit(u, f["course_id"], s)
+    f = topic_fields(b, s, fmt_of(x)); need_edit(u, f["course_id"], s)
     if f["course_id"] != old and u.role != "admin": raise HTTPException(403, "A topic can only move to another unit of the same course")
     if f["unit_id"] != x.unit_id: f["position"] = next_pos(s, Topic, unit_id=f["unit_id"])
     before = topic_state(x)
@@ -1418,7 +1446,7 @@ def copy_topic(tid: int, b: CopyIn, u: User = Depends(staff), s: Session = Depen
     if not un: raise HTTPException(400, "Choose the unit to copy it into")
     need_edit(u, un.course_id, s)
     title = free_name([x for (x,) in s.query(Topic.title).filter_by(unit_id=un.id)], t.title, 200)
-    n = Topic(title=title, unit_id=un.id, course_id=un.course_id, content=t.content, sample_content=t.sample_content, question_pattern=t.question_pattern, guideline=t.guideline,
+    n = Topic(title=title, unit_id=un.id, course_id=un.course_id, content=t.content, content_format=fmt_of(t), sample_content=t.sample_content, question_pattern=t.question_pattern, guideline=t.guideline,
               published=False, position=next_pos(s, Topic, unit_id=un.id)); n.created_by = u.id; s.add(n); s.flush()
     record_version(s, n, None, u.id, f"Copied from {where_is(t, s)} › {t.title}"[:200]); s.commit()
     return {"id": n.id, "title": n.title, "unit_id": un.id}
@@ -1435,7 +1463,7 @@ def copy_unit(uid: int, b: CopyIn, u: User = Depends(staff), s: Session = Depend
     ids, made = {}, 0
     for t in s.query(Topic).filter_by(unit_id=src.id).order_by(*ORDER.get(Topic, (Topic.id,))):
         if t.published is False and not mine: continue  # someone else's drafts are not yours to take
-        n = Topic(title=t.title, unit_id=nu.id, course_id=co.id, content=t.content, sample_content=t.sample_content, question_pattern=t.question_pattern, guideline=t.guideline,
+        n = Topic(title=t.title, unit_id=nu.id, course_id=co.id, content=t.content, content_format=fmt_of(t), sample_content=t.sample_content, question_pattern=t.question_pattern, guideline=t.guideline,
                   published=False, position=next_pos(s, Topic, unit_id=nu.id)); n.created_by = u.id; s.add(n); s.flush(); ids[t.id] = n.id; made += 1
         record_version(s, n, None, u.id, f"Copied from {where_is(t, s)}"[:200])
     quizzes = 0
@@ -2047,6 +2075,7 @@ def import_csv(b: ImportIn, a: User = Depends(admin), s: Session = Depends(db)):
             co = get("course", (sm.id, v["course"].lower()), lambda: Course(name=v["course"], semester_id=sm.id, program_id=p.id))
             un = get("unit", (co.id, v["unit"].lower()), lambda: Unit(name=v["unit"], course_id=co.id, position=next_pos(s, Unit, course_id=co.id)))
             vals = {k: v[k] for k in TEXT_COLS if v.get(k)}
+            if "content" in vals: vals["content_format"] = "markdown"  # CSV content is always Markdown
             t = cache["topic"].get((un.id, v["topic"].lower()))
             if t:
                 before = topic_state(t)
@@ -2067,7 +2096,7 @@ def full(t, s):
     un = s.get(Unit, t.unit_id) if t.unit_id else None
     return {"id": t.id, "title": t.title, "course_id": co.id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
             "semester": sem.name if sem else "", "program": (s.get(Program, sem.program_id if sem else co.program_id) or Program(name="")).name,
-            "content": t.content, "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
+            "content": shown_content(t), "content_format": fmt_of(t), "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
 def version_row(v, names, cur): return {"id": v.id, "saved_at": (v.saved_at.isoformat() + "Z") if v.saved_at else None, "by": names.get(v.saved_by) if v.saved_by else None, "note": v.note or "",
                                           "current": all((getattr(v, k) or "") == cur[k] for k in VFIELDS)}
 @app.get("/api/topics/{tid}/versions")
@@ -2085,7 +2114,8 @@ def version_or_404(vid, u, s):
 @app.get("/api/topic-versions/{vid}")
 def topic_version(vid: int, u: User = Depends(staff), s: Session = Depends(db)):
     v, t = version_or_404(vid, u, s)
-    return {"id": v.id, "topic_id": t.id, "saved_at": (v.saved_at.isoformat() + "Z") if v.saved_at else None, "note": v.note or "", **{k: getattr(v, k) or "" for k in VFIELDS}, "now": topic_state(t)}
+    old = {k: getattr(v, k) or "" for k in VFIELDS}; old["content_format"] = fmt_of(v); old["content"] = shown_content(v)
+    return {"id": v.id, "topic_id": t.id, "saved_at": (v.saved_at.isoformat() + "Z") if v.saved_at else None, "note": v.note or "", **old, "now": {**topic_state(t), "content": shown_content(t)}}
 @app.post("/api/topic-versions/{vid}/restore")
 def restore_topic_version(vid: int, u: User = Depends(staff), s: Session = Depends(db)):  # puts an old text back as the newest version; nothing is lost, the text it replaces stays in the history
     v, t = version_or_404(vid, u, s); before = topic_state(t)
@@ -2093,6 +2123,103 @@ def restore_topic_version(vid: int, u: User = Depends(staff), s: Session = Depen
     if not t.title.strip(): raise HTTPException(400, "That version has no title")
     record_version(s, t, before, u.id, f"Restored the version of {v.saved_at.strftime('%d %b %Y %H:%M') if v.saved_at else 'earlier'} UTC"); s.commit()
     return {"ok": True}
+# ---- a topic from files: an HTML file for the content and a config .md file for the rest; the editor fills in from it, nothing is saved here ----
+class TopicFilesIn(BaseModel): unit_id: int; html: str = ""; config: str = ""; images: dict[str, str] = {}  # images: file name -> url from POST /api/uploads
+CONFIG_SECTIONS = {"title": ("topic title", "title"), "content": ("topic content", "content", "notes"), "question_pattern": ("question pattern", "question patterns"),
+                   "sample_content": ("sample content", "sample answer", "sample question and answer", "sample"),
+                   "guideline": ("how an answer should be", "answer guideline", "guideline", "how to answer")}
+CONFIG_KEYS = {"title": ("title", "topic title", "name"), "published": ("published", "publish", "status"), "deadline": ("deadline", "learning deadline", "due", "learn by")}
+def section_of(heading):
+    h = re.sub(r"[^a-z ]", "", heading.lower()).strip()
+    return next((k for k, names in CONFIG_SECTIONS.items() if h in names), None)
+def parse_topic_config(text):
+    """The config .md: optional front matter (title, published, deadline) between --- lines, then '## Question pattern', '## Sample content' and
+    '## How an answer should be' sections (and '## Topic title' / '## Topic content' if wanted). Other headings stay inside the section they are in."""
+    out, warnings, lines = {}, [], (text or "").replace("\r\n", "\n").lstrip("\ufeff").split("\n")
+    if lines and lines[0].strip() == "---" and "---" in [x.strip() for x in lines[1:]]:
+        end = 1 + [x.strip() for x in lines[1:]].index("---")
+        for ln in lines[1:end]:
+            if not ln.strip() or ln.strip().startswith("#"): continue
+            k, sep, v = ln.partition(":")
+            key = next((n for n, names in CONFIG_KEYS.items() if k.strip().lower() in names), None)
+            if not sep or not key: warnings.append(f"Config: \"{ln.strip()[:60]}\" is not a known setting (title, published, deadline)"); continue
+            out[key] = v.strip().strip("\"'")
+        lines = lines[end + 1:]
+    cur, buf, fence, loose = None, defaultdict(list), False, []
+    for ln in lines:
+        if ln.lstrip().startswith(("```", "~~~")): fence = not fence
+        m = None if fence else re.match(r"^(#{1,2})\s+(.+?)\s*#*\s*$", ln)
+        sec = section_of(m.group(2)) if m else None
+        if sec: cur = sec; continue
+        if m and m.group(1) == "#" and cur is None and "title" not in out: out["title"] = m.group(2).strip(); continue
+        (buf[cur] if cur else loose).append(ln)
+    for k, L in buf.items(): out[k] = "\n".join(L).strip()
+    if any(x.strip() for x in loose): warnings.append("Config: text before the first section heading was left out")
+    if "published" in out:
+        v = out["published"].lower()
+        if v in ("yes", "true", "published", "1", "y"): out["published"] = True
+        elif v in ("no", "false", "draft", "0", "n"): out["published"] = False
+        else: warnings.append("Config: published must be yes or no"); out.pop("published")
+    if "deadline" in out:
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})(?:[ T](\d{1,2}:\d{2}))?", out["deadline"])
+        if m: out["deadline"] = f"{m.group(1)}T{(m.group(2) or '23:59').zfill(5)}"
+        else: warnings.append("Config: deadline must look like 2026-10-20 or 2026-10-20 17:00"); out.pop("deadline")
+    return out, warnings
+DATA_IMG = re.compile(r"""(src\s*=\s*["'])data:image/[a-z+]+;base64,([A-Za-z0-9+/=\s]+)(["'])""", re.I)
+def html_images(raw, given):
+    """Embedded (data:) images become uploads; images named by file name use the matching uploaded file; anything else is dropped and named."""
+    saved, missing = 0, []
+    def keep_data(m):
+        nonlocal saved
+        try: b = base64.b64decode(re.sub(r"\s", "", m.group(2)), validate=True)
+        except Exception: b = b""
+        ext = sniff(b)
+        if not ext or len(b) > MAX_IMG: missing.append("an embedded image " + ("over 3 MB" if ext else "that could not be read")); return m.group(1) + m.group(3)
+        os.makedirs(UPLOADS, exist_ok=True); name = f"{os.urandom(16).hex()}.{ext}"
+        with open(os.path.join(UPLOADS, name), "wb") as f: f.write(b)
+        saved += 1; return f"{m.group(1)}/api/uploads/{name}{m.group(3)}"
+    raw = DATA_IMG.sub(keep_data, raw)
+    names = {k.strip().lower(): v for k, v in given.items() if IMG_URL.fullmatch(v or "")}
+    def link(m):
+        src = htmllib.unescape(m.group(2)).strip()
+        if IMG_URL.fullmatch(src) or re.match(r"https?://", src, re.I): return m.group(0)
+        hit = names.get(re.split(r"[\\/]", src.split("?")[0])[-1].lower())
+        if hit: return f'{m.group(1)}{hit}{m.group(3)}'
+        if src: missing.append(re.split(r"[\\/]", src)[-1][:80])
+        return m.group(1) + m.group(3)
+    raw = re.sub(r"""(<img\b[^>]*?\bsrc\s*=\s*["'])([^"']*)(["'])""", link, raw, flags=re.I)
+    raw = re.sub(r"""<img\b(?![^>]*\bsrc\s*=\s*["'][^"']+["'])[^>]*>""", "", raw, flags=re.I)  # an image with nothing to show is removed
+    return raw, saved, missing
+class HtmlIn(BaseModel): html: str
+@app.post("/api/topics/clean-html")
+def clean_html_preview(b: HtmlIn, _: User = Depends(staff)):  # the editor previews HTML only after this cleaning, so a pasted file can't run code in the browser
+    if len(b.html) > 5_000_000: raise HTTPException(413, "The HTML is too large to preview")
+    return {"html": clean_html(b.html)}
+@app.post("/api/topics/from-files")
+def topic_from_files(b: TopicFilesIn, u: User = Depends(staff), s: Session = Depends(db)):
+    un = s.get(Unit, b.unit_id)
+    if not un: raise HTTPException(400, "Choose a unit for this topic")
+    need_edit(u, un.course_id, s)
+    if not b.html.strip() and not b.config.strip(): raise HTTPException(400, "Choose an HTML file, a config file, or both")
+    if len(b.html) > 25_000_000 or len(b.config) > 1_000_000: raise HTTPException(413, "The file is too large")
+    cfg, warnings = parse_topic_config(b.config) if b.config.strip() else ({}, [])
+    out = {k: cfg[k] for k in ("title", "question_pattern", "sample_content", "guideline", "published") if k in cfg}
+    if "deadline" in cfg: out["learning_due_at"] = cfg["deadline"]
+    images = 0
+    if b.html.strip():
+        raw, images, missing = html_images(b.html, b.images)
+        body = clean_html(raw)
+        if len(body) > 2_000_000: raise HTTPException(413, "The HTML content is over 2 MB after cleaning. Split it into smaller topics.")
+        if not html_text(body) and "<img" not in body: warnings.append("The HTML file has no text to show")
+        out.update(content=body, content_format="html")
+        if missing: warnings.append("Images not found, so they were left out: " + ", ".join(dict.fromkeys(missing)) + ". Choose the image files together with the HTML file.")
+        if "content" in cfg and cfg["content"]: warnings.append("The config's Topic content section was ignored because the HTML file is the content")
+        if "title" not in out:
+            m = re.search(r"<title[^>]*>(.*?)</title>", b.html, re.S | re.I) or re.search(r"<h1[^>]*>(.*?)</h1>", b.html, re.S | re.I)
+            if m and html_text(m.group(1)): out["title"] = html_text(m.group(1))[:200]
+    elif cfg.get("content"): out.update(content=cfg["content"], content_format="markdown")
+    if out.get("title"): out["title"] = out["title"][:200]
+    return {**out, "images_saved": images, "warnings": warnings}
 def topic_neighbours(t, edit, s):  # the topics before and after this one in its unit, in the order the course shows them; drafts only for those who can edit
     sibs = [x for x in s.query(Topic).filter(Topic.unit_id == t.unit_id).order_by(*ORDER.get(Topic, (Topic.id,))) if edit or x.published is not False] if t.unit_id else []
     i = next((k for k, x in enumerate(sibs) if x.id == t.id), None)
@@ -2278,7 +2405,8 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     key = key_or_fail(u, s)
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
-    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{f['content']}\n\n" + (
+    body = html_text(f["content"]) if f["content_format"] == "html" else f["content"]  # the AI gets the words of an HTML topic, not its tags
+    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\n" + (
         "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
     text, tokens = await ask_ai(u, s, key, prompt, msg)
     try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
@@ -2315,7 +2443,7 @@ def search(q: str = "", limit: int = 10, u: User = Depends(me), s: Session = Dep
     need = max(1, (len(terms) + 1) // 2); scored = []
     for t, un, co in rows:
         if not allowed(co) or (t.published is False and not can_edit(u, co.id, s)) or (topic_off(s, t) and not can_edit(u, co.id, s)): continue  # archived topics and units are not searchable by students
-        title, unit, course, body = (t.title or "").lower(), (un.name or "").lower(), (co.name or "").lower(), plain(t.content)
+        title, unit, course, body = (t.title or "").lower(), (un.name or "").lower(), (co.name or "").lower(), plain(html_text(t.content) if fmt_of(t) == "html" else t.content)
         hit = [tm for tm in terms if tm in title or tm in unit or tm in course or tm in body.lower()]
         if len(hit) < need: continue
         score = sum(5 if tm in title else 2 if (tm in unit or tm in course) else 1 for tm in hit) + (5 if len(terms) > 1 and " ".join(terms) in title else 0)

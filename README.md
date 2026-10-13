@@ -98,6 +98,35 @@ Topics have a Published flag. Drafts are visible to admins and the course's owne
 ## Quizzes
 Admins and faculty (for their own courses) add multiple-choice quizzes to a unit: open the unit, tap **Add quiz**, set a title and pass mark, write questions with 2 to 6 answers, tick the correct one and add an optional explanation (Markdown and `$math$` work). A quiz stays a draft until **Published** is ticked. Students open it from the unit, answer, and are graded on the server, so the correct answers are never sent to the browser before they submit. They then see their score, pass or fail and which of their answers were right; the correct answers and explanations are sent to students only when the quiz is set to show them (admins and the course's faculty always see them). Students can try again as often as they like; the best score shows on the unit. Quizzes follow the same program and semester rules as topics and disappear with their unit or course.
 
+## Topics from an HTML file and a config file
+In the topic editor (Add topic, or Edit topic), **Fill from files** takes an HTML file for the content and a config `.md` file for everything else. Choose them together, with any images the HTML uses, and the form fills in. Check it, then save. Nothing is saved until you do.
+
+The config file (**Config template** downloads an example):
+
+```
+---
+title: 1. Introduction and learning objectives
+published: no
+deadline: 2026-10-20 17:00
+---
+
+## Question pattern
+...
+
+## Sample content
+...
+
+## How an answer should be
+...
+```
+
+- Everything is optional. The front matter sets the title, published (yes/no) and the learning deadline (`2026-10-20` or `2026-10-20 17:00`). The `##` sections fill the boxes of the same name; `Answer guideline` and `Sample answer` work too. Other headings stay inside the section they are in, so a sample answer can have its own headings. A `## Topic content` section is used as Markdown content when there is no HTML file.
+- Without a title in the config, the HTML file's `<title>` or first heading is used.
+- The HTML keeps its structure (headings, lists, tables, links, images, right-to-left text) and takes the app's look in light and dark mode. Scripts, styles, forms, frames and event handlers are removed on the server when it is saved and again whenever it is shown, so an uploaded file can't run code. The editor's preview is cleaned the same way.
+- Images embedded in the HTML (`data:` images) are saved as uploads. Images referenced by file name (`<img src="figs/chart.png">`) use the image file of that name chosen with the HTML; any others are left out and named.
+- The content box has a **Markdown / HTML** switch, so an HTML topic can still be edited by hand; **Add image** inserts an `<img>` in HTML mode. Version history, restore and copying keep the format. A CSV import always writes Markdown content. Search and the AI read the text of an HTML topic, not its tags.
+- API: `POST /api/topics/from-files` (`unit_id`, `html`, `config`, `images` as file name → upload url) returns the filled fields; topics take `content_format` (`markdown` or `html`). Migration 0019 adds `content_format` and, on MariaDB/MySQL, makes topic content MEDIUMTEXT.
+
 ## MCQ tests (whole course, from a CSV)
 A course test is a multiple-choice test for a whole course rather than one unit. The course owner or an admin opens the course and taps **New MCQ test from a CSV**.
 

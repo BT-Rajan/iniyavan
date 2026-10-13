@@ -17,6 +17,8 @@ export function fixTables(text){
   }).join('\n')
 }
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
+// a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
+const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
 import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
@@ -641,7 +643,7 @@ function CopySheet({kind,id,title,close,toast}){
       {kind==='topic'&&dest&&<><label htmlFor="cu">Unit</label><select id="cu" value={uid} onChange={e=>setUid(e.target.value)}><option value="">Choose a unit</option>{dest.units.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select>{!dest.units.length&&<p className="known">That course has no units yet. Add a unit first.</p>}</>}
       {kind==='unit'&&<label className="chk"><input type="checkbox" checked={wq} onChange={e=>setWq(e.target.checked)}/> Include its quizzes (as drafts)</label>}</>}
     <button className="btn" disabled={busy||!dest||(kind==='topic'&&!uid)} onClick={run}>{busy?'Copying…':'Copy'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
-const FIELD_LABEL={title:'Title',content:'Notes',sample_content:'Sample answer',question_pattern:'Question pattern',guideline:'Answer guideline'}
+const FIELD_LABEL={title:'Title',content:'Notes',content_format:'Content format',sample_content:'Sample answer',question_pattern:'Question pattern',guideline:'Answer guideline'}
 const lineDiff=(a,b)=>{const x=a.split('\n'),y=b.split('\n'),n=x.length,m=y.length
   if(n*m>250000)return [...x.map(t=>({k:'del',t})),...y.map(t=>({k:'add',t}))]  // very long texts: show both rather than spend the time
   const L=Array.from({length:n+1},()=>new Uint16Array(m+1))
@@ -696,32 +698,71 @@ function Topic({id:first,back,toast,role}){
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
     <Tabs label="Topic sections" items={[['notes','Notes'],['explain','Explain'],['answer','Sample answer']]} value={tab} onChange={setTab}/>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
-    {tab==='notes'&&<div className="prose"><Md>{t.content||'No notes yet.'}</Md>{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
+    {tab==='notes'&&<div className="prose">{t.content?<Body text={t.content} format={t.content_format}/>:<Md>No notes yet.</Md>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
     {t.nav&&t.nav.total>1&&<nav className="pager" aria-label="Topics in this unit"><button className="btn ghost" disabled={!t.nav.prev} onClick={()=>jump(t.nav.prev.id)} aria-label={t.nav.prev?'Previous topic: '+t.nav.prev.title:'No previous topic'}><ChevronLeft size={18}/><span>{t.nav.prev?t.nav.prev.title:'Previous'}</span></button>
       <small>{t.nav.position} of {t.nav.total}</small>
       <button className={'btn'+(t.nav.next?'':' ghost')} disabled={!t.nav.next} onClick={()=>jump(t.nav.next.id)} aria-label={t.nav.next?'Next topic: '+t.nav.next.title:'No next topic'}><span>{t.nav.next?t.nav.next.title:'Next'}</span><ChevronRight size={18}/></button></nav>}</div></>}
 
+const TOPIC_CONFIG_TEMPLATE=`---
+title: 1. Introduction and learning objectives
+published: no
+deadline: 2026-10-20 17:00
+---
+
+## Question pattern
+- Recite the verses from memory
+- Explain the vocabulary
+
+## Sample content
+**Q:** Name the three parts of the verses.
+
+**A:** First, verses 28–29 ...
+
+## How an answer should be
+- Answer what the verb asks: explain, infer, or give the ruling with the reason.
+- Support every answer with the verse or hadith.
+`
+const FILES_HELP='Pick the HTML file for the content and a config .md file for the title and the other boxes, together with any images the HTML uses. The form fills in; check it, then save.'
 function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a topic, or null for a new one in unitId
-  const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null),[busy,setBusy]=useState(false)
-  const [tree,setTree]=useState([]),[f,setF]=useState({title:'',unit_id:unitId||'',content:'',sample_content:'',question_pattern:'',guideline:'',published:!fac,due:''}),[cid,setCid]=useState(null)
-  useEffect(()=>{api('/tree').then(setTree).catch(()=>{});if(edit)api('/topics/'+edit.id).then(t=>{setCid(t.course_id);setF({title:t.title,unit_id:t.unit_id||'',content:t.content||'',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false,due:localInput(t.learning_due_at)})}).catch(e=>toast(e.message))},[])
+  const confirm=useConfirm()
+  const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null),filesRef=useRef(null),[busy,setBusy]=useState(false)
+  const [tree,setTree]=useState([]),[f,setF]=useState({title:'',unit_id:unitId||'',content:'',content_format:'markdown',sample_content:'',question_pattern:'',guideline:'',published:!fac,due:''}),[cid,setCid]=useState(null)
+  const [fromFiles,setFromFiles]=useState(null),[shown,setShown]=useState('')
+  useEffect(()=>{api('/tree').then(setTree).catch(()=>{});if(edit)api('/topics/'+edit.id).then(t=>{setCid(t.course_id);setF({title:t.title,unit_id:t.unit_id||'',content:t.content||'',content_format:t.content_format||'markdown',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false,due:localInput(t.learning_due_at)})}).catch(e=>toast(e.message))},[])
+  const html=f.content_format==='html'
+  useEffect(()=>{if(!prev||!html)return;let live=true;api('/topics/clean-html',{method:'POST',body:{html:f.content}}).then(r=>live&&setShown(r.html)).catch(e=>toast(e.message));return()=>{live=false}},[prev,html,f.content])
   const set=k=>e=>setF({...f,[k]:e.target.value})
+  const pickFiles=async e=>{const files=[...e.target.files];e.target.value='';if(!files.length)return
+    const ext=x=>(x.name.split('.').pop()||'').toLowerCase(),htmlF=files.filter(x=>['html','htm'].includes(ext(x))),cfgF=files.filter(x=>['md','markdown','txt'].includes(ext(x))),imgs=files.filter(x=>/^image\//.test(x.type))
+    if(htmlF.length>1||cfgF.length>1)return toast('Choose one HTML file and one config file at a time')
+    if(!htmlF.length&&!cfgF.length)return toast('Choose an HTML file, a config .md file, or both')
+    if((f.content.trim()||f.question_pattern.trim()||f.sample_content.trim()||f.guideline.trim())&&!await confirm({title:'Replace what is in the form?',body:'The boxes the files fill in are replaced. Nothing is saved until you save.',ok:'Fill from files'}))return
+    setBusy(true);try{const images={};for(const x of imgs)images[x.name]=await uploadImg(x)
+      const r=await api('/topics/from-files',{method:'POST',body:{unit_id:+(f.unit_id||unitId),html:htmlF.length?await htmlF[0].text():'',config:cfgF.length?await cfgF[0].text():'',images}})
+      setF(cur=>({...cur,...['title','content','content_format','question_pattern','sample_content','guideline'].reduce((o,k)=>r[k]!==undefined?{...o,[k]:r[k]}:o,{}),...(r.published!==undefined?{published:r.published}:{}),...(r.learning_due_at?{due:r.learning_due_at}:{})}))
+      setFromFiles({names:[...htmlF,...cfgF].map(x=>x.name),warnings:r.warnings,images:r.images_saved+imgs.length});setPrev(!!r.content&&r.content_format==='html');toast('Filled from '+[...htmlF,...cfgF].map(x=>x.name).join(' and ')+'. Check it, then save.')}catch(er){toast(er.message)}setBusy(false)}
   const pickImg=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;if(file.size>3*1024*1024)return toast('Image is too large. Keep it under 3 MB.')
     setUp(true);try{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:file});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Upload failed')
-      const pos=taRef.current?.selectionStart??f.content.length;setF({...f,content:f.content.slice(0,pos)+`\n\n![Describe the image](${d.url})\n\n`+f.content.slice(pos)});toast('Image added')}catch(er){toast(er.message)}setUp(false)}
+      const pos=taRef.current?.selectionStart??f.content.length,tag=html?`\n<p><img src="${d.url}" alt="Describe the image"></p>\n`:`\n\n![Describe the image](${d.url})\n\n`;setF({...f,content:f.content.slice(0,pos)+tag+f.content.slice(pos)});toast('Image added')}catch(er){toast(er.message)}setUp(false)}
   const all=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>!c.shared&&c.editable).flatMap(c=>c.units.map(n=>({...n,course_id:c.id,label:`${c.name} › ${n.name}`})))))
   const units=role==='admin'?all:all.filter(n=>n.course_id===cid)  // faculty move a topic only between units of its own course
   const here=all.find(n=>n.id===+f.unit_id)
   const save=async()=>{setBusy(true);try{await api(edit?'/topics/'+edit.id:'/topics',{method:edit?'PUT':'POST',body:{...f,due:undefined,unit_id:+f.unit_id,published:f.published!==false,learning_due_at:f.due?new Date(f.due).toISOString():null}});toast(edit?'Changes saved':'Topic added');done()}catch(e){toast(e.message)}setBusy(false)}
   const T=(k,l,ph)=><><label>{l}</label><textarea placeholder={ph} value={f[k]} onChange={set(k)}/></>
   return <><Bar title={edit?'Edit topic':'New topic'} sub={here?.label} back={cancel}/><div className="main">
+    <div className="qbox" style={{marginTop:0}}><b>Fill from files</b><p className="known" style={{margin:'4px 0 8px'}}>{FILES_HELP}</p>
+      <input ref={filesRef} type="file" hidden multiple accept=".html,.htm,.md,.markdown,.txt,text/html,text/markdown,image/png,image/jpeg,image/gif,image/webp" onChange={pickFiles}/>
+      <div className="two"><button className="btn" style={{margin:0}} disabled={busy} onClick={()=>filesRef.current.click()}><Upload size={16}/> {busy?'Reading…':'Choose files'}</button><button className="btn ghost" style={{margin:0}} onClick={()=>download('topic-config.md',TOPIC_CONFIG_TEMPLATE)}>Config template</button></div>
+      {fromFiles&&<div role="status" style={{marginTop:10}}><p className="known" style={{margin:0}}>Filled from {fromFiles.names.join(' and ')}{fromFiles.images?` · ${pl(fromFiles.images,'image')}`:''}.</p>
+        {fromFiles.warnings.map((w,i)=><p key={i} className="known" style={{margin:'4px 0 0',color:'var(--warn)'}}>{w}</p>)}</div>}</div>
     {edit&&units.length>1&&<><label>Unit</label><select value={f.unit_id} onChange={set('unit_id')}>{units.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}</select></>}
     <label>Topic title</label><input value={f.title} onChange={set('title')} placeholder="First law of thermodynamics"/>
-    <label>Topic content</label><div className="tools"><button type="button" disabled={up} onClick={()=>fileRef.current.click()}>{up?'Uploading…':'Add image'}</button><button type="button" onClick={()=>setPrev(!prev)}>{prev?'Back to editing':'Preview'}</button></div>
+    <label>Topic content</label><div className="seg" style={{gridTemplateColumns:'1fr 1fr',margin:'0 0 8px'}} role="group" aria-label="Content format">{[['markdown','Markdown'],['html','HTML']].map(([k,l])=><button key={k} type="button" className={f.content_format===k?'on':''} aria-pressed={f.content_format===k} onClick={()=>setF({...f,content_format:k})}>{l}</button>)}</div>
+    <div className="tools"><button type="button" disabled={up} onClick={()=>fileRef.current.click()}>{up?'Uploading…':'Add image'}</button><button type="button" onClick={()=>setPrev(!prev)}>{prev?'Back to editing':'Preview'}</button></div>
     <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={pickImg}/>
-    {prev?<div className="prose"><Md>{f.content||'Nothing to preview yet.'}</Md></div>:<textarea ref={taRef} placeholder="Paste notes or syllabus text" value={f.content} onChange={set('content')}/>}
-    <p className="known">{'Equations: $x^2$ inline. For a centred block, put $$ on its own line above and below the equation. Chemistry: $\\ce{CaCO3 + CO2 + H2O -> Ca(HCO3)2}$'}</p>{T('question_pattern','Question pattern','e.g. 2 marks: define · 13 marks: derive + numerical')}
+    {prev?<div className="prose">{!f.content?<Md>Nothing to preview yet.</Md>:html?<Body text={shown} format="html"/>:<Md>{f.content}</Md>}</div>:<textarea ref={taRef} className={html?'code':''} placeholder={html?'HTML (or choose an HTML file above)':'Paste notes or syllabus text'} value={f.content} onChange={set('content')}/>}
+    <p className="known">{html?'HTML content shows as it is laid out in the file. Scripts, styles, forms and outside frames are removed when you save, so the page takes the app\'s look in light and dark mode.':'Equations: $x^2$ inline. For a centred block, put $$ on its own line above and below the equation. Chemistry: $\\ce{CaCO3 + CO2 + H2O -> Ca(HCO3)2}$'}</p>{T('question_pattern','Question pattern','e.g. 2 marks: define · 13 marks: derive + numerical')}
     <label>Learning deadline</label><div className="qopt"><input type="datetime-local" aria-label="Learning deadline" value={f.due} onChange={set('due')}/>{f.due&&<button type="button" className="tool" onClick={()=>setF({...f,due:''})}>No deadline</button>}</div>
     <p className="known" style={{marginTop:4}}>{f.due?'Students should have learnt this topic by then. They can still open it afterwards.':'No deadline'}</p>
     <label className="chk"><input type="checkbox" checked={f.published!==false} onChange={e=>setF({...f,published:e.target.checked})}/> Published (students can see this topic)</label>
