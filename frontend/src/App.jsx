@@ -42,6 +42,7 @@ const ownerLine=c=>c.mine?'Your course':c.owner_problem||(c.owner?'Owner: '+c.ow
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
 const pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`
+const matches=n=>`${n} ${n===1?'match':'matches'}`
 const Ctx=createContext({})
 const THEMES=[['system',Monitor,'Auto'],['light',Sun,'Light'],['dark',Moon,'Dark']]
 const readTheme=()=>{try{return localStorage.theme||'system'}catch{return 'system'}}
@@ -50,7 +51,8 @@ const Logo=({src,size=40})=>src?<img className="logo" src={src} alt="" width={si
 const Lockup=({logo,name,size=40})=><div className="lockup"><Logo src={logo} size={size}/><b>{name}</b></div>
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null)
+  const confirm=useCallback(o=>new Promise(res=>setAsk({o,res})),[])  // in-app replacement for window.confirm: await confirm({title,body,ok,danger})
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
   useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
   useEffect(()=>{applyTheme(theme);if(theme!=='system')return;const m=matchMedia('(prefers-color-scheme: dark)'),f=()=>applyTheme('system');m.addEventListener('change',f);return()=>m.removeEventListener('change',f)},[theme])
@@ -63,7 +65,7 @@ export default function App(){
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')}
   const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['progress',TrendingUp,'My progress']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
-  return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name}}>
+  return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
     {page==='search'&&<SearchPage user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
@@ -78,7 +80,8 @@ export default function App(){
         <div role="group" aria-label="Appearance" className="seg" style={{marginTop:"auto"}}>{THEMES.map(([k,I,l])=><button key={k} className={theme===k?"on":""} aria-pressed={theme===k} onClick={()=>pickTheme(k)}><I size={15}/>{l}</button>)}</div>
         <button className="dlink" onClick={()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}}><LogOut size={20}/>Sign out</button>
       </nav></div>
-    {msg&&<div className="toast" role="status">{msg}</div>}
+    <Toast msg={msg}/>
+    {ask&&<Confirm o={ask.o} answer={ok=>{ask.res(ok);setAsk(null)}}/>}
   </Ctx.Provider>}
 
 function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
@@ -89,12 +92,12 @@ function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
   if(mode==='forgot')return <div className="login"><Lockup logo={logo} name={appName}/><h1>Forgot your password?</h1>{sent?<p>{sent}</p>:<><p>Enter your account email and we will send a link to choose a new one.</p>
     <label>Email</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
     <button className="btn" disabled={b||!f.email} onClick={forgot}>Send reset link</button></>}
-    <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>Back to sign in</button>{msg&&<div className="toast">{msg}</div>}</div>
+    <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>Back to sign in</button><Toast msg={msg}/></div>
   return <div className="login"><Lockup logo={logo} name={appName}/><h1>Sign in</h1><p>Use the account your institution created for you.</p>
     <label>Email</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
     <label>Password</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>Sign in</button>
-    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>Forgot password?</button>:<p className="known">Forgot your password? Ask your admin to reset it.</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>Create an account</button>}{msg&&<div className="toast">{msg}</div>}</div>}
+    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>Forgot password?</button>:<p className="known">Forgot your password? Ask your admin to reset it.</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>Create an account</button>}<Toast msg={msg}/></div>}
 
 function Register({onIn,toast,msg,appName,logo,back}){
   const [f,setF]=useState({name:'',institution:'',id_number:'',email:'',phone:'',password:''}),[stage,setStage]=useState('form'),[code,setCode]=useState(''),[b,setB]=useState(false),[wait,setWait]=useState(0),[info,setInfo]=useState(''),[st,setSt]=useState({domains:[]})
@@ -108,7 +111,7 @@ function Register({onIn,toast,msg,appName,logo,back}){
     <label htmlFor="otp">6-digit code</label><input id="otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} onKeyDown={e=>e.key==='Enter'&&code.length===6&&verify()} style={{letterSpacing:'.4em',fontSize:22,textAlign:'center'}}/>
     <button className="btn" disabled={b||code.length!==6} onClick={verify}>Verify and create my account</button>
     <button className="btn ghost" disabled={wait>0} onClick={resend}>{wait>0?`Send a new code in ${wait}s`:'Send a new code'}</button>
-    <button className="btn ghost" onClick={()=>{setStage('form');setCode('')}}>Change my details</button>{msg&&<div className="toast">{msg}</div>}</div>
+    <button className="btn ghost" onClick={()=>{setStage('form');setCode('')}}>Change my details</button><Toast msg={msg}/></div>
   return <div className="login"><Lockup logo={logo} name={appName}/><h1>Create an account</h1><p>We will email you a code to confirm your address.{st.domains.length>0&&' Use your institution email ('+st.domains.map(d=>'@'+d).join(', ')+').'}</p>
     <label htmlFor="rn">Full name</label><input id="rn" autoComplete="name" value={f.name} onChange={set('name')}/>
     <label htmlFor="ri">Institution</label><input id="ri" autoComplete="organization" value={f.institution} onChange={set('institution')}/>
@@ -117,13 +120,14 @@ function Register({onIn,toast,msg,appName,logo,back}){
     <label htmlFor="rp">Phone</label><input id="rp" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} placeholder="+91 98765 43210"/>
     <label htmlFor="rw">Password</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} onKeyDown={e=>e.key==='Enter'&&ok&&start()}/>
     <p className="known">At least 8 characters. AI help on this account uses your own DeepSeek API key, which you add after signing in.</p>
-    <button className="btn" disabled={b||!ok} onClick={start}>Send me a code</button><button className="btn ghost" onClick={back}>Back to sign in</button>{msg&&<div className="toast">{msg}</div>}</div>}
+    <button className="btn" disabled={b||!ok} onClick={start}>Send me a code</button><button className="btn ghost" onClick={back}>Back to sign in</button><Toast msg={msg}/></div>}
 
 function MyAiKey({toast}){
+  const confirm=useConfirm()
   const [d,setD]=useState(null),[key,setKey]=useState(''),[b,setB]=useState(false)
   const load=()=>api('/me/ai-key').then(setD).catch(e=>toast(e.message));useEffect(()=>{load()},[])
   const save=async()=>{setB(true);try{await api('/me/ai-key',{method:'PUT',body:{key}});setKey('');toast('Key saved. AI help is on.');load()}catch(e){toast(e.message)}setB(false)}
-  const del=async()=>{if(!confirm('Remove your key? AI help turns off for you until you add one again.'))return;try{await api('/me/ai-key',{method:'DELETE'});toast('Key removed');load()}catch(e){toast(e.message)}}
+  const del=async()=>{if(!await confirm({title:'Remove your key?',body:'AI help turns off for you until you add one again.',ok:'Remove key',danger:true}))return;try{await api('/me/ai-key',{method:'DELETE'});toast('Key removed');load()}catch(e){toast(e.message)}}
   return <><Bar title="My AI key" sub={d?.key_set?'AI is on · key '+d.key_hint:'AI is off · no key yet'}/><div className="main">
     <p className="known">AI explanations on your account use your own DeepSeek API key, so any usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.</p>
     <label htmlFor="k">DeepSeek API key</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?'Paste a new key to replace the current one':'sk-…'}/>
@@ -131,12 +135,13 @@ function MyAiKey({toast}){
     {d?.key_set&&<button className="btn ghost" onClick={del}>Remove my key</button>}</div></>}
 
 function PromptEditor({toast}){
+  const confirm=useConfirm()
   const [items,setItems]=useState(null),[draft,setDraft]=useState({}),[busy,setBusy]=useState('')
   const load=()=>api('/admin/prompts').then(r=>{setItems(r.items);setDraft({})}).catch(e=>toast(e.message));useEffect(()=>{load()},[])
   if(!items)return <div className="sk"/>
-  const save=async x=>{const text=draft[x.kind];if(x.saved_answers>0&&!confirm(`Saving discards the ${pl(x.saved_answers,'saved answer')} written with the old prompt, so students get fresh ones. Continue?`))return
+  const save=async x=>{const text=draft[x.kind];if(x.saved_answers>0&&!await confirm({title:'Save this prompt?',body:`Saving discards the ${pl(x.saved_answers,'saved answer')} written with the old prompt, so students get fresh ones.`,ok:'Save prompt'}))return
     setBusy(x.kind);try{const r=await api('/admin/prompts/'+x.kind,{method:'PUT',body:{text}});toast('Prompt saved'+(r.cleared?` · ${pl(r.cleared,'saved answer')} cleared`:''));load()}catch(e){toast(e.message)}setBusy('')}
-  const reset=async x=>{if(!confirm('Go back to the built-in prompt?'+(x.saved_answers?` This also discards ${pl(x.saved_answers,'saved answer')}.`:'')))return
+  const reset=async x=>{if(!await confirm({title:'Go back to the built-in prompt?',body:x.saved_answers?`This also discards ${pl(x.saved_answers,'saved answer')}.`:null,ok:'Reset to built-in'}))return
     setBusy(x.kind);try{await api('/admin/prompts/'+x.kind,{method:'DELETE'});toast('Back to the built-in prompt');load()}catch(e){toast(e.message)}setBusy('')}
   return <><p className="known">These are the instructions the AI gets before it answers. Change the tone, depth, language or format to suit your students. Saving a prompt discards the saved answers it wrote, so the new wording applies from the next question (that costs tokens again).</p>
     {items.map(x=>{const v=draft[x.kind]??x.text,dirty=v.trim()!==x.text.trim()
@@ -163,7 +168,7 @@ function ResetPassword({token,toast,msg,done,leave,canReset,appName,logo}){
   return <div className="login"><Lockup logo={logo} name={appName}/><h1>Choose a new password</h1><p>Use at least 8 characters.</p>
     <label>New password</label><input type="password" autoComplete="new-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})}/>
     <label>Repeat new password</label><input type="password" autoComplete="new-password" value={f.again} onChange={e=>setF({...f,again:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
-    <button className="btn" disabled={b} onClick={go}>Save and sign in</button>{msg&&<div className="toast">{msg}</div>}</div>}
+    <button className="btn" disabled={b} onClick={go}>Save and sign in</button><Toast msg={msg}/></div>}
 
 function ChangePassword({forced,appName,logo,toast,msg,done,out}){
   const [f,setF]=useState({current:'',password:'',again:''}),[b,setB]=useState(false),set=k=>e=>setF({...f,[k]:e.target.value})
@@ -173,7 +178,7 @@ function ChangePassword({forced,appName,logo,toast,msg,done,out}){
     <label>New password (8+ characters)</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
     <label>Repeat new password</label><input type="password" autoComplete="new-password" value={f.again} onChange={set('again')} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>Change password</button></>
-  if(forced)return <div className="login"><Lockup logo={logo} name={appName}/><h1>Choose your own password</h1><p>Your admin set a temporary password. Pick a new one to continue.</p>{form}<button className="btn ghost" onClick={out}>Sign out</button>{msg&&<div className="toast">{msg}</div>}</div>
+  if(forced)return <div className="login"><Lockup logo={logo} name={appName}/><h1>Choose your own password</h1><p>Your admin set a temporary password. Pick a new one to continue.</p>{form}<button className="btn ghost" onClick={out}>Sign out</button><Toast msg={msg}/></div>
   return <><Bar title="Change password"/><div className="main">{form}</div></>}
 
 const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header className="bar">
@@ -189,7 +194,7 @@ function ArchiveSheet({a,close,done,toast}){  // archive or restore one item; ar
     <p className="known">{a.on?`This hides the ${ONE[a.kind]} and ${ARCHIVE_WHAT[a.kind]} from students, who see “unavailable right now” instead. Nothing is deleted and reading progress and quiz results are kept. You can restore it any time.`
       :`This brings back the ${ONE[a.kind]} and everything that was archived along with it. Anything you archived on its own inside it stays archived until you restore that too.`}</p>
     <button className={'btn'+(a.on?' danger':'')} disabled={busy} onClick={go}>{busy?'Working…':a.on?'Archive':'Restore'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
-const ArchPill=({x})=>x.archived?<span className="pill off" style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>{x.archived_self?'Archived':'Archived with its parent'}</span>:null
+const ArchPill=({x})=>x.archived?<span className="pill off sm">{x.archived_self?'Archived':'Archived with its parent'}</span>:null
 function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
   const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
@@ -224,37 +229,37 @@ function Learn({user,toast,appName,start}){
   return <><Bar title={cur?.name||appName} sub={nav.length?crumbs:'Hi '+user.name} back={nav.length>0&&(()=>setNav(nav.slice(0,-1)))}/>
    <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&<div className="hero"><h2>Choose a program</h2></div>}
      {staff&&(anyArch||showArch)&&<label className="chk" style={{marginBottom:12}}><input type="checkbox" checked={showArch} onChange={e=>setShowArch(e.target.checked)}/> Show archived{!showArch&&hidden>0?` (${hidden} here)`:''}</label>}
-     {isAdmin&&!sem&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add '+prog.term.toLowerCase()+' to '+prog.name:'New program'}</button>}
-     {isAdmin&&sem&&!co&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
+     {isAdmin&&!sem&&<button className="btn ghost lead" onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add '+prog.term.toLowerCase()+' to '+prog.name:'New program'}</button>}
+     {isAdmin&&sem&&!co&&<button className="btn ghost lead" onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
      {co&&!unit&&!staff&&<p className="known" style={{marginTop:0}}>{doneOf(co.units.flatMap(n=>n.topics))} topics completed</p>}
      {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],[prog.term,sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
        {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
-     {!nav.length&&user.role==='faculty'&&<><h3 style={{margin:'0 0 8px'}}>My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}<ArchPill x={c}/></b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
-       :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 style={{margin:'20px 0 8px'}}>All programs</h3></>}
-    {mayEdit&&co&&!unit&&!co.shared&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setSheet({type:'unit',un:{},cid:co.id})}>Add unit</button>}
-    {mayEdit&&unit&&!co.shared&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setEd({unit_id:unit.id})}>Add topic to {unit.name}</button>}
-    {staff&&unit&&<button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setCopy({kind:'unit',id:unit.id,title:unit.name})}>Copy this unit to another course</button>}
+     {!nav.length&&user.role==='faculty'&&<><h3 className="sec first">My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}<ArchPill x={c}/></b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
+       :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 className="sec">All programs</h3></>}
+    {mayEdit&&co&&!unit&&!co.shared&&<button className="btn ghost lead" onClick={()=>setSheet({type:'unit',un:{},cid:co.id})}>Add unit</button>}
+    {mayEdit&&unit&&!co.shared&&<button className="btn ghost lead" onClick={()=>setEd({unit_id:unit.id})}>Add topic to {unit.name}</button>}
+    {staff&&unit&&<button className="btn ghost lead" onClick={()=>setCopy({kind:'unit',id:unit.id,title:unit.name})}>Copy this unit to another course</button>}
     {list.map((x,i)=>x.locked?<div key={x.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={x.n+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{x.n}</b><span>Unavailable right now</span></div></button></div>:<div key={x.id} className="card" style={x.archived?{opacity:.75}:undefined}><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}<ArchPill x={x}/></b>{x.sub&&<span>{x.sub}</span>}</div>{(x.s||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.s&&<Mark s={x.s}/>}</span>}</button>
-      {staff&&x.can&&(x.archived_self||!x.archived)&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.n} onClick={()=>setArch({kind:x.kind,id:x.id,name:x.n,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}
-      {mayEdit&&<>{(x.kind==='units'||x.kind==='topics')&&list.length>1&&[[-1,ArrowUp,'up'],[1,ArrowDown,'down']].map(([d,I,w])=><button key={w} className="ic sm" aria-label={`Move ${x.n} ${w}`} disabled={i+d<0||i+d>=list.length} onClick={()=>move(list,i,d,x.kind==='units'?`/courses/${co.id}/units/order`:`/units/${unit.id}/topics/order`)}><I size={16}/></button>)}{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div>)}
-    {co&&!unit&&(co.tests?.length>0||(mayEdit&&!co.shared))&&<><h3 style={{margin:'28px 0 8px'}}>MCQ tests</h3>
+      <div className="acts">{staff&&x.can&&(x.archived_self||!x.archived)&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.n} onClick={()=>setArch({kind:x.kind,id:x.id,name:x.n,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}
+      {mayEdit&&<>{(x.kind==='units'||x.kind==='topics')&&list.length>1&&[[-1,ArrowUp,'up'],[1,ArrowDown,'down']].map(([d,I,w])=><button key={w} className="ic sm" aria-label={`Move ${x.n} ${w}`} disabled={i+d<0||i+d>=list.length} onClick={()=>move(list,i,d,x.kind==='units'?`/courses/${co.id}/units/order`:`/units/${unit.id}/topics/order`)}><I size={16}/></button>)}{x.pub&&<button className="ic sm" aria-label={(x.draft?'Publish ':'Unpublish ')+x.n} onClick={x.pub}>{x.draft?<Eye size={16}/>:<EyeOff size={16}/>}</button>}{x.share&&<button className="ic sm" aria-label={'Share '+x.n} onClick={x.share}><Link2 size={16}/></button>}<button className="ic sm" aria-label={'Edit '+x.n} onClick={x.edit}><Pencil size={16}/></button><button className="ic sm" aria-label={'Delete '+x.n} onClick={()=>setDel(x.unlink?{...x,unlink:x.unlink}:x)}><Trash2 size={16}/></button></>}</div></div>)}
+    {co&&!unit&&(co.tests?.length>0||(mayEdit&&!co.shared))&&<><h3 className="sec">MCQ tests</h3>
       {co.tests.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+1)%5]}}><ClipboardList size={18}/></span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
         {mayEdit&&<><button className="ic sm" aria-label={'Results of '+q.title} onClick={()=>setQr(q.id)}><BarChart3 size={16}/></button><button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,course_id:co.id})}><Pencil size={16}/></button></>}</div>)}
       {mayEdit&&!co.shared&&<button className="btn ghost" onClick={()=>setQe({course_id:co.id,csvFirst:true})}><Upload size={16}/> New MCQ test from a CSV</button>}
       {mayEdit&&<button className="btn ghost" onClick={()=>setGb(co.id)}><BarChart3 size={16}/> Gradebook: final scores for every test</button>}</>}
-    {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 style={{margin:'28px 0 8px'}}>Quizzes</h3>
+    {unit&&(unit.quizzes.length>0||mayEdit)&&<><h3 className="sec">Quizzes</h3>
       {unit.quizzes.map((q,i)=><div key={q.id} className="card"><button className="hit" onClick={()=>setQz(q.id)}><span className="dot" style={{background:COL[(i+3)%5]}}>?</span><div><b>{q.title}</b><span>{q.questions} questions · pass {q.pass_percent}%{q.best!=null?' · best '+q.best+'%':''}{q.published?'':' · Draft'}</span></div>{q.best!=null&&q.best>=q.pass_percent&&<span className="marks"><Check size={16}/></span>}</button>
         {mayEdit&&<><button className="ic sm" aria-label={'Results of '+q.title} onClick={()=>setQr(q.id)}><BarChart3 size={16}/></button><button className="ic sm" aria-label={'Edit '+q.title} onClick={()=>setQe({id:q.id,unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}><Pencil size={16}/></button></>}</div>)}
       {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{(mayEdit&&co)||isAdmin?'Nothing here yet. Use the button above to add it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {arch&&<ArchiveSheet a={arch} toast={toast} close={()=>setArch(null)} done={()=>setArch(null)}/>}
    {copy&&<CopySheet {...copy} toast={toast} close={()=>{setCopy(null);load()}}/>}
-   {del&&<div className="scrim" onClick={()=>setDel(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this '+(prog?.term||'semester').toLowerCase():''}?</h3>
+   {del&&<Sheet close={()=>setDel(null)}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this '+(prog?.term||'semester').toLowerCase():''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this '+(prog?.term||'semester').toLowerCase()+'. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
-     <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Keep it</button></div></div>}
-   {sh&&<div className="scrim" onClick={()=>setSh(null)}><div className="sheet" onClick={e=>e.stopPropagation()}><h3>Share “{sh.name}”</h3><p className="known">Tick every semester or year that should also show this course. You still edit it in one place.</p>
+     <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Cancel</button></Sheet>}
+   {sh&&<Sheet close={()=>setSh(null)}><h3>Share “{sh.name}”</h3><p className="known">Tick every semester or year that should also show this course. You still edit it in one place.</p>
      {allSems.filter(x=>x.id!==sh.home).map(x=><label key={x.id} className="chk"><input type="checkbox" checked={sh.sel.includes(x.id)} onChange={e=>setSh({...sh,sel:e.target.checked?[...sh.sel,x.id]:sh.sel.filter(i=>i!==x.id)})}/> {x.label}</label>)}
-     <button className="btn" onClick={saveShare}>Save</button><button className="btn ghost" onClick={()=>setSh(null)}>Cancel</button></div></div>}
+     <button className="btn" onClick={saveShare}>Save</button><button className="btn ghost" onClick={()=>setSh(null)}>Cancel</button></Sheet>}
    {sheet?.type==='program'&&<ProgramSheet p={sheet.p} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='semester'&&<SemesterSheet sem={sheet.sem} pid={sheet.pid} term={prog?.term} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
    {sheet?.type==='course'&&<CourseSheet c={sheet.c} pid={sheet.pid} sid={sheet.sid} term={prog?.term} sems={tree.flatMap(p=>p.semesters.map(s=>({id:s.id,label:p.name+' › '+s.name})))} toast={toast} close={()=>setSheet(null)} done={()=>setSheet(null)}/>}
@@ -328,11 +333,11 @@ function StaffHome({user,toast,open}){
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={admin?'Across the whole college':'Your courses'}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {o&&<div className="stats">{stats.map(([n,l,k])=><button className="stat" key={l} style={{textAlign:'left',width:'100%'}} onClick={()=>setList(k)} aria-label={`${(n??0).toLocaleString()} ${l}. Show the list`}><b>{(n??0).toLocaleString()}</b>{l}</button>)}</div>}
-    {o&&<><h3 style={{margin:'24px 0 8px'}}>Needs attention</h3>
+    {o&&<><h3 className="sec">Needs attention</h3>
       {o.attention.length?o.attention.map(x=><button key={x.kind} className="card" style={{textAlign:'left'}} onClick={()=>setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{x.text}</b></div><ChevronRight size={18}/></button>)
         :<p className="known">Nothing needs your attention right now.</p>}</>}
     {o&&!o.courses&&!admin&&<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}
-    {o?.courses>0&&<><h3 style={{margin:'28px 0 4px'}}>{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
+    {o?.courses>0&&<><h3 className="sec">{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
 const FOCUS={overdue:[AlertTriangle,'Overdue','Open it'],due_soon:[Clock,'Due soon','Open it'],weak:[Target,'Needs review','Review'],resume:[Play,'Continue','Continue'],quiz_retake:[RotateCcw,'Retake the quiz','Retake'],quiz_new:[ClipboardList,'Quiz','Take the quiz'],next:[ArrowRight,'Next up','Start']}
 function Dashboard({user,toast,onOpen,onSearch}){
@@ -359,16 +364,16 @@ function Dashboard({user,toast,onOpen,onSearch}){
       <div className="stat"><b>{today.percent}%</b>Completed<small>{today.topics_completed} of {today.topics_total} topics</small></div>
       <div className="stat"><b>{today.quiz_average==null?'–':today.quiz_average+'%'}</b>Quiz average<small>{today.quiz_average==null?'No quizzes yet':'best scores'}</small></div></div>
       <div className="week" role="img" aria-label={`Studied on ${today.week.filter(d=>d.active).length} of the last 7 days`}>{today.week.map(d=><span key={d.date} className={'wd'+(d.active?' on':'')+(d.today?' now':'')}><i>{d.active&&<Check size={13}/>}</i><small>{d.label}</small></span>)}</div></>}
-    {top&&<><h3 style={{margin:'6px 0 8px'}}>Today's focus</h3>
+    {top&&<><h3 className="sec first">Today's focus</h3>
       <div className="hero"><small>{top.kind==='overdue'||top.kind==='due_soon'?top.reason:FOCUS[top.kind][1]+' · '+top.reason}</small><h2 style={{fontSize:24}}>{top.title}</h2><p>{top.course} · {top.unit}</p>
         <button className="btn inv" style={{marginTop:14}} onClick={()=>act(top)}>{FOCUS[top.kind][2]}</button></div>
       {focus.slice(1).map((f,i)=>{const [I,,go]=FOCUS[f.kind];return <button key={i} className="frow" onClick={()=>act(f)}><span className={'fic '+f.kind}><I size={18}/></span><span className="ftx"><b>{f.title}</b><small>{f.reason} · {f.course}</small></span><span className="fgo">{go}</span></button>})}</>}
     {today&&courses.length>0&&!focus.length&&<div className="qbox" style={{marginTop:6}}><b>You are all caught up</b><p className="known" style={{margin:'6px 0 0'}}>Nothing is overdue or waiting. Search a topic you want to revisit, or try a quiz to test yourself.</p></div>}
-    {courses.length>0&&<><h3 style={{margin:'22px 0 8px'}}>My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0,late=topics.filter(t=>t.overdue).length,next=topics.find(t=>t.status==='in_progress')||topics.find(t=>t.status==='not_started')
+    {courses.length>0&&<><h3 className="sec">My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0,late=topics.filter(t=>t.overdue).length,next=topics.find(t=>t.status==='in_progress')||topics.find(t=>t.status==='not_started')
       if(c.archived)return <div key={c.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={c.name+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{c.name}</b><span>Unavailable right now</span></div></button></div>
-      return <div key={c.id} className="card" style={{display:'block'}}><button className="hit" style={{width:'100%'}} onClick={()=>onOpen([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div style={{flex:1}}><b>{c.name}{late>0&&<span className="pill off" style={{marginLeft:8}}>{late} overdue</span>}</b><span>{done} of {topics.length} topics completed · {pc}%</span><Bar2 v={pc}/>{next&&<span className="nexts">{next.status==='in_progress'?'Continue':'Next'}: {next.title}</span>}</div></button></div>})}</>}
-    {due.length>0&&<><h3 style={{margin:'24px 0 8px'}}>Coming up</h3>{due.map(t=><div key={t.id} className="row" style={{cursor:'pointer'}} onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {when(t.learning_due_at)}</small></div>{t.overdue&&<span className="pill off">Overdue</span>}</div>)}</>}
-    {need.length>0&&<><h3 style={{margin:'24px 0 4px'}}>Worth another round of study</h3><AreaList areas={need} onStudy={setTopic}/></>}
+      return <div key={c.id} className="card" style={{display:'block'}}><button className="hit" style={{width:'100%'}} onClick={()=>onOpen([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div style={{flex:1}}><b>{c.name}{late>0&&<span className="pill off sm">{late} overdue</span>}</b><span>{done} of {topics.length} topics completed · {pc}%</span><Bar2 v={pc}/>{next&&<span className="nexts">{next.status==='in_progress'?'Continue':'Next'}: {next.title}</span>}</div></button></div>})}</>}
+    {due.length>0&&<><h3 className="sec">Coming up</h3>{due.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {when(t.learning_due_at)}</small></div>{t.overdue&&<span className="pill off sm">Overdue</span>}<ChevronRight size={18}/></button>)}</>}
+    {need.length>0&&<><h3 className="sec">Worth another round of study</h3><AreaList areas={need} onStudy={setTopic}/></>}
   </div></>}
 function SearchPage({user,toast}){
   const [q,setQ]=useState(''),[live,setLive]=useState(null),[asked,setAsked]=useState(''),[ai,setAi]=useState(null),[aiBusy,setAiBusy]=useState(false),[aiErr,setAiErr]=useState(''),[topic,setTopic]=useState(null),[pend,setPend]=useState(false)
@@ -383,14 +388,14 @@ function SearchPage({user,toast}){
   return <><Bar title="Search" sub="Find a topic, or ask the AI"/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label="Search topics" autoFocus placeholder="e.g. temporary hardness of water" value={q} maxLength={200} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submit()}/></div>
     <button className="btn" disabled={pend||aiBusy||typed.length<2} onClick={submit}>{pend?'Searching…':'Search'}</button>
-    {!asked&&live&&live.results.length>0&&<><h3 style={{margin:'20px 0 6px'}}>Topics in your courses</h3><p className="known">Press Enter to search properly. If nothing here fits, the AI answers.</p>{live.results.slice(0,5).map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>}
+    {!asked&&live&&live.results.length>0&&<><h3 className="sec">Topics in your courses</h3><p className="known">Press Enter to search properly. If nothing here fits, the AI answers.</p>{live.results.slice(0,5).map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>}
     {!asked&&typed.length>=2&&live&&!live.results.length&&<p className="known">Nothing in your courses matches yet. Press Enter and the AI will answer instead.</p>}
-    {res&&<>{res.results.length>0?<><h3 style={{margin:'22px 0 6px'}}>{aiNote?'Possible matches in your courses':'In your courses'}</h3>{res.results.map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>
+    {res&&<>{res.results.length>0?<><h3 className="sec">{aiNote?'Possible matches in your courses':'In your courses'}</h3>{res.results.map(x=><Hit key={x.id} x={x} open={setTopic}/>)}</>
       :<p className="known" style={{marginTop:18}}>Nothing in your courses matches “{asked}”.</p>}
       {!ai&&!aiBusy&&<button className="btn ghost" onClick={()=>askAi(asked,false)}><Sparkles size={16}/> Not what you wanted? Recheck with AI</button>}</>}
     {aiBusy&&<div className="qbox" aria-live="polite"><b>Asking the AI…</b><div className="sk"/></div>}
     {aiErr&&<div className="qbox" role="alert"><b>The AI could not answer</b><p className="known" style={{margin:'6px 0 0'}}>{aiErr}</p></div>}
-    {ai&&!aiBusy&&<><h3 style={{margin:'24px 0 6px'}}>AI answer</h3><div className="prose">{ai.cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai.text}</Md></div>
+    {ai&&!aiBusy&&<><h3 className="sec">AI answer</h3><div className="prose">{ai.cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai.text}</Md></div>
       <p className="known">AI answers can contain mistakes. Check them against your notes and textbook.</p>
       <button className="btn ghost" disabled={aiBusy} onClick={()=>askAi(ai.for,true)}><Sparkles size={16}/> Not happy? Recheck with AI</button></>}</div></>}
 function Hit({x,open}){return <button className="hitrow" onClick={()=>open(x.id)}><b>{x.title}{x.in_title&&<span className="chip" style={{marginLeft:8}}>Best match</span>}</b><small>{[x.program,x.semester,x.course,x.unit].filter(Boolean).join(' › ')}</small>{x.snippet&&<span className="snip">{x.snippet}</span>}</button>}
@@ -402,11 +407,11 @@ function Insights({toast,role}){
   if(sc)return <ScoreCourse c={sc} back={()=>setSc(null)} toast={toast} role={role}/>
   const n=d?d.needs_study.length:0
   return <><Bar title="My progress" sub="Your scores, where you shine and what to revisit"/><div className="main">
-    <MyScores onCourse={setSc}/>{d?.courses.length>0&&<h3 style={{margin:'24px 0 4px'}}>Strengths and weak areas</h3>}
-    {!d&&<p className="known">Loading…</p>}
+    <MyScores onCourse={setSc}/>{d?.courses.length>0&&<h3 className="sec">Strengths and weak areas</h3>}
+    {!d&&<Skeleton/>}
     {d&&!d.courses.length&&<p className="known">Take a quiz and your strengths and weak spots will show up here.</p>}
     {d?.courses.length>0&&<div className="qbox"><b>{n?`${n} ${n===1?'area needs':'areas need'} another round of study`:'Nothing needs another round of study right now'}</b><p className="known" style={{margin:'4px 0 0'}}>{d.strong.length} strong · {d.getting_there.length} getting there · based on your latest result in {d.quizzes_taken} {d.quizzes_taken===1?'quiz':'quizzes'}</p></div>}
-    {d?.courses.map(c=><section key={c.course_id}><h3 style={{margin:'24px 0 4px'}}>{c.course} · {c.percent}% right</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>)}</div></>}
+    {d?.courses.map(c=><section key={c.course_id}><h3 className="sec">{c.course} · {c.percent}% right</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>)}</div></>}
 
 const uploadImg=async f=>{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':f.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');return j.url}
 // one image place on a question or an answer: shows the image, the file the CSV asked for, or a small "Add image" button
@@ -426,7 +431,7 @@ function QuizPlay({id,back,toast,role}){
   useEffect(()=>{api('/quizzes/'+id).then(start).catch(e=>{toast(e.message);back()})},[id])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
   if(view)return view.kind==='attempt'?<AttemptView id={view.id} back={()=>setView(null)} toast={toast} role={role}/>:view.kind==='mine'?<MyAttempts quiz={id} back={()=>setView(null)} toast={toast} role={role}/>:<QuizResults id={id} back={()=>setView(null)} toast={toast} role={role}/>
-  if(!q)return <><Bar title="Quiz" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  if(!q)return <><Bar title="Quiz" back={back}/><div className="main"><Skeleton/></div></>
   const left=ans.filter(a=>a===null).length
   const submit=async()=>{setBusy(true);try{setRes(await api(`/quizzes/${id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
   return <><Bar title={q.title} sub={q.questions.length+' questions · pass mark '+q.pass_percent+'%'+(q.kind==='course'?' · course test':'')} back={back}/><div className="main">
@@ -434,7 +439,7 @@ function QuizPlay({id,back,toast,role}){
     {!res&&q.attempts>0&&<p className="known" style={{marginTop:0}}>You have tried this {pl(q.attempts,'time')}. Best {q.best}% · latest {q.latest}%. <button className="tool" onClick={()=>setView({kind:'mine'})}>See your attempts</button></p>}
     {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?'Passed. Well done!':'Not there yet. Go back over the topics and try again.'}{res.summary&&' '+res.summary}</p>
       <div className="two"><button className="btn" onClick={()=>setView({kind:'attempt',id:res.attempt_id})}>Review answers</button><button className="btn ghost" onClick={()=>start(q)}>Try again</button></div><button className="btn ghost" onClick={back}>Back</button></div>}
-    {res&&res.areas?.length>0&&<><h3 style={{margin:'20px 0 4px'}}>What you are good at and what to revisit</h3><AreaList areas={res.areas} onStudy={setTopic}/></>}
+    {res&&res.areas?.length>0&&<><h3 className="sec">What you are good at and what to revisit</h3><AreaList areas={res.areas} onStudy={setTopic}/></>}
     {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>Question {i+1}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={'Picture for question '+(i+1)}/>
       {x.options.map((o,k)=>{const r=res&&res.results[i],cls=r?(k===r.correct||(r.ok&&k===r.chosen)?' ok':k===r.chosen?' bad':''):ans[i]===k?' sel':''
         return <button key={k} className={'opt'+cls} disabled={!!res} aria-pressed={!res&&ans[i]===k} onClick={()=>setAns(ans.map((a,n)=>n===i?k:a))}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/></button>})}
@@ -446,11 +451,11 @@ function AttemptView({id,back,toast,role}){
   const [d,setD]=useState(null),[topic,setTopic]=useState(null)
   useEffect(()=>{api('/attempts/'+id).then(setD).catch(e=>{toast(e.message);back()})},[id])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
-  if(!d)return <><Bar title="Attempt" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  if(!d)return <><Bar title="Attempt" back={back}/><div className="main"><Skeleton/></div></>
   const staff=role!=='student',right=d.questions.filter(x=>x.ok).length
   return <><Bar title={d.quiz} sub={(staff?d.user+' · ':'')+when(d.at)} back={back}/><div className="main">
     <div className="qbox" style={{marginTop:0}}><h2 style={{margin:0}}>{d.score} / {d.total} · {d.percent}%</h2><p className="known" style={{marginBottom:0}}>{d.passed?'Passed':'Below the pass mark'} of {d.pass_percent}%.{d.summary&&' '+d.summary}</p></div>
-    {d.areas.length>0&&<><h3 style={{margin:'20px 0 4px'}}>{staff?'Strengths and weak areas':'What you are good at and what to revisit'}</h3><AreaList areas={d.areas} onStudy={staff?null:setTopic} staff={staff}/></>}
+    {d.areas.length>0&&<><h3 className="sec">{staff?'Strengths and weak areas':'What you are good at and what to revisit'}</h3><AreaList areas={d.areas} onStudy={staff?null:setTopic} staff={staff}/></>}
     {d.no_detail&&<p className="known">This attempt was made before answers were kept question by question, so only the score is known.</p>}
     {d.changed>0&&<p className="known">{pl(d.changed,'question')} of this attempt {d.changed===1?'was':'were'} changed or removed since, so {d.changed===1?'it is':'they are'} not shown.</p>}
     {!d.reveal&&d.questions.length>0&&<p className="known">You see which answers were right ({right} of {d.questions.length}). This quiz does not show the correct answers.</p>}
@@ -482,6 +487,7 @@ const fromCsv=x=>({text:x.text,options:x.options,option_images:x.option_images.m
   need:{image:x.image?'':x.image_name,options:x.option_image_names.map((n,k)=>x.option_images[k]?'':n)}})
 const missing=qs=>qs.flatMap((x,i)=>[...(x.need.image&&!x.image?[{i,k:-1,name:x.need.image}]:[]),...x.need.options.map((n,k)=>n&&!x.option_images[k]?{i,k,name:n}:null).filter(Boolean)])
 function QuizEditor({id,unit_id,course_id,unitTopics,csvFirst,done,toast}){
+  const confirm=useConfirm()
   const [m,setM]=useState({title:'',pass_percent:50,published:false,reveal:false}),[qs,setQs]=useState([blankQ()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),imgRef=useRef(null)
   const [csv,setCsv]=useState(null),[bank,setBank]=useState(false),[btags,setBtags]=useState(''),[stage,setStage]=useState(csvFirst&&!id?'csv':'edit'),[cid,setCid]=useState(course_id)
   const course=!unit_id
@@ -513,7 +519,7 @@ function QuizEditor({id,unit_id,course_id,unitTopics,csvFirst,done,toast}){
   const toBank=async()=>{const list=qs.filter(x=>x.text.trim());let added=0,skipped=0,bad=0;setBusy(true)
     for(const x of list){if(x.image||x.option_images.some(Boolean)){bad++;continue}try{await api('/bank',{method:'POST',body:{text:x.text,options:x.options,correct:x.correct,explanation:x.explanation,tags:btags,source:m.title}});added++}catch(e){/already in the bank/.test(e.message)?skipped++:bad++}}
     setBusy(false);toast(`${added} saved to the bank${skipped?`, ${skipped} already there`:''}${bad?`, ${bad} skipped (incomplete or with images)`:''}`)}
-  const del=async()=>{if(!confirm('Delete this and every student attempt?'))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Deleted');done()}catch(e){toast(e.message)}}
+  const del=async()=>{if(!await confirm({title:`Delete this ${course?'test':'quiz'}?`,body:"This also deletes every student attempt. This can't be undone.",ok:'Delete',danger:true}))return;try{await api('/quizzes/'+id,{method:'DELETE'});toast('Deleted');done()}catch(e){toast(e.message)}}
   const fileInputs=<><input ref={csvRef} type="file" accept=".csv,text/csv,text/plain" hidden onChange={importCsv}/><input ref={imgRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={bulkImages}/></>
   const csvNotes=csv&&(csv.error_count>0||csv.warnings.length>0)&&<div className="qbox" role="alert">{csv.error_count>0&&<><b>{pl(csv.error_count,'row')} could not be read and {csv.error_count===1?'was':'were'} left out</b>{csv.errors.slice(0,10).map((x,i)=><p className="known" style={{margin:'4px 0'}} key={i}>Row {x.row}: {x.error}</p>)}{csv.error_count>10&&<p className="known">…and {csv.error_count-10} more.</p>}</>}
     {csv.warnings.length>0&&<><b style={{display:'block',marginTop:csv.error_count?10:0}}>Worth a look</b>{csv.warnings.slice(0,8).map((w,i)=><p className="known" style={{margin:'4px 0'}} key={i}>{w}</p>)}{csv.warnings.length>8&&<p className="known">…and {csv.warnings.length-8} more.</p>}</>}</div>
@@ -521,7 +527,7 @@ function QuizEditor({id,unit_id,course_id,unitTopics,csvFirst,done,toast}){
     <p className="known" style={{marginTop:0}}>A course test is built from a CSV file with one question per row. In the next step you check every question, upload any pictures for questions and answer choices, then save.</p>
     <button className="btn" onClick={()=>csvRef.current.click()}><Upload size={16}/> Choose the CSV file</button><button className="btn ghost" onClick={()=>download('mcq-template.csv',MCQ_TEMPLATE)}>Download the template</button>
     {csvNotes}
-    <h3 style={{margin:'24px 0 4px'}}>Columns</h3>{CSV_COLS.map(([c,h])=><div className="row" key={c}><div><code>{c}</code><small>{h}</small></div></div>)}
+    <h3 className="sec">Columns</h3>{CSV_COLS.map(([c,h])=><div className="row" key={c}><div><code>{c}</code><small>{h}</small></div></div>)}
     <p className="known">The first row names the columns. Comma, semicolon and tab separated files all work. A course test holds up to 200 questions.</p></div></>
   return <><Bar title={id?(course?'Edit test':'Edit quiz'):csvFirst?'New MCQ test':'New quiz'} sub={csvFirst&&!id?'Step 2 of 2 · check, add images, save':''} back={done}/><div className="main">{fileInputs}
     {csvNotes}
@@ -554,21 +560,21 @@ function QuizEditor({id,unit_id,course_id,unitTopics,csvFirst,done,toast}){
 const Spread=({rows,pass})=>{const top=Math.max(1,...rows.map(r=>r.count))
   return <figure className="spread" aria-label="How many students scored in each band"><div className="sbars">{rows.map((r,i)=><div key={r.label} className="sbar" title={`${r.label}%: ${pl(r.count,'student')}`}><em>{r.count||''}</em><i style={{height:r.count?Math.max(4,100*r.count/top)+'%':0}} className={i*10+9<pass?'below':''}/></div>)}</div>
     <div className="saxis">{rows.map(r=><span key={r.label}>{r.label.split('–')[0]}</span>)}</div><figcaption>Final score in bands of 10%. Lighter bars are below the {pass}% pass mark.</figcaption></figure>}
-const PassPill=({ok})=><span className={'pill '+(ok?'okp':'off')} style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>{ok?'Passed':'Not yet'}</span>
+const PassPill=({ok})=><span className={'pill sm '+(ok?'okp':'off')}>{ok?'Passed':'Not yet'}</span>
 function QuizResults({id,back,toast,role}){
   const [d,setD]=useState(null),[tab,setTab]=useState('overview'),[who,setWho]=useState(null),[sort,setSort]=useState('order')
   useEffect(()=>{api(`/quizzes/${id}/results`).then(setD).catch(e=>{toast(e.message);back()})},[id])
   if(who)return <MyAttempts quiz={id} user={who} back={()=>setWho(null)} toast={toast} role={role}/>
-  if(!d)return <><Bar title="Results" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  if(!d)return <><Bar title="Results" back={back}/><div className="main"><Skeleton/></div></>
   const sm=d.summary,qs=sort==='hard'?[...d.questions].sort((a,b)=>(a.percent??101)-(b.percent??101)):d.questions
   return <><Bar title={d.title} sub={`Results · ${sm.took} of ${sm.students} students took it`} back={back}/><div className="main">
-    <div className="tabs scroll" role="tablist">{[['overview','Overview'],['students','Students'],['questions','Questions'],['areas','Strengths']].map(([k,l])=><button key={k} role="tab" aria-selected={tab===k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
+    <Tabs scroll label="Result sections" items={[['overview','Overview'],['students','Students'],['questions','Questions'],['areas','Strengths']]} value={tab} onChange={setTab}/>
     {tab==='overview'&&<>{!sm.took?<p className="known">Nobody has taken it yet.{d.published?'':' It is still a draft, so students cannot see it.'}</p>:<>
       <div className="stats">{[['Average final score',sm.average+'%'],['Pass rate',sm.pass_rate+'%',`${sm.passed} of ${sm.took} passed`],['Median',sm.median+'%'],['Highest · lowest',sm.highest+'% · '+sm.lowest+'%'],
         ['Took it',sm.took+' / '+sm.students,sm.not_taken?sm.not_taken+' not yet':'everyone'],['Attempts',sm.attempts,'latest average '+sm.average_latest+'%']].map(([l,v,x])=><div className="stat" key={l}><b>{v}</b>{l}{x&&<small style={{display:'block',color:'var(--mut)'}}>{x}</small>}</div>)}</div>
-      <h3 style={{margin:'24px 0 4px'}}>Spread of final scores</h3><Spread rows={sm.distribution} pass={d.pass_percent}/>
+      <h3 className="sec">Spread of final scores</h3><Spread rows={sm.distribution} pass={d.pass_percent}/>
       <p className="known">The final score is each student's best attempt. Strengths and the question analysis use each student's latest attempt, so a retake replaces the earlier result.</p></>}
-      {d.not_taken.length>0&&<><h3 style={{margin:'24px 0 4px'}}>Not taken yet ({sm.not_taken})</h3><p className="known" style={{margin:0}}>{d.not_taken.map(x=>x.name).join(', ')}{sm.not_taken>d.not_taken.length?'…':''}</p></>}
+      {d.not_taken.length>0&&<><h3 className="sec">Not taken yet ({sm.not_taken})</h3><p className="known" style={{margin:0}}>{d.not_taken.map(x=>x.name).join(', ')}{sm.not_taken>d.not_taken.length?'…':''}</p></>}
       <button className="btn ghost" onClick={()=>fetchFile(`/quizzes/${id}/results?format=csv`,'results-'+d.title.replace(/\s+/g,'_')+'.csv',toast)}>Download results CSV</button></>}
     {tab==='students'&&<>{!d.students.length&&<p className="known">No results yet.</p>}
       {d.students.map(x=><button key={x.user_id} className="row rowbtn" onClick={()=>setWho(x.user_id)}><div>{x.name}<PassPill ok={x.passed}/><small>Final {x.best}% · latest {x.latest}% · {pl(x.attempts,'attempt')} · {day(x.last_at)}</small>
@@ -588,7 +594,7 @@ function Gradebook({cid,back,toast,role}){
   if(open)return <QuizResults id={open} back={()=>setOpen(null)} toast={toast} role={role}/>
   if(stu)return stu.quiz?<MyAttempts quiz={stu.quiz} user={stu.id} back={()=>setStu({...stu,quiz:null})} toast={toast} role={role}/>
     :<><Bar title={stu.name} sub={d.course+' · final '+(stu.final==null?'–':stu.final+'%')} back={()=>setStu(null)}/><div className="main">{d.tests.map((t,i)=><button key={t.id} className="row rowbtn" disabled={stu.scores[i]==null} onClick={()=>setStu({...stu,quiz:t.id})}><div>{t.title}{stu.scores[i]!=null&&<PassPill ok={stu.scores[i]>=t.pass_percent}/>}<small>{t.unit||'Course test'} · {stu.scores[i]==null?'not taken':'final '+stu.scores[i]+'%'} · pass {t.pass_percent}%</small>{stu.scores[i]!=null&&<Bar2 v={stu.scores[i]}/>}</div>{stu.scores[i]!=null&&<ChevronRight size={18}/>}</button>)}</div></>
-  if(!d)return <><Bar title="Gradebook" back={back}/><div className="main"><p className="known">Loading…</p></div></>
+  if(!d)return <><Bar title="Gradebook" back={back}/><div className="main"><Skeleton/></div></>
   return <><Bar title="Gradebook" sub={d.course+' · '+pl(d.tests.length,'test')} back={back}/><div className="main">
     {!d.tests.length?<p className="known">No published tests or quizzes in this course yet.</p>:<>
     <p className="known" style={{marginTop:0}}>Each cell is a student's final (best) score. The final course score is the average of the tests they took. Tap a student or a test to drill down.</p>
@@ -606,19 +612,20 @@ function MyScores({onCourse}){  // a student's final score per course
   const [d,setD]=useState(null)
   useEffect(()=>{api('/me/scores').then(setD).catch(()=>setD({courses:[]}))},[])
   if(!d||!d.courses.length)return null
-  return <><h3 style={{margin:'0 0 4px'}}>Scores</h3>{d.courses.map(x=><button key={x.course_id} className="row rowbtn" onClick={()=>onCourse(x)}><div>{x.course}<small>{x.final==null?'No tests taken yet':'Final score '+x.final+'%'} · {x.taken} of {x.tests.length} taken · {x.passed} passed</small>{x.final!=null&&<Bar2 v={x.final}/>}</div><ChevronRight size={18}/></button>)}</>}
+  return <><h3 className="sec first">Scores</h3>{d.courses.map(x=><button key={x.course_id} className="row rowbtn" onClick={()=>onCourse(x)}><div>{x.course}<small>{x.final==null?'No tests taken yet':'Final score '+x.final+'%'} · {x.taken} of {x.tests.length} taken · {x.passed} passed</small>{x.final!=null&&<Bar2 v={x.final}/>}</div><ChevronRight size={18}/></button>)}</>}
 function BankSheet({close,onAdd,toast}){
+  const confirm=useConfirm()
   const [q,setQ]=useState(''),[tag,setTag]=useState(''),[mine,setMine]=useState(false),[d,setD]=useState(null),[sel,setSel]=useState({}),[n,setN]=useState(0)
   useEffect(()=>{const t=setTimeout(()=>api('/bank?limit=30&q='+encodeURIComponent(q)+'&tag='+encodeURIComponent(tag)+(mine?'&mine=true':'')).then(setD).catch(e=>toast(e.message)),250);return()=>clearTimeout(t)},[q,tag,mine,n,toast])
   const picked=Object.values(sel),more=async()=>{try{const r=await api('/bank?limit=30&offset='+d.items.length+'&q='+encodeURIComponent(q)+'&tag='+encodeURIComponent(tag)+(mine?'&mine=true':''));setD({...d,items:[...d.items,...r.items]})}catch(e){toast(e.message)}}
   const flip=x=>{const c={...sel};c[x.id]?delete c[x.id]:c[x.id]=x;setSel(c)}
-  const del=async x=>{if(!confirm('Delete this question from the bank for everyone? Quizzes that already use it keep their copy.'))return;try{await api('/bank/'+x.id,{method:'DELETE'});const c={...sel};delete c[x.id];setSel(c);setN(n+1)}catch(e){toast(e.message)}}
+  const del=async x=>{if(!await confirm({title:'Delete this question from the bank?',body:'It disappears for everyone. Quizzes that already use it keep their copy.',ok:'Delete',danger:true}))return;try{await api('/bank/'+x.id,{method:'DELETE'});const c={...sel};delete c[x.id];setSel(c);setN(n+1)}catch(e){toast(e.message)}}
   return <Sheet close={close}><h3>Question bank</h3><p className="known">Questions shared by every teacher. Adding one puts a copy in this quiz, so later changes to the bank never alter a quiz students are taking.</p>
     <div className="search"><Search size={18}/><input type="search" aria-label="Search the bank" placeholder="Search questions, tags or source" value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters"><select aria-label="Filter by tag" value={tag} onChange={e=>setTag(e.target.value)}><option value="">All tags</option>{(d?.tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</select>
       <label className="chk" style={{padding:0}}><input type="checkbox" checked={mine} onChange={e=>setMine(e.target.checked)}/> Only mine</label></div>
     {!d?<div className="sk"/>:!d.items.length?<p className="known">{q||tag||mine?'Nothing matches that.':'The bank is empty. Use “Save to bank” in any quiz to start it.'}</p>:d.items.map(x=><div key={x.id} className="row"><label className="chk" style={{alignItems:'flex-start',flex:1}}><input type="checkbox" checked={!!sel[x.id]} onChange={()=>flip(x)}/><span><span style={{display:'block'}}>{x.text.length>180?x.text.slice(0,180)+'…':x.text}</span><small>{x.options.length} answers{x.tags.length>0&&' · '+x.tags.join(', ')} · by {x.owner||'someone'}{x.uses>0&&' · used '+pl(x.uses,'time')}</small></span></label>{x.can_edit&&<button className="ic sm" aria-label="Delete from the bank" onClick={()=>del(x)}><Trash2 size={16}/></button>}</div>)}
-    {d&&d.items.length<d.total&&<button className="btn ghost" onClick={more}>Show more ({d.total-d.items.length} left)</button>}
+    {d&&d.items.length<d.total&&<ShowMore left={d.total-d.items.length} onClick={more}/>}
     <button className="btn" disabled={!picked.length} onClick={()=>onAdd(picked)}>{picked.length?`Add ${pl(picked.length,'question')}`:'Choose questions to add'}</button><button className="btn ghost" onClick={close}>Cancel</button></Sheet>}
 
 function CopySheet({kind,id,title,close,toast}){
@@ -643,10 +650,11 @@ const lineDiff=(a,b)=>{const x=a.split('\n'),y=b.split('\n'),n=x.length,m=y.leng
   while(i<n&&j<m){if(x[i]===y[j]){out.push({k:'same',t:x[i]});i++;j++}else if(L[i+1][j]>=L[i][j+1])out.push({k:'del',t:x[i++]});else out.push({k:'add',t:y[j++]})}
   while(i<n)out.push({k:'del',t:x[i++]});while(j<m)out.push({k:'add',t:y[j++]});return out}
 function HistorySheet({tid,close,done,toast}){
+  const confirm=useConfirm()
   const [list,setList]=useState(null),[v,setV]=useState(null),[busy,setBusy]=useState(false)
   useEffect(()=>{api(`/topics/${tid}/versions`).then(setList).catch(e=>{toast(e.message);close()})},[tid,toast,close])
   const open=async x=>{try{setV({...(await api('/topic-versions/'+x.id)),current:x.current})}catch(e){toast(e.message)}}
-  const restore=async()=>{if(!confirm('Put this version back? What is there now stays in the history, so you can undo it.'))return;setBusy(true)
+  const restore=async()=>{if(!await confirm({title:'Put this version back?',body:'What is there now stays in the history, so you can undo it.',ok:'Restore version'}))return;setBusy(true)
     try{await api(`/topic-versions/${v.id}/restore`,{method:'POST'});toast('Version restored');done()}catch(e){toast(e.message);setBusy(false)}}
   if(v){const changed=Object.keys(FIELD_LABEL).filter(k=>v[k]!==v.now[k])
     return <Sheet close={close}><button className="link" onClick={()=>setV(null)}><ChevronLeft size={16}/> All versions</button>
@@ -678,7 +686,7 @@ function Topic({id:first,back,toast,role}){
     {t.can_edit&&pv&&<div className="qbox" style={{marginTop:0}}><b>Previewing as a student</b><p className="known" style={{margin:'4px 0 8px'}}>This is what students see: no editing buttons, and drafts show as unavailable to them.</p><button className="btn ghost" style={{marginTop:0}} onClick={()=>setPv(false)}>Back to editing</button></div>}
     {t.can_edit&&!pv&&<div className="two" style={{marginBottom:12}}><button className="btn ghost" style={{marginTop:0}} onClick={()=>setEditing(true)}><Pencil size={16}/> Edit topic</button>
       <button className="btn ghost" style={{marginTop:0}} onClick={async()=>{try{await api(`/topics/${id}/publish`,{method:'PUT',body:{published:!t.published}});toast(t.published?'Moved to drafts':'Published');setV(v+1)}catch(e){toast(e.message)}}}>{t.published?<><EyeOff size={16}/> Unpublish</>:<><Eye size={16}/> Publish</>}</button></div>}
-    <div className="qbox" style={{marginTop:0}}><div className="row"><div>{t.learning_due_at?when(t.learning_due_at):'No deadline'}<small>Learn by</small></div>{t.overdue&&role==='student'&&<span className="pill off">Overdue</span>}</div>
+    <div className="qbox" style={{marginTop:0}}><div className="row"><div>{t.learning_due_at?when(t.learning_due_at):'No deadline'}<small>Learn by</small></div>{t.overdue&&role==='student'&&<span className="pill off sm">Overdue</span>}</div>
       {role==='student'&&<><div className="row"><div>{STATUS[t.status]}{t.status==='completed'&&t.completed_at&&' on '+when(t.completed_at)+(t.late?', after the deadline':'')}<small>Your status</small></div></div>
         {t.status==='completed'?<button className="btn ghost" onClick={()=>setDone(false)}>Mark as not completed</button>:<button className="btn" onClick={()=>setDone(true)}><Check size={16}/> Mark as completed</button>}</>}</div>
     {t.can_edit&&!pv&&<><button className="tool" onClick={()=>setPv(true)}><Eye size={14}/> Preview as student</button><button className="tool" onClick={()=>setHist(true)}><History size={14}/> Version history</button></>}
@@ -686,7 +694,7 @@ function Topic({id:first,back,toast,role}){
     {cp&&<CopySheet kind="topic" id={id} title={t.title} toast={toast} close={()=>setCp(false)}/>}
     {hist&&<HistorySheet tid={id} toast={toast} close={()=>setHist(false)} done={()=>{setHist(false);setV(v+1)}}/>}
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
-    <div className="tabs">{[['notes','Notes'],['explain','Explain'],['answer','Sample answer']].map(([k,l])=><button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
+    <Tabs label="Topic sections" items={[['notes','Notes'],['explain','Explain'],['answer','Sample answer']]} value={tab} onChange={setTab}/>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
     {tab==='notes'&&<div className="prose"><Md>{t.content||'No notes yet.'}</Md>{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
@@ -748,12 +756,26 @@ function Bookmarks({toast,role}){
         <span className="lbl">{multi&&x.prog+' · '}{x.name}</span><em>{x.courses.reduce((n,c)=>n+cnt(c),0)}</em></button>)}</div>
       <div className="tabs scroll" role="tablist" aria-label="Course">{sm.courses.map(c=><button key={c.id} role="tab" aria-selected={c.id===co.id} className={c.id===co.id?'on':''} onClick={e=>{setCourse(c.id);tabTo(e)}}>
         <span className="lbl">{c.name}</span><em>{cnt(c)}</em></button>)}</div>
-      {co.units.filter(u=>marks(u).length).map(u=><div key={u.id}><h3 style={{margin:'18px 0 8px'}}>{u.name}</h3>
+      {co.units.filter(u=>marks(u).length).map(u=><div key={u.id}><h3 className="sec">{u.name}</h3>
         {marks(u).map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>setT(x.id)}><span className="dot" style={{background:COL[i%5]}}>{x.title[0]}</span><div><b>{x.title}</b></div><Mark s={x.status}/></button>
           <button className="ic sm on" aria-label={'Remove bookmark: '+x.title} onClick={()=>drop(x.id)}><Bookmark size={16} fill="currentColor"/></button></div>)}</div>)}
     </>}</div></>}
 
-const Sheet=({close,children})=><div className="scrim" onClick={close}><div className="sheet" onClick={e=>e.stopPropagation()}>{children}</div></div>
+const sheets=[]  // open sheets, topmost last, so Escape closes only the one on top
+function Sheet({close,children}){
+  const box=useRef(null),cb=useRef(close);cb.current=close
+  useEffect(()=>{const me={},was=document.activeElement;sheets.push(me)
+    const k=e=>{if(e.key==='Escape'&&sheets[sheets.length-1]===me)cb.current()}
+    addEventListener('keydown',k);if(box.current&&!box.current.contains(document.activeElement))box.current.focus()
+    return()=>{sheets.splice(sheets.indexOf(me),1);removeEventListener('keydown',k);if(was&&was.isConnected)was.focus?.()}},[])
+  return <div className="scrim" onClick={()=>cb.current()}><div className="sheet" ref={box} tabIndex={-1} role="dialog" aria-modal="true" onClick={e=>e.stopPropagation()}>{children}</div></div>}
+const Confirm=({o,answer})=><Sheet close={()=>answer(false)}><h3>{o.title}</h3>{o.body&&<p className="known">{o.body}</p>}
+  <button className={'btn'+(o.danger?' danger':'')} onClick={()=>answer(true)}>{o.ok||'Confirm'}</button><button className="btn ghost" onClick={()=>answer(false)}>Cancel</button></Sheet>
+const useConfirm=()=>useContext(Ctx).confirm
+const Toast=({msg})=>msg?<div className="toast" role="status">{msg}</div>:null
+const Skeleton=({rows=3})=><div aria-busy="true" aria-label="Loading">{Array.from({length:rows},(_,i)=><div className="sk" key={i}/>)}</div>
+const ShowMore=({left,onClick,busy})=><button className="btn ghost" disabled={busy} onClick={onClick}>Show more ({left} left)</button>
+const Tabs=({items,value,onChange,scroll,label})=><div className={'tabs'+(scroll?' scroll':'')} role="tablist" aria-label={label}>{items.map(([k,l])=><button key={k} role="tab" aria-selected={value===k} className={value===k?'on':''} onClick={()=>onChange(k)}>{l}</button>)}</div>
 const useRun=(toast,load)=>async(fn,m)=>{try{await fn();toast(m);load&&load()}catch(e){toast(e.message)}}
 
 const download=(name,text)=>{const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([text],{type:'text/csv'}));l.download=name;l.click()}
@@ -797,7 +819,7 @@ function Users({toast,me}){
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/users/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
   const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem,lab=prog?termOf(progs,prog):progs.every(x=>x.term==='Semester')?'Semester':progs.length&&progs.every(x=>x.term==='Grade')?'Grade':'Term'
   if(view)return <UserDetail id={view} me={me} progs={progs} toast={toast} back={()=>{setView(null);load()}}/>
-  return <><Bar title="Users" sub={total+(filtered?' matches':' accounts')}/><div className="main">
+  return <><Bar title="Users" sub={filtered?matches(total):pl(total,'account')}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label="Search users" placeholder="Search name, email, ID, program, semester, year or grade" value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters">
       <select aria-label="Filter by program" value={prog} onChange={e=>{const id=e.target.value;setProg(id);if(+sem>semsOf(progs,id).length)setSem('')}}><option value="">All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
@@ -812,7 +834,7 @@ function Users({toast,me}){
       <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active||u.self_registered)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?'Admin':'Faculty'}</span>}{u.self_registered&&<span className="pill">Self-registered</span>}{!u.active&&<span className="pill off">Disabled</span>}</span>}</span></span>
       <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
     {!items.length&&<p className="known">{filtered?'No one matches that search.':'No users yet.'}</p>}
-    {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
+    {items.length<total&&<ShowMore left={total-items.length} onClick={more}/>}
     <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
     {selMode&&sel.length>0&&<div className="actbar" role="toolbar" aria-label="Actions for selected users"><b>{sel.length} selected</b>
       <button className="tool" onClick={()=>setAct({kind:'set_placement'})}>Move…</button><button className="tool" onClick={()=>setAct({kind:'disable'})}>Disable</button><button className="tool" onClick={()=>setAct({kind:'enable'})}>Enable</button><button className="tool" onClick={()=>setAct({kind:'reset_passwords'})}>Reset passwords</button></div>}
@@ -841,10 +863,10 @@ function UserDetail({id,me,progs,back,toast}){
   const saveAsg=async()=>{try{await api(`/admin/users/${u.id}/courses`,{method:'PUT',body:{course_ids:asg}});toast('Courses updated');setAsg(null);load()}catch(e){toast(e.message)}}
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>Topics read</div><div className="stat"><b>{u.reads}</b>Total reads</div></div>
-    <h3 style={{margin:'24px 0 4px'}}>Profile</h3>
+    <h3 className="sec">Profile</h3>
     {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(u.own_ai_key?'Has added their own key':'No key yet · AI is off for them','AI (self-registered, uses their own key)')}</>}{row(day(u.last_active),'Last active')}
-    {u.role==='faculty'&&<><h3 style={{margin:'28px 0 4px'}}>Courses they own</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">None yet. They can read published content but edit nothing until they own a course.</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>Assign courses</button></>}
-    <h3 style={{margin:'28px 0 4px'}}>Recently read</h3>
+    {u.role==='faculty'&&<><h3 className="sec">Courses they own</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">None yet. They can read published content but edit nothing until they own a course.</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>Assign courses</button></>}
+    <h3 className="sec">Recently read</h3>
     {u.recent.length?u.recent.map((x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads} reads, last {day(x.last_read)}</small></div></div>):<p className="known">No reading activity yet.</p>}
     <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>Edit</button><button className="btn" onClick={()=>setAsk(true)}>Reset password</button></div></div>
     {ed&&<UserSheet u={u} me={me} progs={progs} toast={toast} close={()=>setEd(false)} done={()=>{setEd(false);load()}}/>}
@@ -884,17 +906,17 @@ function Programs({toast,onOpen}){
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
   const r=bulk?.res,made=r&&Object.entries(r.created).filter(([,v])=>v).map(([k,v])=>v+' '+k).join(', ')||'nothing new'
   if(view)return <ProgramDetail id={view} onOpen={onOpen} toast={toast} back={()=>{setView(null);load()}}/>
-  return <><Bar title="Programs" sub={total+(q?' matches':' programs')}/><div className="main">
+  return <><Bar title="Programs" sub={q?matches(total):pl(total,'program')}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label="Search programs" placeholder="Search program, semester, year or course" value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters"><select aria-label="Sort by" value={order} onChange={e=>setOrder(e.target.value)}><option value="name">Sort: name</option><option value="students">Sort: most students</option><option value="newest">Sort: newest first</option></select><select aria-label="Show" value={status} onChange={e=>setStatus(e.target.value)}><option value="active">Active programs</option><option value="archived">Archived programs</option><option value="all">All programs</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>New program</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>Bulk upload</button></div>
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead p" aria-hidden="true"><span>Program</span><span>Courses</span><span>Students</span></div>}
     {items.map(x=><button key={x.id} className="utr p" onClick={()=>setView(x.id)} aria-label={'Open '+x.name}>
-      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}{x.archived&&<span className="pill off" style={{padding:'1px 8px',fontSize:11,marginLeft:6}}>Archived</span>}</b><small className="sub">{pl(x.semesters,x.term.toLowerCase())}, {x.topics} topics</small></span></span>
+      <span className="nm"><span className="dot" style={{background:COL[x.id%5]}}>{(x.name||'?')[0]}</span><span className="tx"><b>{x.name}{x.archived&&<span className="pill off sm">Archived</span>}</b><small className="sub">{pl(x.semesters,x.term.toLowerCase())}, {x.topics} topics</small></span></span>
       <span className="sn">{x.courses}</span><span className="sn">{x.students}</span></button>)}
     {!items.length&&<p className="known">{q?'No program matches that search.':status==='archived'?'No archived programs.':'No programs yet. Add one or bulk upload a CSV.'}</p>}
-    {items.length<total&&<button className="btn ghost" onClick={more}>Show more</button>}
+    {items.length<total&&<ShowMore left={total-items.length} onClick={more}/>}
     <input ref={fileRef} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/></div>
     {ed&&<ProgramSheet p={ed} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
     {bulk&&<Sheet close={()=>setBulk(null)}>
@@ -928,12 +950,12 @@ function ProgramDetail({id,back,onOpen,toast}){
   const row=(v,l,k)=><div className="row" key={k}><div>{v}<small>{l}</small></div></div>
   return <><Bar title={p.name} sub={pl(p.semesters,p.term.toLowerCase())+(p.pattern==='year'?' · annual':p.pattern==='grade'?' · school':'')+(p.archived?' · archived':'')} back={back}/><div className="main">
     {p.archived&&<p className="known" style={{marginTop:0}}>This program is archived. Students see its courses as unavailable right now. Restore it to bring everything back.</p>}
-    <button className="btn ghost" style={{marginTop:0,marginBottom:14}} onClick={()=>setArch({kind:'programs',id:p.id,name:p.name,on:!p.archived})}>{p.archived?'Restore program':'Archive program'}</button>
+    <button className="btn ghost lead" onClick={()=>setArch({kind:'programs',id:p.id,name:p.name,on:!p.archived})}>{p.archived?'Restore program':'Archive program'}</button>
     <div className="stats">{[['semesters',p.term+'s'],['courses','Courses'],['topics','Topics'],['students','Students']].map(([k,l])=><div className="stat" key={k}><b>{p[k]}</b>{l}</div>)}</div>
-    <h3 style={{margin:'24px 0 4px'}}>{p.term}s</h3>
+    <h3 className="sec">{p.term}s</h3>
     {p.semester_list.length?p.semester_list.map((x,i)=><div key={x.id} className="card"><button className="hit" onClick={()=>onOpen([p.id,x.id])}><span className="dot" style={{background:COL[i%5]}}>{x.number||'?'}</span><div><b>{x.name}<ArchPill x={x}/></b><span>{(x.number?'':'No '+p.term.toLowerCase()+' number set · ')+x.courses+' courses, '+x.topics+' topics'}</span></div></button>{!p.archived&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.name} onClick={()=>setArch({kind:'semesters',id:x.id,name:x.name,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}</div>):<p className="known">No {p.term.toLowerCase()}s yet.</p>}
     <button className="btn ghost" onClick={()=>setAddSem(true)}>Add {p.term.toLowerCase()}</button>
-    <h3 style={{margin:'28px 0 4px'}}>Students</h3>
+    <h3 className="sec">Students</h3>
     {p.student_list.length?p.student_list.map(u=>row(u.name,(u.semester?p.term+' '+u.semester:p.term+' not set')+(u.active?'':', disabled'),u.id)):<p className="known">No students are enrolled yet. Set a program on a user's page.</p>}
     {p.students>p.student_list.length&&<p className="known">Showing {p.student_list.length} of {p.students}. Use Users to see everyone.</p>}
     {p.students>0&&<button className="btn ghost" onClick={()=>setTerm(true)}>Start a new term (move students up)</button>}
@@ -944,7 +966,7 @@ function ProgramDetail({id,back,onOpen,toast}){
     {arch&&<ArchiveSheet a={arch} toast={toast} close={()=>setArch(null)} done={()=>{setArch(null);load()}}/>}
     {addSem&&<SemesterSheet sem={{}} pid={p.id} term={p.term} toast={toast} close={()=>setAddSem(false)} done={()=>{setAddSem(false);load()}}/>}
     {ask&&<Sheet close={()=>setAsk(false)}><h3>Delete “{p.name}”?</h3><p className="known">This permanently deletes {pl(p.semesters,p.term.toLowerCase())}, {p.courses} courses, {p.units} units and {p.topics} topics, including their saved AI answers.{p.students>0&&` The ${p.students} enrolled students keep their accounts but lose their program.`}</p>
-      <button className="btn danger" disabled={busy} onClick={del}>Delete program</button><button className="btn ghost" onClick={()=>setAsk(false)}>Keep it</button></Sheet>}</>}
+      <button className="btn danger" disabled={busy} onClick={del}>Delete program</button><button className="btn ghost" onClick={()=>setAsk(false)}>Cancel</button></Sheet>}</>}
 
 function OwnerSheet({c,close,done,toast}){
   const faculty=useFaculty(true),[sel,setSel]=useState(c.owner_id||''),[busy,setBusy]=useState(false)
@@ -973,7 +995,7 @@ function Branding({toast,onSaved}){
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;setBusy(true)
     try{const r=await fetch('/api/uploads',{method:'POST',headers:{Authorization:'Bearer '+localStorage.t,'Content-Type':f.type},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');setLogo(j.url)}catch(x){toast(x.message)}setBusy(false)}
   const save=async body=>{setBusy(true);try{await api('/admin/branding',{method:'PUT',body});toast('Saved');onSaved()}catch(e){toast(e.message)}setBusy(false)}
-  return <><h3 style={{margin:'0 0 4px'}}>Institution name and logo</h3><p className="known">Shown on the sign-in page and in the menu. Use a square PNG, JPG or WebP under 3 MB.</p>
+  return <><h3 className="sec first">Institution name and logo</h3><p className="known">Shown on the sign-in page and in the menu. Use a square PNG, JPG or WebP under 3 MB.</p>
     <div className="lpreview"><Logo src={logo} size={48}/><b>{name||'Name'}</b></div>
     <label htmlFor="inst">Name</label><input id="inst" value={name} maxLength={60} onChange={e=>setName(e.target.value)}/>
     <input ref={file} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={pick}/>
@@ -981,19 +1003,20 @@ function Branding({toast,onSaved}){
       <button className="btn ghost" disabled={busy||!logo} onClick={()=>{setLogo(null);save({remove_logo:true,name})}}>Remove logo</button></div>
     <button className="btn" disabled={busy} onClick={()=>save({name,logo_url:logo||undefined})}>Save name and logo</button></>}
 function AiConfig({toast,onBrand}){
+  const confirm=useConfirm()
   const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({})
   const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model)});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
-  return <><Bar title="Settings" sub={cfg.key_set?'AI is on · key '+cfg.key_hint:'AI is off · no key yet'}/><div className="main"><Branding toast={toast} onSaved={onBrand}/><h3 style={{margin:'32px 0 4px'}}>AI</h3>
+  return <><Bar title="Settings" sub={cfg.key_set?'AI is on · key '+cfg.key_hint:'AI is off · no key yet'}/><div className="main"><Branding toast={toast} onSaved={onBrand}/><h3 className="sec">AI</h3>
     <label>DeepSeek API key</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={cfg.key_set?'Leave blank to keep the current key':'sk-…'}/>
     <label>Model</label><input value={model} onChange={e=>setModel(e.target.value)} placeholder="deepseek-chat"/>
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key,model}}).then(()=>setKey('')),'AI settings saved')}>Save</button>
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Test the key</button>
-      <button className="btn ghost" onClick={()=>confirm('Turn AI off for everyone? Students will see "AI unavailable" until you save a key again.')&&run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}>Remove the key (turn AI off)</button></>}
+      <button className="btn ghost" onClick={async()=>{if(await confirm({title:'Turn AI off for everyone?',body:'Students will see “AI unavailable” until you save a key again.',ok:'Turn AI off',danger:true}))run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}}>Remove the key (turn AI off)</button></>}
     <p className="known" style={{marginTop:20}}>One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
-    <h3 style={{margin:'32px 0 4px'}}>AI prompts</h3><PromptEditor toast={toast}/>
-    <h3 style={{margin:'28px 0 4px'}}>Self-registration</h3><SelfReg cfg={cfg} run={run}/>
-    <h3 style={{margin:'28px 0 4px'}}>Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
+    <h3 className="sec">AI prompts</h3><PromptEditor toast={toast}/>
+    <h3 className="sec">Self-registration</h3><SelfReg cfg={cfg} run={run}/>
+    <h3 className="sec">Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
     {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</div></>}
 
 const VERB={POST:'Created',PUT:'Changed',PATCH:'Edited',DELETE:'Deleted'}
@@ -1007,9 +1030,9 @@ function Activity(){
   const [q,setQ]=useState(''),[rows,setRows]=useState([]),[total,setTotal]=useState(0),[busy,setBusy]=useState(false)
   const load=(more)=>{setBusy(true);api(`/admin/audit?q=${encodeURIComponent(q)}&offset=${more?rows.length:0}&limit=50`).then(r=>{setRows(more?[...rows,...r.items]:r.items);setTotal(r.total)}).finally(()=>setBusy(false))}
   useEffect(()=>{const t=setTimeout(()=>load(false),250);return()=>clearTimeout(t)},[q])
-  return <><Bar title="Activity log" sub="Who changed what"/><div className="main"><input placeholder="Search by person or action" value={q} onChange={e=>setQ(e.target.value)}/>
-    {rows.length?rows.map(x=><div className="row" key={x.id}><div>{describe(x.method,x.path)}{x.status>=400&&<span className="pill off" style={{marginLeft:8}}>{x.status===403?'Not allowed':'Failed'}</span>}<small>{x.user} · {new Date(x.at).toLocaleString()}</small></div></div>):<p className="known">{busy?'Loading…':'No activity yet.'}</p>}
-    {rows.length<total&&<button className="btn ghost" disabled={busy} onClick={()=>load(true)}>Show more ({total-rows.length} older)</button>}</div></>}
+  return <><Bar title="Activity log" sub="Who changed what"/><div className="main"><div className="search"><Search size={18}/><input type="search" aria-label="Search the activity log" placeholder="Search by person or action" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    {rows.length?rows.map(x=><div className="row" key={x.id}><div>{describe(x.method,x.path)}{x.status>=400&&<span className="pill off sm">{x.status===403?'Not allowed':'Failed'}</span>}<small>{x.user} · {when(x.at)}</small></div></div>):busy?<Skeleton/>:<p className="known">No activity yet.</p>}
+    {rows.length<total&&<ShowMore left={total-rows.length} busy={busy} onClick={()=>load(true)}/>}</div></>}
 const day=d=>d?new Date(d).toLocaleDateString(undefined,{day:'numeric',month:'short'}):'never'
 const fetchFile=async(url,name,toast)=>{try{const r=await fetch('/api'+url,{headers:{Authorization:'Bearer '+localStorage.t}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Download failed')
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=name;a.click();URL.revokeObjectURL(a.href)}catch(e){toast(e.message)}}
@@ -1023,14 +1046,14 @@ function CourseReports({toast,onOpen}){
   return <><div className="qopt"><select value={f.p} onChange={e=>{const p=+e.target.value,x=progs.find(y=>y.id===p);setF({p,s:x&&f.s>x.max?0:f.s})}}><option value={0}>All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
     <select aria-label={'Filter by '+lab.toLowerCase()} value={f.s} onChange={e=>setF({...f,s:+e.target.value})}><option value={0}>{lab==='Term'?'All terms':'All '+lab.toLowerCase()+'s'}</option>{Array.from({length:top},(_,i)=>i+1).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select></div>
     {rows&&!rows.length&&<p className="known">No courses match.</p>}
-    {rows?.map(x=><div className="row" key={x.course_id} style={{cursor:'pointer'}} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program} · {x.semester} · {x.students} students · {x.topics} topics · {x.avg_completion}% read{x.quizzes?' · quiz avg '+(x.avg_quiz_percent??'–')+'%':''}</small><Bar2 v={x.avg_completion}/></div></div>)}
+    {rows?.map(x=><button className="row rowbtn" key={x.course_id} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program} · {x.semester} · {x.students} students · {x.topics} topics · {x.avg_completion}% read{x.quizzes?' · quiz avg '+(x.avg_quiz_percent??'–')+'%':''}</small><Bar2 v={x.avg_completion}/></div><ChevronRight size={18}/></button>)}
     {rows?.length>0&&<button className="btn ghost" onClick={()=>fetchFile('/reports/courses?format=csv&program_id='+f.p+'&semester='+f.s,'courses.csv',toast)}>Download courses CSV</button>}</>}
 function StudentReport({c,back,toast}){
   const [d,setD]=useState(null),[w,setW]=useState(null);useEffect(()=>{api(`/reports/courses/${c.course_id}/students`).then(setD).catch(e=>toast(e.message));api(`/reports/courses/${c.course_id}/weak-areas`).then(setW).catch(()=>{})},[])
   return <><Bar title={c.course} sub={c.program+' · '+c.semester} back={back}/><div className="main">
-    {w&&w.areas.length>0&&<><h3 style={{margin:'0 0 4px'}}>Topics the class finds hard</h3><p className="known" style={{margin:'0 0 8px'}}>From each student's latest quiz results, weakest first.</p>{w.areas.slice(0,8).map(a=><div className="row" key={a.topic_id||'u'+a.unit_id}><div>{a.title}<small>{a.percent}% right overall · {a.needs_study} of {a.students} students need another round of study</small><Bar2 v={a.percent}/></div></div>)}<h3 style={{margin:'24px 0 4px'}}>Students</h3></>}
+    {w&&w.areas.length>0&&<><h3 className="sec first">Topics the class finds hard</h3><p className="known" style={{margin:'0 0 8px'}}>From each student's latest quiz results, weakest first.</p>{w.areas.slice(0,8).map(a=><div className="row" key={a.topic_id||'u'+a.unit_id}><div>{a.title}<small>{a.percent}% right overall · {a.needs_study} of {a.students} students need another round of study</small><Bar2 v={a.percent}/></div></div>)}<h3 className="sec">Students</h3></>}
     {d&&!d.students.length&&<p className="known">No students are enrolled for this course yet.</p>}
-    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off" style={{marginLeft:8}}>Disabled</span>}<small>{x.completion}% · {x.topics_read}/{x.topics} topics{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&'Strong: '+x.strong.join(', ')}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&'Needs another round: '+x.needs_study.join(', ')}</small>}<Bar2 v={x.completion}/></div></div>)}
+    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off sm">Disabled</span>}<small>{x.completion}% · {x.topics_read}/{x.topics} topics{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&'Strong: '+x.strong.join(', ')}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&'Needs another round: '+x.needs_study.join(', ')}</small>}<Bar2 v={x.completion}/></div></div>)}
     {d?.students.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/reports/courses/${c.course_id}/students?format=csv`,'students-'+c.course.replace(/\s+/g,'_')+'.csv',toast)}>Download students CSV</button>}</div></>}
 function Reports({role,toast}){
   const [st,setSt]=useState({}),[r,setR]=useState(null),[open,setOpen]=useState(null)
@@ -1040,12 +1063,12 @@ function Reports({role,toast}){
   const list=(rows,empty,f)=>rows?.length?rows.map((x,i)=><div className="row" key={i}>{f(x)}</div>):<p className="known">{empty}</p>
   return <><Bar title="Reports"/><div className="main"><div className="stats">
     {[['students','Students'],['topics','Topics'],['cached','Saved AI answers'],['tokens_saved','Tokens saved']].map(([k,l])=><div className="stat" key={k}><b>{(st[k]??0).toLocaleString()}</b>{l}</div>)}</div>
-    <h3 style={{margin:'28px 0 4px'}}>Courses</h3><CourseReports toast={toast} onOpen={setOpen}/>
-    <h3 style={{margin:'28px 0 4px'}}>Most read topics</h3>
+    <h3 className="sec">Courses</h3><CourseReports toast={toast} onOpen={setOpen}/>
+    <h3 className="sec">Most read topics</h3>
     {list(r?.top_topics,'No reading activity yet.',x=><div>{x.title}<small>{x.readers} students, {x.reads} reads</small></div>)}
-    <h3 style={{margin:'28px 0 4px'}}>Students</h3>
+    <h3 className="sec">Students</h3>
     {list(r?.students,'No students yet.',x=><div>{x.name}<small>{x.topics_read} topics read, last active {day(x.last_active)}{!x.active&&', disabled'}</small></div>)}
-    <h3 style={{margin:'28px 0 4px'}}>Saved AI answers</h3>
+    <h3 className="sec">Saved AI answers</h3>
     {list(r?.ai,'Nothing saved yet.',x=><div>{x.title}<small>{x.kind==='explain'?'Explanation':'Sample answer'}, reused {x.hits} times, {x.saved.toLocaleString()} tokens saved</small></div>)}</div></>}
 
 function About({user}){
