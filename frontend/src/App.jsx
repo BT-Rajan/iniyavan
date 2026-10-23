@@ -20,7 +20,7 @@ export function fixTables(text){
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
 const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
-import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe} from 'lucide-react'
+import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -45,9 +45,7 @@ B.E. Mechanical Engineering,Semester 3,Thermodynamics,Unit 1: Basic concepts,Fir
 const COL=['#722f99','#c2464e','#7a6f70','#9a6420','#4e1d6c']
 const when=iso=>new Date(iso).toLocaleString(locale(),{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})  // shown in the viewer's own time zone
 const localInput=iso=>{if(!iso)return '';const d=new Date(iso),z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`}
-const STATUS=L({not_started:'Not started',in_progress:'In progress',completed:'Completed'})
-const doneOf=ts=>tl('{done} of {total}',{done:ts.filter(x=>x.status==='completed').length,total:ts.length})  // worked out from each topic's state, never stored
-const Mark=({s})=>s==='completed'?<Check className="done" aria-label={tl("Completed")}/>:<span className="st" aria-label={STATUS[s]}>{s==='in_progress'?'●':'—'}</span>
+const Mark=({s})=>s==='completed'?<Check className="done" aria-label={tl("Learned")}/>:null  // only what the student marked as learned; nothing for the rest
 const ownerLine=c=>c.mine?tl('Your course'):srv(c.owner_problem)||(c.owner?tl("Owner: {owner}",{owner:c.owner}):tl('Owner not assigned'))
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
@@ -91,7 +89,7 @@ export default function App(){
   if(user.must_change)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
-  const links=student?[['learn',GraduationCap,tl("My courses")],['routine',Clock,tl("My routine")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
+  const links=student?[['learn',GraduationCap,tl("My courses")],['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
     :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
     :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
@@ -102,7 +100,7 @@ export default function App(){
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
-    {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
+    {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role} onRoutine={()=>go('routine')}/>}{page==='saved'&&student&&<Saved toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
@@ -113,7 +111,7 @@ export default function App(){
         <div className="panlang"><LangSwitch lang={lang} pick={pickLang}/></div>
         {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k?' on':'')} onClick={()=>{if(k==='learn')setStart(null);go(k)}}><I size={20}/>{tl(l)}</button>)}
       </nav></div>
-    <footer className="foot"><span>{tl("© {v} {name}. All rights reserved.",{v:new Date().getFullYear(),name:name})}</span></footer>
+    <footer className="foot"><span>{tl("© {v} {name}. All rights reserved.",{v:new Date().getFullYear(),name:name})}</span>{student&&<>{" · "}<button className="link footl" onClick={()=>go('about')}>{tl("About")}</button></>}</footer>
     <Toast msg={msg}/>
     {ask&&<Confirm o={ask.o} answer={ok=>{ask.res(ok);setAsk(null)}}/>}
   </Ctx.Provider>}
@@ -277,15 +275,15 @@ function Learn({user,toast,appName,start}){
   if(qr)return <QuizResults id={qr} back={()=>setQr(null)} toast={toast} role={user.role}/>
   if(gb)return <Gradebook cid={gb} back={()=>setGb(null)} toast={toast} role={user.role}/>
   if(ed)return <TopicEditor role={user.role} toast={toast} edit={ed.id?ed:null} unitId={ed.unit_id} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
-  const tsub=x=>[x.published===false&&'Draft · students cannot see it',x.learning_due_at?'Due '+when(x.learning_due_at):!staff&&'No deadline',x.overdue&&!staff&&'Overdue',
+  const tsub=x=>[x.published===false&&'Draft · students cannot see it',x.learning_due_at&&(staff?'Due '+when(x.learning_due_at):tl("Your teacher's date")+': '+day(x.learning_due_at)),
     cp?.topics[x.id]&&`${cp.topics[x.id].completed}/${cp.students} completed`+(cp.topics[x.id].overdue?` · ${cp.topics[x.id].overdue} overdue`:'')].filter(Boolean).join(' · ')
   const row=(x,kind,one,sub,extra={})=>({id:x.id,n:x.name,sub,kind,archived:x.archived,archived_self:x.archived_self,locked:!staff&&kind==='courses'&&x.archived,can:kind==='programs'||kind==='semesters'?isAdmin:kind==='courses'?(isAdmin||x.mine)&&!x.shared:mayEdit&&!co?.shared,go:()=>setNav([...nav,x.id]),edit:()=>setEd({kind:one,id:x.id,name:x.name,...extra})})
   const drafts=t=>t.filter(x=>x.published===false).length
   const setPub=async(url,published,msg)=>{try{await api(url,{method:'PUT',body:{published}});toast(msg);load()}catch(e){toast(e.message)}}
   const move=async(items,i,d,url)=>{const ids=items.map(x=>x.id),j=i+d;if(j<0||j>=ids.length)return;[ids[i],ids[j]]=[ids[j],ids[i]];try{await api(url,{method:'PUT',body:{ids}});load()}catch(e){toast(e.message)}}
   const list0=unit?unit.topics.map(x=>({id:x.id,n:x.title,s:x.status,b:x.bookmarked,kind:'topics',archived:x.archived,archived_self:x.archived_self,can:mayEdit&&!co.shared,sub:tsub(x),late:x.overdue,draft:x.published===false,go:()=>setT(x.id),edit:()=>setEd({id:x.id}),pub:()=>setPub(`/topics/${x.id}/publish`,x.published===false,x.published===false?'Published':'Moved to drafts')}))
-    :co?co.units.map(x=>({...row(x,'units','unit',staff?pl(x.topics.length,'topic')+(mayEdit&&drafts(x.topics)?' · '+tl('{n} draft',{n:drafts(x.topics)}):''):tl("{n} topics completed",{n:doneOf(x.topics)})),edit:()=>setSheet({type:'unit',un:x,cid:co.id})}))
-    :sem?sem.courses.map(x=>({...row(x,'courses','course',(staff?pl(x.units.length,'unit'):tl("{n} topics completed",{n:doneOf(x.units.flatMap(n=>n.topics))}))+(x.shared?tl(" · shared from {home}",{home:x.home}):x.shared_with?tl(" · shared with {shared_with} more",{shared_with:x.shared_with}):'')+(staff?' · '+ownerLine(x):'')),edit:()=>setSheet({type:'course',c:x,pid:prog.id,sid:x.semester_id}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
+    :co?co.units.map(x=>({...row(x,'units','unit',pl(x.topics.length,'topic')+(mayEdit&&drafts(x.topics)?' · '+tl('{n} draft',{n:drafts(x.topics)}):'')),edit:()=>setSheet({type:'unit',un:x,cid:co.id})}))
+    :sem?sem.courses.map(x=>({...row(x,'courses','course',(staff?pl(x.units.length,'unit'):pl(x.units.flatMap(n=>n.topics).length,'topic'))+(x.shared?tl(" · shared from {home}",{home:x.home}):x.shared_with?tl(" · shared with {shared_with} more",{shared_with:x.shared_with}):'')+(staff?' · '+ownerLine(x):'')),edit:()=>setSheet({type:'course',c:x,pid:prog.id,sid:x.semester_id}),share:()=>setSh({id:x.id,name:x.name,home:x.semester_id,sel:x.link_ids||[]}),unlink:x.shared?{id:x.id,keep:(x.link_ids||[]).filter(i=>i!==sem.id)}:null}))
     :prog?prog.semesters.map(x=>({...row(x,'semesters','semester',(isAdmin?(x.number?tl('{term} no. {n}',{term:prog.term,n:x.number}):tl('No {term} number set',{term:prog.term.toLowerCase()}))+' · ':'')+pl(x.courses.length,'course')),edit:()=>setSheet({type:'semester',sem:x,pid:prog.id})}))
     :tree.map(x=>({...row(x,'programs','program',x.semesters.length+' '+x.term.toLowerCase()+(x.semesters.length===1?'':'s')),edit:()=>setSheet({type:'program',p:x})}))
   const hidden=staff?list0.filter(x=>x.archived).length:0,list=staff&&!showArch?list0.filter(x=>!x.archived):list0,anyArch=staff&&tree.some(p=>p.archived||p.semesters.some(s=>s.archived||s.courses.some(c=>c.archived||c.units.some(n=>n.archived_self||n.topics.some(t=>t.archived_self)))))
@@ -299,7 +297,6 @@ function Learn({user,toast,appName,start}){
      {staff&&(anyArch||showArch)&&<label className="chk" style={{marginBottom:12}}><input type="checkbox" checked={showArch} onChange={e=>setShowArch(e.target.checked)}/>{" "}{tl("Show archived")}{!showArch&&hidden>0?tl(" ({hidden} here)",{hidden:hidden}):''}</label>}
      {isAdmin&&!sem&&<button className="btn ghost lead" onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?tl("Add {term} to {name}",{term:prog.term.toLowerCase(),name:prog.name}):tl("New program")}</button>}
      {isAdmin&&sem&&!co&&<button className="btn ghost lead" onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>{tl("Add course to")}{" "}{sem.name}</button>}
-     {co&&!unit&&!staff&&<p className="known" style={{marginTop:0}}>{doneOf(co.units.flatMap(n=>n.topics))}{" "}{tl("topics completed")}</p>}
      {co&&!unit&&!staff&&(()=>{const ts=co.units.flatMap(n=>n.topics),k=ts.filter(x=>x.has_notes).length;return <div className="card"><button className="hit" onClick={()=>setMat(true)}><span className="dot" style={{background:COL[3]}}><FileText size={20}/></span>
        <div><b>{k?tl("Your notes in {k} of {length} topics",{k:k,length:ts.length}):tl("Bring your own notes")}</b><span>{k?tl("Add or update your material"):tl("Upload your PDF or Word notes. They are filed under this course's topics, for you only.")}</span></div></button></div>})()}
      {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}><p className="known" style={{margin:0}}>{tl("Owner:")}{" "}<b>{co.mine?tl("You"):srv(co.owner_problem)||co.owner||tl("Not assigned")}</b>{sem.number?tl(" · {term} no. {number}",{term:prog.term,number:sem.number}):''}</p>
@@ -440,7 +437,6 @@ function RecallCard({open}){
   return <div className="recall"><div className="recallh"><small>{tl("Remember this?")}</small><button className="ic sm" aria-label={tl("Not now")} title={tl("Not now")} onClick={hide}><X size={15}/></button></div>
     <p className="recallq">{d.question}</p>
     <Reveal label={tl("Think, then tap for the answer")}><Md>{d.answer}</Md><button className="link" onClick={()=>open(d.topic_id)}>{tl("Open {title}",{title:d.title})}</button></Reveal></div>}
-const nd=d=>new Date(d.date+'T12:00').toLocaleDateString(locale(),{weekday:'narrow'})  // a day's one-letter name, in the reader's language
 const WD=[0,1,2,3,4,5,6],wd=i=>new Date(2024,0,1+i).toLocaleDateString(locale(),{weekday:'short'})  // Monday first; 1 Jan 2024 was a Monday. Names in the reader's language
 const nextStudyDay=days=>{for(let k=1;k<=7;k++){const d=new Date(Date.now()+k*864e5);if(days[(d.getDay()+6)%7]==='1')return k===1?tl('tomorrow'):wd((d.getDay()+6)%7)}return ''}
 function SessionCard({toast,onRoutine,openTopic,onStudy,refresh,onLoad}){  // today's one session, from the student's own routine
@@ -469,7 +465,7 @@ function RoutinePage({toast,done}){
   const stop=async()=>{if(!await confirm({title:tl("Stop your routine?"),body:tl("Your progress stays. Home goes back to showing what to do next."),ok:tl("Stop the routine")}))return;try{await api('/me/routine/stop',{method:'POST'});toast(tl("Routine stopped"));done()}catch(e){toast(e.message)}}
   const per={15:1,30:1,45:2,60:3}[f.minutes]
   return <><Bar title={tl("My routine")} sub={tl("Study at your own pace, a little every day")}/><div className="main">
-    <p className="known" style={{marginTop:0}}>{tl("Pick the days you study and how long. Each study day you get one session: {v} and any reviews that are due. Miss a day and nothing piles up: the next session is the same size, and your streak only counts the days you picked.",{v:per===1?tl('one new topic'):tl('{n} new topics',{n:per})})}</p>
+    <p className="known" style={{marginTop:0}}>{tl("Pick the days you study and how long. Each study day you get one session: {v} and any reviews that are due. Miss a day and nothing piles up: the next session is the same size.",{v:per===1?tl('one new topic'):tl('{n} new topics',{n:per})})}</p>
     <label>{tl("Study days")}</label><div className="chips wrap" role="group" aria-label={tl("Study days")}>{WD.map((d,k)=><button key={d} className={'sbtn'+(f.days[k]==='1'?' on':'')} aria-pressed={f.days[k]==='1'} onClick={()=>flip(k)}><span className="lbl">{wd(d)}</span></button>)}</div>
     <label htmlFor="mins">{tl("Minutes a session")}</label><select id="mins" value={f.minutes} onChange={e=>setF({...f,minutes:+e.target.value})}>{[15,30,45,60].map(m=><option key={m} value={m}>{m}{" "}{tl("minutes")}</option>)}</select>
     <label htmlFor="at">{tl("Usual time (optional)")}</label><input id="at" type="time" value={f.at} onChange={e=>setF({...f,at:e.target.value})}/>
@@ -502,18 +498,23 @@ function SearchPage({user,toast,initial}){
       <button className="btn ghost" disabled={aiBusy} onClick={()=>askAi(ai.for,true)}><Sparkles size={16}/>{" "}{tl("Not happy? Recheck with AI")}</button></>}</div></>}
 function Hit({x,open}){return <button className="hitrow" onClick={()=>open(x.id)}><b>{x.title}{x.in_title&&<span className="chip" style={{marginLeft:8}}>{tl("Best match")}</span>}</b><small>{[x.program,x.semester,x.course,x.unit].filter(Boolean).join(' › ')}</small>{x.snippet&&<span className="snip">{x.snippet}</span>}</button>}
 
-function Insights({toast,role}){
+// My progress: a calm mirror, not a report card. What clicked and what is worth another look (from quizzes and tests, without percentages),
+// the optional routine, test results folded away, and what the app has picked up about how they learn
+function Insights({toast,role,onRoutine}){
   const [d,setD]=useState(null),[topic,setTopic]=useState(null),[sc,setSc]=useState(null)
   useEffect(()=>{if(!topic)api('/me/insights').then(setD).catch(e=>toast(e.message))},[topic])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={role}/>
   if(sc)return <ScoreCourse c={sc} back={()=>setSc(null)} toast={toast} role={role}/>
-  const n=d?d.needs_study.length:0
-  return <><Bar title={tl("My progress")} sub={tl("Your scores, where you shine and what to revisit")}/><div className="main">
-    <MyScores onCourse={setSc}/>{d?.courses.length>0&&<h3 className="sec">{tl("Strengths and weak areas")}</h3>}
+  const clicked=d?.strong||[],looks=d?[...d.needs_study,...d.getting_there]:[]
+  const item=a=><button key={a.topic_id||'u'+a.unit_id} className="row rowbtn" disabled={!a.topic_id} onClick={()=>setTopic(a.topic_id)}><div>{a.title}<small>{a.course}</small></div>{a.topic_id&&<ChevronRight size={18}/>}</button>
+  return <><Bar title={tl("My progress")}/><div className="main">
     {!d&&<Skeleton/>}
-    {d&&!d.courses.length&&<p className="known">{tl("Take a quiz and your strengths and weak spots will show up here.")}</p>}
-    {d?.courses.length>0&&<div className="qbox"><b>{n?tl("{n} {v} another round of study",{n:n,v:n===1?'area needs':'areas need'}):tl("Nothing needs another round of study right now")}</b><p className="known" style={{margin:'4px 0 0'}}>{d.strong.length}{" "}{tl("strong · {length} getting there · based on your latest result in {quizzes_taken}",{length:d.getting_there.length,quizzes_taken:d.quizzes_taken})}{" "}{d.quizzes_taken===1?'quiz':'quizzes'}</p></div>}
-    {<Paged rows={d?.courses} render={c=><section key={c.course_id}><h3 className="sec">{c.course}{" "}{tl("· {percent}% right",{percent:c.percent})}</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>}/>}
+    {d&&!clicked.length&&!looks.length&&<p className="known">{tl("After you try a quiz or a test, the topics that clicked and the ones worth another look show up here.")}</p>}
+    {clicked.length>0&&<><h3 className="sec first">{tl("What clicked")}</h3><Paged rows={clicked} render={item}/></>}
+    {looks.length>0&&<><h3 className={'sec'+(clicked.length?'':' first')}>{tl("Worth another look")}</h3><Paged rows={looks} render={item}/></>}
+    <h3 className="sec">{tl("Study routine")}</h3>
+    <button className="row rowbtn" onClick={onRoutine}><div>{tl("Set or change your study days")}<small>{tl("Optional. Some people like a rhythm; nothing changes unless you set one.")}</small></div><ChevronRight size={18}/></button>
+    <details className="fold"><summary>{tl("Test results")}</summary><MyScores onCourse={setSc}/></details>
     <AdaptCard toast={toast}/></div></>}
 // what the app has picked up from how this student uses a topic's steps, in plain words, with a way to start fresh. Only they see it
 function AdaptCard({toast}){
@@ -553,7 +554,7 @@ function QuizPlay({id,back,toast,role}){
   return <><Bar title={q.title} sub={tl("{length} questions · pass mark {pass_percent}%{v}",{length:q.questions.length,pass_percent:q.pass_percent,v:q.kind==='course'?' · course test':''})} back={back}/><div className="main">
     {!res&&q.can_edit&&<button className="btn ghost" style={{marginTop:0}} onClick={()=>setView({kind:'results'})}><BarChart3 size={16}/>{" "}{tl("Results and scores")}</button>}
     {!res&&q.attempts>0&&<p className="known" style={{marginTop:0}}>{tl("You have tried this {n}. Best {best}% · latest {latest}%.",{n:pl(q.attempts,'time'),best:q.best,latest:q.latest})}{" "}<button className="tool" onClick={()=>setView({kind:'mine'})}>{tl("See your attempts")}</button></p>}
-    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{res.passed?tl("Passed. Well done!"):tl("Not there yet. Go back over the topics and try again.")}{res.summary&&' '+res.summary}</p>
+    {res&&<div className="qbox"><h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2><p className="known">{tl("Pass mark {pass}%.",{pass:res.pass_percent??q.pass_percent})}{res.summary&&' '+res.summary}</p>
       <div className="two"><button className="btn" onClick={()=>setView({kind:'attempt',id:res.attempt_id})}>{tl("Review answers")}</button><button className="btn ghost" onClick={()=>start(q)}>{tl("Try again")}</button></div><button className="btn ghost" onClick={back}>{tl("Back")}</button></div>}
     {res&&res.areas?.length>0&&<><h3 className="sec">{tl("What you are good at and what to revisit")}</h3><AreaList areas={res.areas} onStudy={setTopic}/></>}
     {q.questions.map((x,i)=><div className="qbox" key={x.id}><b>{tl("Question")}{" "}{i+1}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={tl("Picture for question {i}{v}",{i:i,v:1})}/>
@@ -570,7 +571,7 @@ function AttemptView({id,back,toast,role}){
   if(!d)return <><Bar title={tl("Attempt")} back={back}/><div className="main"><Skeleton/></div></>
   const staff=role!=='student',right=d.questions.filter(x=>x.ok).length
   return <><Bar title={d.quiz} sub={(staff?d.user+' · ':'')+when(d.at)} back={back}/><div className="main">
-    <div className="qbox" style={{marginTop:0}}><h2 style={{margin:0}}>{d.score} / {d.total} · {d.percent}%</h2><p className="known" style={{marginBottom:0}}>{d.passed?tl("Passed"):tl("Below the pass mark")}{" "}{tl("of {pass_percent}%.",{pass_percent:d.pass_percent})}{d.summary&&' '+d.summary}</p></div>
+    <div className="qbox" style={{marginTop:0}}><h2 style={{margin:0}}>{d.score} / {d.total} · {d.percent}%</h2><p className="known" style={{marginBottom:0}}>{tl("Pass mark {pass}%.",{pass:d.pass_percent})}{d.summary&&' '+d.summary}</p></div>
     {d.areas.length>0&&<><h3 className="sec">{staff?tl("Strengths and weak areas"):tl("What you are good at and what to revisit")}</h3><AreaList areas={d.areas} onStudy={staff?null:setTopic} staff={staff}/></>}
     {d.no_detail&&<p className="known">{tl("This attempt was made before answers were kept question by question, so only the score is known.")}</p>}
     {d.changed>0&&<p className="known">{pl(d.changed,'question')}{" "}{tl("of this attempt {v} changed or removed since, so {v2} not shown.",{v:d.changed===1?'was':'were',v2:d.changed===1?'it is':'they are'})}</p>}
@@ -586,7 +587,7 @@ function MyAttempts({quiz,user,back,toast,role}){  // a person's attempts at one
   if(open)return <AttemptView id={open} back={()=>setOpen(null)} toast={toast} role={role}/>
   return <><Bar title={d?.quiz||tl("Attempts")} sub={d?(user?d.user+' · ':'')+pl(d.items.length,'attempt'):''} back={back}/><div className="main">
     {d&&!d.items.length&&<p className="known">{tl("No attempts yet.")}</p>}
-    {<Paged rows={d?.items} render={(a,i)=><button key={a.id} className="row rowbtn" onClick={()=>setOpen(a.id)}><div>{a.score} / {a.total} · {a.percent}%<small>{when(a.at)} · {a.passed?tl("Passed"):tl("Below the pass mark")}{i===0?tl(" · latest"):''}</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>}/>}</div></>}
+    {<Paged rows={d?.items} render={(a,i)=><button key={a.id} className="row rowbtn" onClick={()=>setOpen(a.id)}><div>{a.score} / {a.total} · {a.percent}%<small>{when(a.at)}{a.passed?' · '+tl("reached the pass mark"):''}{i===0?tl(" · latest"):''}</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>}/>}</div></>}
 
 const MCQ_TEMPLATE=`question,a,b,c,d,correct,explanation,topic,area,question_image,a_image,b_image,c_image,d_image
 "Which ion makes water hard?",Na+,Ca2+,Cl-,K+,B,"Calcium and magnesium salts cause hardness.",Water Treatment,,,,,,
@@ -723,26 +724,22 @@ function ScoreCourse({c,back,toast,role}){  // one course of a student's scores:
   const [q,setQ]=useState(null)
   if(q)return <MyAttempts quiz={q} back={()=>setQ(null)} toast={toast} role={role}/>
   return <><Bar title={c.course} sub={tl("Final score {v} · {taken} of {length} taken",{v:c.final==null?'–':c.final+'%',taken:c.taken,length:c.tests.length})} back={back}/><div className="main">
-    {<Paged rows={c.tests} render={t=><button key={t.id} className="row rowbtn" disabled={!t.attempts} onClick={()=>setQ(t.id)}><div>{t.title}{t.attempts>0&&<PassPill ok={t.passed}/>}<small>{t.unit||tl("Course test")}{" "}{tl("· {v} · pass {pass_percent}%",{v:t.attempts?`best ${t.best}% · latest ${t.latest}% · ${pl(t.attempts,'attempt')}`:'not taken yet',pass_percent:t.pass_percent})}</small>{t.attempts>0&&<Bar2 v={t.best}/>}</div>{t.attempts>0&&<ChevronRight size={18}/>}</button>}/>}
+    {<Paged rows={c.tests} render={t=><button key={t.id} className="row rowbtn" disabled={!t.attempts} onClick={()=>setQ(t.id)}><div>{t.title}{t.attempts>0&&t.passed&&<PassPill ok/>}<small>{t.unit||tl("Course test")}{" "}{tl("· {v} · pass {pass_percent}%",{v:t.attempts?`best ${t.best}% · latest ${t.latest}% · ${pl(t.attempts,'attempt')}`:'not taken yet',pass_percent:t.pass_percent})}</small>{t.attempts>0&&<Bar2 v={t.best}/>}</div>{t.attempts>0&&<ChevronRight size={18}/>}</button>}/>}
     <p className="known">{tl("Your final score in a test is your best attempt. The course score is the average of the tests you have taken.")}</p></div></>}
 function MyScores({onCourse}){  // a student's final score per course
   const [d,setD]=useState(null)
   useEffect(()=>{api('/me/scores').then(setD).catch(()=>setD({courses:[]}))},[])
-  if(!d||!d.courses.length)return null
+  if(!d)return null
+  if(!d.courses.length)return <p className="known">{tl("No test results yet.")}</p>
   return <><h3 className="sec first">{tl("Scores")}</h3>{<Paged rows={d.courses} render={x=><button key={x.course_id} className="row rowbtn" onClick={()=>onCourse(x)}><div>{x.course}<small>{x.final==null?tl("No tests taken yet"):tl("Final score {final}%",{final:x.final})}{" "}{tl("· {taken} of {length} taken · {passed} passed",{taken:x.taken,length:x.tests.length,passed:x.passed})}</small>{x.final!=null&&<Bar2 v={x.final}/>}</div><ChevronRight size={18}/></button>}/>}</>}
 // ---- courses students build from their own material ----
-const Stars=({n,big})=><span className={'stars'+(big?' big':'')} role="img" aria-label={tl("{n} of 3 stars",{n:n})}>{[1,2,3].map(i=><span key={i} className={i<=n?'on':''} aria-hidden="true">★</span>)}</span>
 const STAR_HELP='★ topic completed · ★★ quiz passed · ★★★ mastered (90%+ in a quiz)'
-// streak, level, this week, reviews due and the next step: the self-learner's "what now?" in one card
-function LearnCard({me,onContinue,onReview,compact}){
+// the next step in a course the student built, and topics ready to look at again: no streaks, points or levels
+function LearnCard({me,onContinue,onReview}){
   if(!me)return null
-  const x=me.xp
-  return <div className="learn"><div className={'lrow'+(compact?' one':'')}>
-      {!compact&&<div className="lstat"><b><Flame size={20} className={'flame'+(me.streak?' on':'')} aria-hidden="true"/> {me.streak}</b><small>{me.active_today?tl("day streak · studied today"):me.streak?tl("day streak · study today to keep it"):tl("day streak · start one today")}</small></div>}
-      <div className="lstat"><b><span className="lvl">{tl("Lv")}{" "}{x.level}</span>{" "}{tl("{total} XP",{total:x.total})}</b><div className="meter" role="progressbar" aria-label={tl("Progress to the next level")} aria-valuemin={0} aria-valuemax={x.span} aria-valuenow={x.into}><i style={{width:Math.round(100*x.into/x.span)+'%'}}/></div><small>{x.span-x.into}{" "}{tl("XP to level")}{" "}{x.level+1}</small></div></div>
-    {!compact&&<div className="week" aria-label={tl("Days studied this week")}>{me.week.map(d=><span key={d.date} className={(d.active?'on':'')+(d.today?' today':'')} title={d.date}>{nd(d)}</span>)}</div>}
-    {me.reviews_due>0&&<button className="btn" onClick={()=>onReview(me.review_courses[0].course_id)}><RotateCcw size={16}/>{" "}{tl("Review {n} due",{n:pl(me.reviews_due,'topic')})}{me.review_courses.length>1?tl(" (start with {course})",{course:me.review_courses[0].course}):''}</button>}
-    {me.next&&<button className={'btn'+(me.reviews_due?' ghost':'')} onClick={()=>onContinue(me.next)}><Play size={16}/> {me.next.done?tl("Continue"):tl("Start")}: {me.next.topic}<small className="sub">{me.next.course}{" "}{tl("· {done} of {topics} done",{done:me.next.done,topics:me.next.topics})}</small></button>}</div>}
+  return <div className="learn">
+    {me.next&&<button className="btn" onClick={()=>onContinue(me.next)}><Play size={16}/> {me.next.done?tl("Continue"):tl("Start")}: {me.next.topic}<small className="sub">{me.next.course}</small></button>}
+    {me.reviews_due>0&&<button className="btn ghost" onClick={()=>onReview(me.review_courses[0].course_id)}><RotateCcw size={16}/>{" "}{tl("Look again at {n}",{n:pl(me.reviews_due,'topic')})}</button>}</div>}
 const STEPS=['Name','Material','Slice','Preview'],AREA_LABEL={strong:'Strong',getting_there:'Getting there',needs_study:'Revisit'}
 const Steps=({at})=><ol className="steps" aria-label={tl("Setup steps")}>{STEPS.map((s,i)=><li key={s} className={i<at?'done':i===at?'on':''} aria-current={i===at?'step':undefined}><span>{i<at?<Check size={14}/>:i+1}</span>{s}</li>)}</ol>
 const NOTES_HINT='Optional. For example: "One topic per verse", "Keep the vocabulary table in one topic", "Units should follow the chapters", "Make topics very short".'
@@ -840,13 +837,13 @@ function StudyCourse({id,topic:first,toast,back,setup}){
   const reopen=async()=>{if(!await confirm({title:tl("Change the setup?"),body:tl("You go back to the outline. Your topics stay as they are until you finish the setup again."),ok:tl("Change the setup")}))return;try{await api(`/study/courses/${id}/reopen`,{method:'POST'});setup()}catch(e){toast(e.message)}}
   const next=all.find(t=>t.status!=='completed')
   return <><Bar title={c.title} sub={c.mine?tl("Your course"):tl("Shared by {owner}",{owner:c.owner})} back={back}/><div className="main">
-    <div className="qbox" style={{marginTop:0}}><div className="mast"><div><b>{c.mastery}{tl("% mastered")}</b><small>{done}{" "}{tl("of {length} topics completed",{length:all.length})}</small></div><Stars n={c.mastery>=90?3:c.mastery>=60?2:c.mastery>0?1:0} big/></div><Bar2 v={c.mastery}/>
-      {c.reviews_due>0&&<button className="btn" onClick={async()=>{try{setRev(await api(`/study/courses/${id}/review`,{method:'POST'}))}catch(e){toast(e.message)}}}><RotateCcw size={16}/>{" "}{tl("Review {n} due",{n:pl(c.reviews_due,'topic')})}</button>}
+    <div className="qbox" style={{marginTop:0}}><p className="known" style={{margin:0}}>{pl(all.length,'topic')}</p>
+      {c.reviews_due>0&&<button className="btn ghost" onClick={async()=>{try{setRev(await api(`/study/courses/${id}/review`,{method:'POST'}))}catch(e){toast(e.message)}}}><RotateCcw size={16}/>{" "}{tl("Look again at {n}",{n:pl(c.reviews_due,'topic')})}</button>}
       {p&&p.quizzed>0&&<p className="known" style={{margin:'8px 0 0'}}>{tl("Quiz average {average}% over {n}.",{average:p.average,n:pl(p.quizzed,'topic')})}{p.summary&&' '+p.summary}</p>}
       {next&&<button className={'btn'+(c.reviews_due?' ghost':'')} onClick={()=>setTopic(next.id)}><Play size={16}/> {done?tl("Continue"):tl("Start")}: {next.title}</button>}<p className="known" style={{margin:'8px 0 0'}}>{STAR_HELP}</p></div>
     {all.length>12&&<div className="search" style={{marginTop:14}}><Search size={18}/><input type="search" aria-label={tl("Find a topic")} placeholder={tl("Find a topic")} value={find} onChange={e=>setFind(e.target.value)}/></div>}
     <Paged rows={c.units.flatMap(u=>u.topics.filter(t=>has(find,t.title,t.summary)).map(t=>({u,t})))} render={({u,t},i,j,pg)=><Fragment key={t.id}>{(!j||pg[j-1].u!==u)&&<h3 className={'sec'+(i?'':' first')}>{u.title}</h3>}
-      <button className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}{t.due&&<span className="pill sm" style={{marginLeft:6}}>{tl("Review due")}</span>}<small>{t.summary||''}{t.best!=null?tl("{v}best quiz {best}%",{v:t.summary?' · ':'',best:t.best}):''}</small></div><Stars n={t.stars}/><ChevronRight size={18}/></button></Fragment>}/>
+      <button className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}{t.due&&<span className="pill sm" style={{marginLeft:6}}>{tl("Review due")}</span>}<small>{t.summary||''}{t.best!=null?tl("{v}best quiz {best}%",{v:t.summary?' · ':'',best:t.best}):''}</small></div><ChevronRight size={18}/></button></Fragment>}/>
     {p&&p.areas.length>0&&<><h3 className="sec">{tl("From your quizzes")}</h3><p className="known" style={{marginTop:0}}>{tl("Your best quiz score in each topic, weakest first.")}</p>
       {<Paged rows={p.areas} render={a=><button key={a.topic_id} className="row rowbtn" onClick={()=>setTopic(a.topic_id)}><div>{a.title}<span className={'pill sm '+(a.status==='strong'?'okp':a.status==='needs_study'?'off':'')} style={{marginLeft:6}}>{AREA_LABEL[a.status]}</span><small>{tl("Best quiz {percent}%",{percent:a.percent})}</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>}/>}</>}
     {c.can_edit&&<><h3 className="sec">{tl("Course settings")}</h3>
@@ -874,7 +871,6 @@ function StudyTopicPage({id,toast,back,go}){
     try{await api('/study/topics/'+id,{method:'DELETE'});toast(tl("Topic deleted"));back()}catch(e){toast(e.message)}}
   const noAi=!t.ai_available||t.ai_left===0
   return <><Bar title={t.title} sub={tl("{course} › {unit} · {position} of {total}",{course:t.course,unit:t.unit,position:t.position,total:t.total})} back={back}/><div className="main">
-    <div className="mast" style={{marginBottom:10}}><Stars n={t.stars} big/><small className="known">{['Not started yet','Completed','Quiz passed','Mastered'][t.stars]} · {STAR_HELP}</small></div>
     <Tabs label={tl("Topic sections")} items={[['notes',tl("Notes")],['explain',tl("Explain")]]} value={tab} onChange={setTab}/>
     {tab==='notes'&&<div className="prose"><Md>{t.content}</Md></div>}
     {tab==='explain'&&(ex?<div className="prose">{ex.cached&&<span className="chip">{tl("Saved explanation · no AI request used")}</span>}<Md>{ex.text}</Md></div>
@@ -899,13 +895,10 @@ function StudyQuizPlay({quiz,toast,back,again,next}){
     try{const r=await api(`/study/quizzes/${quiz.id}/check`,{method:'POST',body:{index:i,answer:k}});setFb(f=>({...f,[i]:r}))}catch(e){toast(e.message)}}
   const submit=async()=>{setBusy(true);try{setRes(await api(`/study/quizzes/${quiz.id}/attempt`,{method:'POST',body:{answers:ans}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
   const left=ans.filter(a=>a==null).length,review=quiz.kind==='review',label=review?'Review':mcq?'Quick check':'Full quiz'
-  const cheer=res&&[res.xp.level_up&&`Level ${res.xp.level}!`,res.stars.after>res.stars.before&&['','Topic completed','Quiz passed','Mastered!'][res.stars.after],res.completed_now&&res.stars.after<2&&'Topic completed'].filter((x,i,all)=>x&&all.indexOf(x)===i)
   return <><Bar title={label} sub={quiz.topic+' · '+pl(quiz.questions.length,'question')} back={back}/><div className="main">
-    {res&&<div className={'qbox score'+(cheer.length?' win':'')} style={{marginTop:0}} role="status">
-      {cheer.length>0&&<div className="cheer"><span aria-hidden="true">🎉</span> {cheer.join(' · ')}</div>}
+    {res&&<div className="qbox score" style={{marginTop:0}} role="status">
       <h2 style={{margin:0}}>{res.score} / {res.total} · {res.percent}%</h2>
-      <p className="known" style={{margin:'6px 0'}}><b className="xp">{tl("+{gained} XP",{gained:res.xp.gained})}</b>{" "}{tl("· level")}{" "}{res.xp.level}{res.stars.after>0&&<> · <Stars n={res.stars.after}/></>}</p>
-      <p className="known">{review?tl("Review done."):mcq?(res.percent>=80?tl("Nicely done."):tl("Practice done. Read the tricky parts again.")):res.passed?tl("Passed. Well done!"):tl("Below {pass_percent}%. Read the topic again and try a new quiz.",{pass_percent:res.pass_percent})}{res.summary&&' '+res.summary}{res.next_review&&' '+res.next_review+'.'}</p>
+      <p className="known">{review?tl("Review done."):mcq?tl("Done. The answers are below."):tl("Done. A new set is there whenever you want one.")}{res.summary&&' '+res.summary}{res.next_review&&' '+res.next_review+'.'}</p>
       {next&&<button className="btn" onClick={next.go}>{tl("Next topic: {title}",{title:next.title})}{" "}<ChevronRight size={16}/></button>}
       <div className="two">{again&&<button className={'btn'+(next?' ghost':'')} onClick={()=>again(quiz.kind)}>{tl("New")}{" "}{mcq?'questions':'quiz'}</button>}<button className={'btn'+(again||next?' ghost':'')} onClick={back}>{review?tl("Done"):tl("Back to the topic")}</button></div></div>}
     {res&&!mcq&&res.areas.length>0&&<><h3 className="sec">{tl("What you know well and what to revisit")}</h3><AreaList areas={res.areas} onStudy={null} staff/></>}
@@ -1248,12 +1241,12 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
       <button className="btn" disabled={!paste.text.trim()||!!busy} onClick={async()=>{await run('paste',()=>api(base+'/text',{method:'POST',body:{text:paste.text}}),'Added');setPaste(null)}}>{tl("Add")}</button></Sheet>}</>}
 
 // every highlight this person has made, newest first: search (passage, note or topic), a colour filter and pages; a highlight opens its topic
-function MyHighlights({toast,role}){
+function MyHighlights({toast,role,head}){
   const [q,setQ]=useState(''),[color,setColor]=useState(''),[t,setT]=useState(null)
   const {items,total,page,setPage,reload}=usePaged(o=>`/me/highlights?q=${encodeURIComponent(q)}&color=${color}&limit=${PAGE}&offset=${o}`,[q,color],toast)
   if(t)return <Topic id={t} back={()=>{setT(null);reload()}} toast={toast} role={role}/>
   const drop=async h=>{try{await api('/me/highlights/'+h.id,{method:'DELETE'});toast(tl("Highlight removed"));reload()}catch(e){toast(e.message)}}
-  return <><Bar title={tl("My highlights")} sub={q||color?matches(total):pl(total,'highlight')}/><div className="main">
+  return <><Bar title={head?tl("Saved"):tl("My highlights")} sub={q||color?matches(total):pl(total,'highlight')}/><div className="main">{head}
     <div className="search"><Search size={18}/><input type="search" aria-label={tl("Search your highlights")} placeholder={tl("Search your highlights, notes or topics")} value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="chips wrap" role="group" aria-label={tl("Colour")} style={{marginTop:12}}>{[['',tl('All colours')],...Object.keys(HL_COL).map(c=>[c,tl(c[0].toUpperCase()+c.slice(1))])].map(([k,l])=><button key={l} className={'sbtn'+(color===k?' on':'')} aria-pressed={color===k} onClick={()=>setColor(k)}>{k&&<i className="hldot" style={{background:HL_COL[k]}}/>}{l}</button>)}</div>
     {items.map(h=><HlItem key={h.id} h={h} toast={toast} where={[h.topic,h.course].filter(Boolean).join(' · ')} onGo={()=>setT(h.topic_id)} onSaved={reload} onDrop={()=>drop(h)}/>)}
@@ -1287,18 +1280,22 @@ function BulkTopics({unit,toast,close,done}){
     {rows&&<><b className="sec" style={{display:'block'}}>{ok}{" "}{tl("of {n} ready",{n:pl(rows.topics.length,'file')})}</b>
       {rows.topics.map((r,i)=><div key={i} className="row"><div>{r.ok?<b>{r.title}</b>:<s>{r.title||r.file}</s>}<small>{r.file}{r.ok?` · ${FMT[r.format]} · ${r.published?'published':'draft'}`:''}</small>{r.warnings.map((w,j)=><small key={j} className="warnline">{w}</small>)}</div></div>)}
       <button className="btn" disabled={!ok||!!busy} onClick={add}>{tl("Add")}{" "}{pl(ok,'topic')}</button></>}</Sheet>}
-function Bookmarks({toast,role}){
+// Saved: a student's bookmarks and highlights in one place
+function Saved({toast,role}){
+  const [tab,setTab]=useState('bookmarks'),head=<Tabs label={tl("Saved")} items={[['bookmarks',tl("Bookmarks")],['highlights',tl("Highlights")]]} value={tab} onChange={setTab}/>
+  return tab==='bookmarks'?<Bookmarks toast={toast} role={role} head={head}/>:<MyHighlights toast={toast} role={role} head={head}/>}
+function Bookmarks({toast,role,head}){
   const [tree,setTree]=useState(null),[sem,setSem]=useState(null),[course,setCourse]=useState(null),[t,setT]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t])
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role={role}/>
-  if(!tree)return <><Bar title={tl("Bookmarks")}/><div className="main"><div className="sk"/><div className="sk"/></div></>
+  if(!tree)return <><Bar title={head?tl("Saved"):tl("Bookmarks")}/><div className="main">{head}<div className="sk"/><div className="sk"/></div></>
   const marks=u=>u.topics.filter(x=>x.bookmarked),cnt=c=>c.units.reduce((n,u)=>n+marks(u).length,0)
   const sems=tree.flatMap(p=>p.semesters.map(sm=>({...sm,prog:p.name,courses:sm.courses.filter(c=>cnt(c)>0)}))).filter(sm=>sm.courses.length)
     .sort((a,b)=>a.prog.localeCompare(b.prog)||(a.number??99)-(b.number??99)||a.id-b.id)
   const multi=new Set(sems.map(x=>x.prog)).size>1,total=sems.reduce((n,x)=>n+x.courses.reduce((m,c)=>m+cnt(c),0),0)
   const sm=sems.find(x=>x.id===sem)||sems[0],co=sm?.courses.find(x=>x.id===course)||sm?.courses[0]
   const drop=async id=>{try{await api(`/topics/${id}/bookmark`,{method:'DELETE'});setTree(unmarked(tree,id));toast(tl("Bookmark removed"))}catch(e){toast(e.message)}}
-  return <><Bar title={tl("Bookmarks")} sub={total?tl(total===1?'{n} topic saved':'{n} topics saved',{n:total}):tl("Nothing saved yet")}/><div className="main">
+  return <><Bar title={head?tl("Saved"):tl("Bookmarks")} sub={total?tl(total===1?'{n} topic saved':'{n} topics saved',{n:total}):tl("Nothing saved yet")}/><div className="main">{head}
     {!sm&&<p className="known">{tl("Open any topic and tap the bookmark icon to save it here. It shows only the topics you saved, grouped by semester or year, course and unit.")}</p>}
     {sm&&<>
       <div className="chips" role="group" aria-label={tl("Semester or year")}>{sems.map(x=><button key={x.id} className={'sbtn'+(x.id===sm.id?' on':'')} aria-pressed={x.id===sm.id} onClick={e=>{setSem(x.id);setCourse(null);tabTo(e)}}>
