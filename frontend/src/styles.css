@@ -407,4 +407,5 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 .langsw select:focus{outline:2px solid color-mix(in srgb,var(--acc) 55%,transparent);border-color:transparent}
 .authlang{position:absolute;top:calc(env(safe-area-inset-top) + 12px);inset-inline-end:16px;z-index:2}.auth{position:relative}
 @media (min-width:900px){.authlang{inset-inline-end:24px;top:20px}}
-@media (max-width:599px){.top .langsw{padding:0 4px}.top .langsw svg{display:none}}
+.panlang{display:none;margin:0 0 6px}.panlang .langsw{width:100%;color:var(--mut)}.panlang select{flex:1}.panlang option{color:#222;background:#fff}
+@media (max-width:599px){.top .langsw{display:none}.panlang{display:block}}
