@@ -105,7 +105,7 @@ export default function App(){
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
-    {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
+    {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity toast={toast}/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label={tl("Main menu")}>
         <div className="dhead"><button className={'homebtn'+(page==='home'?' on':'')} aria-label={tl("{name}, home",{name:name})} aria-current={page==='home'?'page':undefined} onClick={()=>go('home')}><Logo src={logo} size={36}/><span><b>{name}</b><small>{user.name}, {tl(cap(user.role)).toLowerCase()}</small></span></button><button className="ic" aria-label={tl("Close menu")} onClick={()=>setOpen(false)}><X/></button></div>
@@ -1281,19 +1281,27 @@ const Skeleton=({rows=3})=><div aria-busy="true" aria-label={tl("Loading")}>{Arr
 // numbered pages under a list: Previous, page numbers (with … in long lists), Next, and which rows are shown
 const PAGE=25
 const pageList=(n,at)=>n<=7?[...Array(n).keys()]:[...new Set([0,1,at-1,at,at+1,n-2,n-1].filter(i=>i>=0&&i<n))].sort((a,b)=>a-b).flatMap((i,j,a)=>j&&i-a[j-1]>1?['…'+i,i]:[i])
-function Pager({page,total,onPage,size=PAGE}){
+function Pager({page,total,onPage,size=PAGE,anchor}){
   const n=Math.ceil(total/size);if(n<=1)return null
-  const go=i=>{onPage(i);scrollTo({top:0})}
+  const go=i=>{onPage(i);if(anchor?.current)anchor.current.scrollIntoView({block:'start'});else scrollTo({top:0})}
   return <nav className="pgr" aria-label={tl("Pages")}><small>{page*size+1}{tl("–{Math} of",{Math:Math.min(total,(page+1)*size)})}{" "}{total}</small>
     <span className="pgb"><button className="tool" disabled={page===0} onClick={()=>go(page-1)} aria-label={tl("Previous page")}><ChevronLeft size={16}/></button>
       {pageList(n,page).map(i=>typeof i==='string'?<span key={i} className="gap">…</span>:<button key={i} className={'tool'+(i===page?' on':'')} aria-current={i===page?'page':undefined} onClick={()=>go(i)}>{i+1}</button>)}
       <button className="tool" disabled={page>=n-1} onClick={()=>go(page+1)} aria-label={tl("Next page")}><ChevronRight size={16}/></button></span></nav>}
 // the list's rows for the current page; a filter change goes back to page 1, and a page left empty (say after a delete) steps back one
-function usePaged(url,deps,toast){
-  const [page,setPage]=useState(0),[items,setItems]=useState([]),[total,setTotal]=useState(0),[n,setN]=useState(0)
+function usePaged(url,deps,toast,size=PAGE){
+  const [page,setPage]=useState(0),[items,setItems]=useState([]),[total,setTotal]=useState(0),[n,setN]=useState(0),[ready,setReady]=useState(false)
   useEffect(()=>{setPage(0)},deps)
-  useEffect(()=>{const t=setTimeout(()=>api(url(page*PAGE)).then(r=>{if(!r.items.length&&page>0)setPage(page-1);else{setItems(r.items);setTotal(r.total)}}).catch(e=>toast(e.message)),250);return()=>clearTimeout(t)},[...deps,page,n])
-  return {items,total,page,setPage,reload:()=>setN(x=>x+1)}}
+  useEffect(()=>{const t=setTimeout(()=>api(url(page*size)).then(r=>{if(!r.items.length&&page>0)setPage(page-1);else{setItems(r.items);setTotal(r.total);setReady(true)}}).catch(e=>toast(e.message)),250);return()=>clearTimeout(t)},[...deps,page,n])
+  return {items,total,page,setPage,ready,reload:()=>setN(x=>x+1)}}
+// the same for a list the browser already holds: the rows of the current page, back to page 1 when the search, filter or sort changes
+function useLocalPage(rows,deps,size=PAGE){
+  const [page,setPage]=useState(0)
+  useEffect(()=>{setPage(0)},deps)
+  const n=Math.max(1,Math.ceil((rows?.length||0)/size)),at=Math.min(page,n-1)
+  return {items:(rows||[]).slice(at*size,(at+1)*size),total:rows?.length||0,page:at,setPage}}
+const has=(q,...v)=>{q=q.trim().toLowerCase();return !q||v.some(x=>String(x??'').toLowerCase().includes(q))}
+const Opts=({label,value,set,items})=><select aria-label={label} value={value} onChange={e=>set(e.target.value)}>{items.map(([k,l])=><option key={k} value={k}>{l}</option>)}</select>
 const ShowMore=({left,onClick,busy})=><button className="btn ghost" disabled={busy} onClick={onClick}>{tl("Show more ({left} left)",{left:left})}</button>
 const Tabs=({items,value,onChange,scroll,label})=><div className={'tabs'+(scroll?' scroll':'')} role="tablist" aria-label={label}>{items.map(([k,l])=><button key={k} role="tab" aria-selected={value===k} className={value===k?'on':''} onClick={()=>onChange(k)}>{l}</button>)}</div>
 const useRun=(toast,load)=>async(fn,m)=>{try{await fn();toast(m);load&&load()}catch(e){toast(e.message)}}
@@ -1574,19 +1582,25 @@ function AiConfig({toast,onBrand}){
 
 // an activity-log row in words: whole phrases (with the item and its number filled in), so each language can order them its own way
 const describe=(m,p)=>{const s=p.replace(/^\/api\//,'').split('/'),id=s.find(x=>/^\d+$/.test(x)),n=s.filter(x=>!/^\d+$/.test(x)),last=n[n.length-1],noun=n[0]==='admin'?n[1]:n[0],what=tl((noun||'').replace(/s$/,''))
-  if(p==='/api/uploads')return tl('Uploaded an image');if(p==='/api/me/password')return tl('Changed own password')
+  if(p==='/api/uploads')return tl('Uploaded an image');if(p==='/api/me/password')return tl('Changed own password');if(p==='/api/me/lang')return tl('Changed own language')
   if(p==='/api/admin/import')return tl('Imported content from CSV');if(p==='/api/admin/users/import')return tl('Imported users from CSV')
   if(last==='reset-password')return tl('Reset the password of user #{id}',{id});if(last==='courses')return tl('Assigned courses to user #{id}',{id});if(last==='links')return tl('Changed where course #{id} is shared',{id})
   if(last==='publish')return tl('Changed publish state of {what} #{id}',{what,id});if(n[0]==='admin'&&n[1]==='settings')return tl('Changed settings')
   const verb={POST:'Created',PUT:'Changed',PATCH:'Edited',DELETE:'Deleted'}[m]
   return verb?tl(verb+(id?' {what} #{id}':' {what}'),{what,id}):m+' '+what+(id?' #'+id:'')}
-function Activity(){
-  const [q,setQ]=useState(''),[rows,setRows]=useState([]),[total,setTotal]=useState(0),[busy,setBusy]=useState(false)
-  const load=(more)=>{setBusy(true);api(`/admin/audit?q=${encodeURIComponent(q)}&offset=${more?rows.length:0}&limit=50`).then(r=>{setRows(more?[...rows,...r.items]:r.items);setTotal(r.total)}).finally(()=>setBusy(false))}
-  useEffect(()=>{const t=setTimeout(()=>load(false),250);return()=>clearTimeout(t)},[q])
-  return <><Bar title={tl("Activity log")} sub={tl("Who changed what")}/><div className="main"><div className="search"><Search size={18}/><input type="search" aria-label={tl("Search the activity log")} placeholder={tl("Search by person or action")} value={q} onChange={e=>setQ(e.target.value)}/></div>
-    {rows.length?rows.map(x=><div className="row" key={x.id}><div>{describe(x.method,x.path)}{x.status>=400&&<span className="pill off sm">{x.status===403?tl("Not allowed"):tl("Failed")}</span>}<small>{x.user} · {when(x.at)}</small></div></div>):busy?<Skeleton/>:<p className="known">{tl("No activity yet.")}</p>}
-    {rows.length<total&&<ShowMore left={total-rows.length} busy={busy} onClick={()=>load(true)}/>}</div></>}
+function Activity({toast}){
+  const [q,setQ]=useState(''),[action,setAction]=useState(''),[result,setResult]=useState(''),[days,setDays]=useState(''),[sort,setSort]=useState('newest')
+  const qs=`q=${encodeURIComponent(q)}&action=${action}&result=${result}&days=${days||0}&sort=${sort}`,filtered=q||action||result||days
+  const {items,total,page,setPage,ready}=usePaged(o=>`/admin/audit?${qs}&limit=${PAGE}&offset=${o}`,[q,action,result,days,sort],toast)
+  return <><Bar title={tl("Activity log")} sub={filtered&&ready?matches(total):tl("Who changed what")}/><div className="main"><div className="search"><Search size={18}/><input type="search" aria-label={tl("Search the activity log")} placeholder={tl("Search by person or action")} value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="filters fit">
+      <Opts label={tl("Action")} value={action} set={setAction} items={[['',tl("All actions")],['created',tl("Created")],['changed',tl("Changed or edited")],['deleted',tl("Deleted")]]}/>
+      <Opts label={tl("Result")} value={result} set={setResult} items={[['',tl("Any result")],['ok',tl("Succeeded")],['failed',tl("Failed or not allowed")]]}/>
+      <Opts label={tl("When")} value={days} set={setDays} items={[['',tl("Any time")],['1',tl("Last 24 hours")],['7',tl("Last 7 days")],['30',tl("Last 30 days")]]}/>
+      <Opts label={tl("Sort by")} value={sort} set={setSort} items={[['newest',tl("Sort: newest first")],['oldest',tl("Sort: oldest first")]]}/></div>
+    {!ready?<Skeleton/>:items.length?items.map(x=><div className="row" key={x.id}><div>{describe(x.method,x.path)}{x.status>=400&&<span className="pill off sm">{x.status===403?tl("Not allowed"):tl("Failed")}</span>}<small>{x.user} · {when(x.at)}</small></div></div>):<p className="known">{filtered?tl("Nothing matches."):tl("No activity yet.")}</p>}
+    <Pager page={page} total={total} onPage={setPage}/>
+    {total>0&&<button className="btn ghost" onClick={()=>fetchFile('/admin/audit?format=csv&'+qs,'activity-log.csv',toast)}>{tl("Download as CSV")}</button>}</div></>}
 const day=d=>d?new Date(d).toLocaleDateString(locale(),{day:'numeric',month:'short'}):tl('never')
 const fetchFile=async(url,name,toast)=>{try{const r=await fetch('/api'+url,{headers:{Authorization:'Bearer '+localStorage.t}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Download failed')
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=name;a.click();URL.revokeObjectURL(a.href)}catch(e){toast(e.message)}}
@@ -1597,34 +1611,65 @@ function CourseReports({toast,onOpen}){
   const pr=progs.find(x=>x.id===f.p),lab=pr?pr.term:progs.length&&progs.every(x=>x.term==='Semester')?'Semester':progs.length&&progs.every(x=>x.term==='Year')?'Year':progs.length&&progs.every(x=>x.term==='Grade')?'Grade':'Term',top=pr?pr.max:Math.max(1,...progs.map(x=>x.max))
   const qs=`?program_id=${f.p}&semester=${f.s}`
   useEffect(()=>{setRows(null);api('/reports/courses'+qs).then(setRows).catch(e=>toast(e.message))},[f.p,f.s])
+  const [q,setQ]=useState(''),[sort,setSort]=useState('name'),head=useRef()
   const few=!f.p&&!f.s&&progs.length<=1&&rows&&rows.length<=5  // a handful of courses needs no filters
-  return <>{!few&&<div className="qopt"><select value={f.p} onChange={e=>{const p=+e.target.value,x=progs.find(y=>y.id===p);setF({p,s:x&&f.s>x.max?0:f.s})}}><option value={0}>{tl("All programs")}</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+  const by={name:(a,b)=>a.course.localeCompare(b.course),low:(a,b)=>a.avg_completion-b.avg_completion,high:(a,b)=>b.avg_completion-a.avg_completion,students:(a,b)=>b.students-a.students,quiz:(a,b)=>(a.avg_quiz_percent??101)-(b.avg_quiz_percent??101)}[sort]
+  const shown=rows&&rows.filter(x=>has(q,x.course,x.program,x.semester)).sort(by),{items,total,page,setPage}=useLocalPage(shown,[q,sort,f.p,f.s],RPAGE)
+  return <><div ref={head} className="pgtop"/>{!few&&<div className="qopt"><select value={f.p} onChange={e=>{const p=+e.target.value,x=progs.find(y=>y.id===p);setF({p,s:x&&f.s>x.max?0:f.s})}}><option value={0}>{tl("All programs")}</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
     <select aria-label={tl("Filter by {lab}",{lab:lab.toLowerCase()})} value={f.s} onChange={e=>setF({...f,s:+e.target.value})}><option value={0}>{lab==='Term'?tl("All terms"):tl("All {lab}s",{lab:lab.toLowerCase()})}</option>{Array.from({length:top},(_,i)=>i+1).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select></div>}
-    {rows&&!rows.length&&<p className="known">{tl("No courses match.")}</p>}
-    {rows?.map(x=><button className="row rowbtn" key={x.course_id} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program}{" "}{['',x.semester,pl(x.students,'student'),pl(x.topics,'topic'),tl('{n}% completed',{n:x.avg_completion}),tl('{n}% opened',{n:x.avg_opened})].join(' · ')}{x.quizzes?tl(" · quiz avg {v}%",{v:x.avg_quiz_percent??'–'}):''}</small><Bar2 v={x.avg_completion}/></div><ChevronRight size={18}/></button>)}
+    {!few&&<div className="filters fit"><div className="search"><Search size={18}/><input type="search" aria-label={tl("Search courses")} placeholder={tl("Search courses")} value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <Opts label={tl("Sort by")} value={sort} set={setSort} items={[['name',tl("Sort: name")],['low',tl("Sort: lowest completion first")],['high',tl("Sort: highest completion first")],['students',tl("Sort: most students")],['quiz',tl("Sort: lowest quiz average first")]]}/></div>}
+    {!rows&&<Skeleton/>}{rows&&!total&&<p className="known">{tl("No courses match.")}</p>}
+    {items.map(x=><button className="row rowbtn" key={x.course_id} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program}{" "}{['',x.semester,pl(x.students,'student'),pl(x.topics,'topic'),tl('{n}% completed',{n:x.avg_completion}),tl('{n}% opened',{n:x.avg_opened})].join(' · ')}{x.quizzes?tl(" · quiz avg {v}%",{v:x.avg_quiz_percent??'–'}):''}</small><Bar2 v={x.avg_completion}/></div><ChevronRight size={18}/></button>)}
+    <Pager page={page} total={total} onPage={setPage} size={RPAGE} anchor={head}/>
     {rows?.length>0&&<button className="btn ghost" onClick={()=>fetchFile('/reports/courses?format=csv&program_id='+f.p+'&semester='+f.s,'courses.csv',toast)}>{tl("Download courses CSV")}</button>}</>}
 function StudentReport({c,back,toast}){
+  const [q,setQ]=useState(''),[show,setShow]=useState(''),[sort,setSort]=useState('name')
   const [d,setD]=useState(null),[w,setW]=useState(null);useEffect(()=>{api(`/reports/courses/${c.course_id}/students`).then(setD).catch(e=>toast(e.message));api(`/reports/courses/${c.course_id}/weak-areas`).then(setW).catch(()=>{})},[])
+  const keep={'':()=>true,active:x=>x.active,disabled:x=>!x.active,never:x=>!x.topics_read,behind:x=>x.completion<50,needs:x=>x.needs_study.length>0}[show],seen=x=>x.last_active||''
+  const by={name:(a,b)=>(a.name||'').localeCompare(b.name||''),low:(a,b)=>a.completion-b.completion,high:(a,b)=>b.completion-a.completion,recent:(a,b)=>seen(b).localeCompare(seen(a)),quiet:(a,b)=>seen(a).localeCompare(seen(b))}[sort]
+  const shown=d&&d.students.filter(x=>keep(x)&&has(q,x.name,x.email)).sort(by),{items,total,page,setPage}=useLocalPage(shown,[q,show,sort])
   return <><Bar title={c.course} sub={c.program+' · '+c.semester} back={back}/><div className="main">
     {w&&w.areas.length>0&&<><h3 className="sec first">{tl("Topics the class finds hard")}</h3><p className="known" style={{margin:'0 0 8px'}}>{tl("From each student's latest quiz results, weakest first.")}</p>{w.areas.slice(0,8).map(a=><div className="row" key={a.topic_id||'u'+a.unit_id}><div>{a.title}<small>{a.percent}{tl("% right overall · {needs_study} of {students} students need another round of study",{needs_study:a.needs_study,students:a.students})}</small><Bar2 v={a.percent}/></div></div>)}<h3 className="sec">{tl("Students")}</h3></>}
     {d&&!d.students.length&&<p className="known">{tl("No students are enrolled for this course yet.")}</p>}
-    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off sm">{tl("Disabled")}</span>}<small>{x.completion}{tl("% completed · {topics_completed}/{topics} done, {topics_read} opened{v} · last active",{topics_completed:x.topics_completed,topics:x.topics,topics_read:x.topics_read,v:c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''})}{" "}{day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&tl("Strong: {strong}",{strong:x.strong.join(', ')})}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&tl("Needs another round: {needs_study}",{needs_study:x.needs_study.join(', ')})}</small>}<Bar2 v={x.completion}/></div></div>)}
+    {d?.students.length>5&&<><div className="search"><Search size={18}/><input type="search" aria-label={tl("Search students")} placeholder={tl("Search by name or email")} value={q} onChange={e=>setQ(e.target.value)}/></div>
+      <div className="filters fit"><Opts label={tl("Show")} value={show} set={setShow} items={[['',tl("All students")],['active',tl("Active")],['disabled',tl("Disabled")],['never',tl("Never opened a topic")],['behind',tl("Under 50% completed")],['needs',tl("Need another round of study")]]}/>
+        <Opts label={tl("Sort by")} value={sort} set={setSort} items={[['name',tl("Sort: name")],['low',tl("Sort: lowest completion first")],['high',tl("Sort: highest completion first")],['recent',tl("Sort: recently active first")],['quiet',tl("Sort: longest inactive first")]]}/></div>
+      {!total&&<p className="known">{tl("Nothing matches.")}</p>}</>}
+    {!d&&<Skeleton/>}{items.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off sm">{tl("Disabled")}</span>}<small>{x.completion}{tl("% completed · {topics_completed}/{topics} done, {topics_read} opened{v} · last active",{topics_completed:x.topics_completed,topics:x.topics,topics_read:x.topics_read,v:c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''})}{" "}{day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&tl("Strong: {strong}",{strong:x.strong.join(', ')})}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&tl("Needs another round: {needs_study}",{needs_study:x.needs_study.join(', ')})}</small>}<Bar2 v={x.completion}/></div></div>)}
+    <Pager page={page} total={total} onPage={setPage}/>
     {d?.students.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/reports/courses/${c.course_id}/students?format=csv`,'students-'+c.course.replace(/\s+/g,'_')+'.csv',toast)}>{tl("Download students CSV")}</button>}</div></>}
 function Reports({role,toast}){
-  const [st,setSt]=useState({}),[r,setR]=useState(null),[open,setOpen]=useState(null)
-  useEffect(()=>{if(role==='faculty')return;api('/admin/stats').then(setSt);api('/admin/reports').then(setR)},[])
+  const [st,setSt]=useState({}),[open,setOpen]=useState(null)
+  useEffect(()=>{if(role==='faculty')return;api('/admin/stats').then(setSt).catch(()=>{})},[])
   if(open)return <StudentReport c={open} back={()=>setOpen(null)} toast={toast}/>
   if(role==='faculty')return <><Bar title={tl("Reports")} sub={tl("Your courses")}/><div className="main"><CourseReports toast={toast} onOpen={setOpen}/></div></>
-  const list=(rows,empty,f)=>rows?.length?rows.map((x,i)=><div className="row" key={i}>{f(x)}</div>):<p className="known">{tl(empty)}</p>
   return <><Bar title={tl("Reports")}/><div className="main"><div className="stats">
     {[['students',tl("Students")],['topics',tl("Topics")],['cached',tl("Saved AI answers")],['tokens_saved',tl("Tokens saved")]].map(([k,l])=><div className="stat" key={k}><b>{(st[k]??0).toLocaleString()}</b>{l}</div>)}</div>
     <h3 className="sec">{tl("Courses")}</h3><CourseReports toast={toast} onOpen={setOpen}/>
     <h3 className="sec">{tl("Most read topics")}</h3>
-    {list(r?.top_topics,'No reading activity yet.',x=><div>{x.title}<small>{x.readers}{" "}{tl("students, {reads} reads",{reads:x.reads})}</small></div>)}
+    <ReportList kind="topics" toast={toast} search={tl("Search topics or courses")} empty="No reading activity yet."
+      sorts={[['reads',tl("Sort: most reads")],['readers',tl("Sort: most students")],['least',tl("Sort: fewest reads")],['title',tl("Sort: title")]]}
+      render={x=><div>{x.title}<small>{[x.course,pl(x.readers,'student'),pl(x.reads,'read')].join(' · ')}</small></div>}/>
     <h3 className="sec">{tl("Students")}</h3>
-    {list(r?.students,'No students yet.',x=><div>{x.name}<small>{x.topics_read}{" "}{tl("topics read, last active")}{" "}{day(x.last_active)}{!x.active&&tl(", disabled")}</small></div>)}
+    <ReportList kind="students" toast={toast} search={tl("Search by name or email")} empty="No students yet."
+      shows={[['',tl("All students")],['active',tl("Active")],['disabled',tl("Disabled")],['never',tl("Never opened a topic")],['quiet',tl("Not active in the last 7 days")]]}
+      sorts={[['recent',tl("Sort: recently active first")],['quiet',tl("Sort: longest inactive first")],['most',tl("Sort: most topics read")],['least',tl("Sort: fewest topics read")],['name',tl("Sort: name")]]}
+      render={x=><div>{x.name}<small>{x.topics_read}{" "}{tl("topics read, last active")}{" "}{day(x.last_active)}{!x.active&&tl(", disabled")}</small></div>}/>
     <h3 className="sec">{tl("Saved AI answers")}</h3>
-    {list(r?.ai,'Nothing saved yet.',x=><div>{x.title}<small>{x.kind==='explain'?tl("Explanation"):tl("Sample answer")}{tl(", reused {hits} times, {saved} tokens saved",{hits:x.hits,saved:x.saved.toLocaleString()})}</small></div>)}</div></>}
+    <ReportList kind="ai" toast={toast} search={tl("Search topics")} empty="Nothing saved yet."
+      shows={[['',tl("Explanations and sample answers")],['explain',tl("Explanations")],['answer',tl("Sample answers")]]}
+      sorts={[['saved',tl("Sort: most tokens saved")],['hits',tl("Sort: most reused")],['newest',tl("Sort: newest first")],['title',tl("Sort: title")]]}
+      render={x=><div>{x.title}<small>{x.kind==='explain'?tl("Explanation"):tl("Sample answer")}{tl(", reused {hits} times, {saved} tokens saved",{hits:x.hits,saved:x.saved.toLocaleString()})}</small></div>}/></div></>}
+// one of the admin Reports lists, a page at a time from the server: search, a filter and a sort above it, numbered pages below
+const RPAGE=10
+function ReportList({kind,toast,search,shows,sorts,render,empty}){
+  const [q,setQ]=useState(''),[show,setShow]=useState(''),[sort,setSort]=useState(sorts[0][0]),top=useRef()
+  const {items,total,page,setPage,ready}=usePaged(o=>`/admin/reports/${kind}?q=${encodeURIComponent(q)}&show=${show}&sort=${sort}&limit=${RPAGE}&offset=${o}`,[q,show,sort],toast,RPAGE)
+  return <div ref={top} className="pgtop"><div className="filters fit"><div className="search"><Search size={18}/><input type="search" aria-label={search} placeholder={search} value={q} onChange={e=>setQ(e.target.value)}/></div>
+      {shows&&<Opts label={tl("Show")} value={show} set={setShow} items={shows}/>}<Opts label={tl("Sort by")} value={sort} set={setSort} items={sorts}/></div>
+    {!ready?<Skeleton/>:items.length?items.map(x=><div className="row" key={x.id}>{render(x)}</div>):<p className="known">{q||show?tl("Nothing matches."):tl(empty)}</p>}
+    <Pager page={page} total={total} onPage={setPage} size={RPAGE} anchor={top}/></div>}
 
 function About({user}){
   const {appName}=useContext(Ctx),[c,setC]=useState({});useEffect(()=>{api('/config').then(setC)},[])
