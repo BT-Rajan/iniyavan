@@ -76,3 +76,13 @@ def test_version_endpoint_tells_whether_the_screens_match_the_server(env, tmp_pa
     r = env.c.get("/api/version").json(); assert r["screens"] is None and r["match"] is False and "./run.sh" in r["hint"]  # never built
     (tmp_path / "build.txt").write_text("old9999\n"); r = env.c.get("/api/version").json(); assert r["match"] is False and r["screens"] == "old9999" and r["server"] == "abc1234"
     (tmp_path / "build.txt").write_text("abc1234\n"); r = env.c.get("/api/version").json(); assert r["match"] is True and r["hint"] is None
+
+def test_screens_are_rechecked_built_files_cached_and_large_replies_compressed(env):
+    page = env.c.get("/sw.js")  # the page, sw.js and icons: checked on every load so an update shows at once
+    assert page.headers["cache-control"] == "no-cache"
+    assert env.c.get("/assets/missing.js").headers["cache-control"] == "public, max-age=31536000, immutable"  # hashed build files never change
+    assert "cache-control" not in env.c.get("/api/config").headers  # the API keeps its own rules
+    env.csv("program,semester,course,unit,topic,content\nMech,Semester 1,Chem,U1,Water," + "w" * 5000 + "\n")
+    tid = env.c.get("/api/tree", headers=env.admin).json()[0]["semesters"][0]["courses"][0]["units"][0]["topics"][0]["id"]
+    r = env.c.get(f"/api/topics/{tid}", headers={**env.admin, "Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
