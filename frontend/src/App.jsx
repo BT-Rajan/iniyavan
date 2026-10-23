@@ -78,9 +78,9 @@ export default function App(){
   if(user.must_change)return <AuthFrame logo={logo} name={name}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
-  const links=student?[['learn',GraduationCap,'My courses'],['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course'],['bookmarks',Bookmark,'Bookmarks'],...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['about',Info,'About']]
+  const links=student?[['learn',GraduationCap,'My courses'],['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course'],['bookmarks',Bookmark,'Bookmarks'],['highlights',Highlighter,'My highlights'],...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['about',Info,'About']]
     :admin?[['programs',GraduationCap,'Programs'],['courses',BookOpen,'Courses'],['users',UsersIcon,'Users'],['reports',BarChart3,'Reports'],['activity',History,'Activity log'],['ai',Sparkles,'Settings'],['about',Info,'About']]
-    :[['learn',BookOpen,'Courses'],['bookmarks',Bookmark,'Bookmarks'],['reports',BarChart3,'Reports'],...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['about',Info,'About']]
+    :[['learn',BookOpen,'Courses'],['bookmarks',Bookmark,'Bookmarks'],['highlights',Highlighter,'My highlights'],['reports',BarChart3,'Reports'],...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
     <TopBar user={user} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find}/>}
@@ -91,7 +91,7 @@ export default function App(){
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
-    {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}
+    {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
@@ -209,20 +209,28 @@ function TopBar({user,theme,pickTheme,onMenu,onHome,onAccount,onOut,onNote,page}
   const {appName}=useContext(Ctx),i=THEMES.findIndex(t=>t[0]===theme),[,ThemeIcon,themeLabel]=THEMES[i<0?0:i],nextTheme=THEMES[(i+1)%THEMES.length]
   return <header className="top"><button className="ic menu" aria-label="Open menu" onClick={onMenu}><Menu/></button><button className="topname" onClick={onHome}>{appName}</button>
     <span className="topgap"/>
-    <Notifications user={user} onOpen={onNote} page={page}/>
+    <Notifications onOpen={onNote} page={page}/>
     <button className="ic" aria-label={`Theme: ${themeLabel}. Switch to ${nextTheme[2]}`} title={`Theme: ${themeLabel}`} onClick={()=>pickTheme(nextTheme[0])}><ThemeIcon size={19}/></button>
     <button className={'who'+(page==='password'?' on':'')} onClick={onAccount} title="Change password"><span className="av" aria-hidden="true">{initials(user.name)}</span><span className="whotx"><b>{user.name}</b><small>{user.role}</small></span></button>
     <button className="ic" aria-label="Sign out" title="Sign out" onClick={onOut}><LogOut size={19}/></button></header>}
 // what needs doing: staff get the overview's attention list, students their overdue and due-soon topics and untried or failed tests
-function Notifications({user,onOpen,page}){
-  const [items,setItems]=useState(null),[open,setOpen]=useState(false),box=useRef(null)
-  const load=useCallback(()=>{(user.role==='student'?api('/me/today').then(r=>(r.focus||[]).filter(x=>['overdue','due_soon','quiz_new','quiz_retake'].includes(x.kind)).map(x=>({text:x.title,sub:x.reason}))):api('/overview').then(r=>r.attention.map(x=>({text:x.text})))).then(setItems).catch(()=>setItems([]))},[user.role])
-  useEffect(load,[load,page])
+// what needs doing (worked out by the server): staff get the overview's attention list, students their deadlines and tests. The badge counts
+// only the ones not seen yet; opening the list marks them seen. Where the server can send email, a daily summary can be switched on here.
+function Notifications({onOpen,page}){
+  const [d,setD]=useState(null),[open,setOpen]=useState(false),box=useRef(null)
+  const load=useCallback(()=>api('/me/notifications').then(setD).catch(()=>setD({items:[]})),[])
+  useEffect(()=>{load()},[load,page])
+  useEffect(()=>{const t=setInterval(load,120000),f=()=>document.visibilityState==='visible'&&load();document.addEventListener('visibilitychange',f);return()=>{clearInterval(t);document.removeEventListener('visibilitychange',f)}},[load])  // fresh every 2 minutes, and on coming back to the tab
   useEffect(()=>{if(!open)return;const f=e=>{if(!box.current?.contains(e.target))setOpen(false)},k=e=>e.key==='Escape'&&setOpen(false);addEventListener('pointerdown',f);addEventListener('keydown',k);return()=>{removeEventListener('pointerdown',f);removeEventListener('keydown',k)}},[open])
-  const n=items?.length||0
-  return <div className="notes" ref={box}><button className="ic" aria-label={n?`Notifications, ${n} new`:'Notifications'} aria-expanded={open} onClick={()=>{setOpen(!open);if(!open)load()}}><Bell size={19}/>{n>0&&<em className="badge">{n>9?'9+':n}</em>}</button>
-    {open&&<div className="pop" role="dialog" aria-label="Notifications"><b className="poph">Notifications</b>
-      {items===null?<Skeleton/>:n?items.map((x,j)=><button key={j} className="note" onClick={()=>{setOpen(false);onOpen()}}><span>{x.text}</span>{x.sub&&<small>{x.sub}</small>}</button>):<p className="known">You're all caught up.</p>}</div>}</div>}
+  const items=d?.items||[],n=items.filter(x=>x.unread).length
+  const toggle=async()=>{if(open){setOpen(false);load();return}  // closing: the bold ones are seen now
+    setOpen(true);try{const r=await api('/me/notifications');setD(r);const keys=r.items.filter(x=>x.unread).map(x=>x.key)  // what is shown now is what gets marked seen
+      if(keys.length)await api('/me/notifications/seen',{method:'POST',body:{keys}})}catch{/* the list stays as it was */}}
+  const digest=async on=>{try{const r=await api('/me/notifications/settings',{method:'PUT',body:{digest:on}});setD(x=>({...x,digest:r.digest}))}catch(e){alert(e.message)}}
+  return <div className="notes" ref={box}><button className="ic" aria-label={n?`Notifications, ${n} new`:'Notifications'} aria-expanded={open} onClick={toggle}><Bell size={19}/>{n>0&&<em className="badge">{n>9?'9+':n}</em>}</button>
+    {open&&<div className="pop" role="dialog" aria-label="Notifications"><b className="poph">Notifications{n>0&&<small> · {n} new</small>}</b>
+      {d===null?<Skeleton/>:items.length?items.map(x=><button key={x.key} className={'note'+(x.unread?' new':'')} onClick={()=>{setOpen(false);load();onOpen()}}><span>{x.text}</span>{x.sub&&<small>{x.sub}</small>}</button>):<p className="known">You're all caught up.</p>}
+      {d?.mail&&<label className="chk notemail"><input type="checkbox" checked={!!d.digest} onChange={e=>digest(e.target.checked)}/> Email me a daily summary of new ones</label>}</div>}</div>}
 // the search box under the header on every page: Enter opens Search with the query
 function GlobalSearch({onFind}){
   const [q,setQ]=useState('')
@@ -241,7 +249,7 @@ const ArchPill=({x})=>x.archived?<span className="pill off sm">{x.archived_self?
 function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
   const [mat,setMat]=useState(false)
-  const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
+  const [bulk,setBulk]=useState(null),[copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet,arch,qr])
   const landed=useRef(!!start?.length);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
@@ -284,7 +292,7 @@ function Learn({user,toast,appName,start}){
      {!nav.length&&user.role==='faculty'&&<><h3 className="sec first">My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}<ArchPill x={c}/></b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
        :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 className="sec">All programs</h3></>}
     {mayEdit&&co&&!unit&&!co.shared&&<button className="btn ghost lead" onClick={()=>setSheet({type:'unit',un:{},cid:co.id})}>Add unit</button>}
-    {mayEdit&&unit&&!co.shared&&<button className="btn ghost lead" onClick={()=>setEd({unit_id:unit.id})}>Add topic to {unit.name}</button>}
+    {mayEdit&&unit&&!co.shared&&<div className="two lead2"><button className="btn ghost" onClick={()=>setEd({unit_id:unit.id})}>Add topic to {unit.name}</button><button className="btn ghost" onClick={()=>setBulk(unit)}><Upload size={16}/> Upload topic files</button></div>}
     {staff&&unit&&<button className="btn ghost lead" onClick={()=>setCopy({kind:'unit',id:unit.id,title:unit.name})}>Copy this unit to another course</button>}
     {list.map((x,i)=>x.locked?<div key={x.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={x.n+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{x.n}</b><span>Unavailable right now</span></div></button></div>:<div key={x.id} className="card" style={x.archived?{opacity:.75}:undefined}><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}<ArchPill x={x}/></b>{x.sub&&<span>{x.sub}</span>}</div>{(x.s||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.s&&<Mark s={x.s}/>}</span>}</button>
       <div className="acts">{staff&&x.can&&(x.archived_self||!x.archived)&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.n} onClick={()=>setArch({kind:x.kind,id:x.id,name:x.n,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}
@@ -300,7 +308,7 @@ function Learn({user,toast,appName,start}){
       {mayEdit&&<button className="btn ghost" onClick={()=>setQe({unit_id:unit.id,unitTopics:unit.topics.map(t=>({id:t.id,title:t.title}))})}>Add quiz</button>}</>}
     {!list.length&&<p className="known">{(mayEdit&&co)||isAdmin?'Nothing here yet. Use the button above to add it.':!nav.length&&user.role==='student'?'You are not enrolled in a program yet. Ask your admin to add you to one.':'Nothing here yet. Your admin will add it soon.'}</p>}</div>
    {arch&&<ArchiveSheet a={arch} toast={toast} close={()=>setArch(null)} done={()=>setArch(null)}/>}
-   {copy&&<CopySheet {...copy} toast={toast} close={()=>{setCopy(null);load()}}/>}
+   {copy&&<CopySheet {...copy} toast={toast} close={()=>{setCopy(null);load()}}/>}{bulk&&<BulkTopics unit={bulk} toast={toast} close={()=>setBulk(null)} done={()=>{setBulk(null);load()}}/>}
    {del&&<Sheet close={()=>setDel(null)}><h3>{del.unlink?'Remove':'Delete'} “{del.n}”{del.unlink?' from this '+(prog?.term||'semester').toLowerCase():''}?</h3>
      <p className="known">{del.unlink?'It only disappears from this '+(prog?.term||'semester').toLowerCase()+'. The course stays where it was created.':DELETES[del.kind]} This can't be undone.</p>
      <button className="btn danger" onClick={remove}>{del.unlink?'Remove':'Delete'}</button><button className="btn ghost" onClick={()=>setDel(null)}>Cancel</button></Sheet>}
@@ -986,7 +994,7 @@ function Topic({id:first,back,toast,role}){
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
     {tab==='notes'&&t.content&&<button className="btn lead" onClick={()=>setReading(true)}><Maximize2 size={16}/> {t.content_format==='interactive'?'Open the interactive page':'Read in full screen'}</button>}
     {tab==='notes'&&<div className="prose">{t.content?(t.content_format==='interactive'?<p className="known" style={{margin:0}}>This topic is an interactive page. Open it above to use it and highlight its text.</p>:<Body text={t.content} format={t.content_format}/>):!t.my_notes&&<Md>No notes yet.</Md>}{t.my_notes&&<>{t.content&&<h3>Your notes</h3>}{!t.content&&<span className="chip">Your notes</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}{role==='student'&&<button className="tool" onClick={()=>setMat(true)}><FileText size={14}/> {t.my_notes?'Update your notes for this course':'Add your own notes for this topic'}</button>}</div>}
-    {tab==='notes'&&hls.length>0&&<><h3 className="sec">Your highlights ({hls.length})</h3>{hls.map(h=><div key={h.id} className="hlrow"><p>{h.text}</p><button className="ic sm" aria-label="Remove highlight" title="Remove" onClick={()=>dropHl(h)}><Trash2 size={15}/></button></div>)}</>}
+    {tab==='notes'&&hls.length>0&&<><h3 className="sec">Your highlights ({hls.length})</h3>{hls.map(h=><HlItem key={h.id} h={h} toast={toast} onSaved={r=>setHls(l=>l.map(x=>x.id===r.id?r:x))} onDrop={()=>dropHl(h)}/>)}</>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
     {reading&&<Reader t={t} auto={role==='student'} toast={toast} onList={setHls} close={()=>setReading(false)}/>}
     {role==='student'&&aiOk!==false&&<><h3 className="sec">Check yourself</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
@@ -999,8 +1007,21 @@ function Topic({id:first,back,toast,role}){
 // Markdown and HTML are highlighted right here; an interactive page runs in a sandboxed frame (no access to the app or the sign-in) and
 // sends its highlight requests here by postMessage, which this page checks and saves for it.
 const Content=memo(({text,format})=><Body text={text} format={format}/>)
+const HL_COL={coral:'#ff9292',yellow:'#ffd60a',green:'#50c878',blue:'#5aa0ff'}
+// one saved highlight: the passage in its colour, where it is (on the list of all of them), the reader's note, and remove
+function HlItem({h,where,onGo,onSaved,onDrop,focus,toast}){
+  const [ed,setEd]=useState(!!focus),[note,setNote]=useState(h.note||''),ta=useRef(null)
+  useEffect(()=>{if(focus)setEd(true)},[focus])
+  useEffect(()=>{if(ed)ta.current?.focus()},[ed])
+  const save=async()=>{try{onSaved(await api('/me/highlights/'+h.id,{method:'PATCH',body:{note}}));setEd(false)}catch(e){toast(e.message)}}
+  return <div className="hlrow" style={{'--hc':HL_COL[h.color]||HL_COL.coral}}><div className="hlbody">
+    {onGo?<button className="hltext" onClick={onGo}>{h.text}</button>:<p className="hltext">{h.text}</p>}
+    {where&&<small className="hlwhere">{where}</small>}
+    {ed?<><textarea ref={ta} className="hlnote" value={note} maxLength={2000} placeholder="Your note" aria-label="Your note" onChange={e=>setNote(e.target.value)}/><div className="tools"><button onClick={save}>Save note</button><button onClick={()=>{setNote(h.note||'');setEd(false)}}>Cancel</button></div></>
+      :h.note?<button className="hlnoted" onClick={()=>setEd(true)} title="Edit note">{h.note}</button>:<button className="link hladd" onClick={()=>setEd(true)}>Add a note</button>}</div>
+    <button className="ic sm" aria-label="Remove highlight" title="Remove" onClick={onDrop}><Trash2 size={15}/></button></div>}
 function Reader({t,auto,toast,onList,close}){
-  const [list,setList]=useState(null),[panel,setPanel]=useState(false),[fs,setFs]=useState(!!document.fullscreenElement),box=useRef(null),frame=useRef(null),hl=useRef(null),now=useRef([])
+  const [list,setList]=useState(null),[panel,setPanel]=useState(false),[noteFor,setNoteFor]=useState(null),[fs,setFs]=useState(!!document.fullscreenElement),box=useRef(null),frame=useRef(null),hl=useRef(null),now=useRef([])
   const inter=t.content_format==='interactive',ready=list!==null
   now.current=list||[]
   useEffect(()=>{api(`/topics/${t.id}/highlights`).then(r=>setList(r.items)).catch(e=>{toast(e.message);setList([])})},[t.id,toast])
@@ -1009,20 +1030,27 @@ function Reader({t,auto,toast,onList,close}){
     const f=()=>setFs(!!document.fullscreenElement),k=e=>{if(e.key==='Escape'&&!document.fullscreenElement)close()}
     document.addEventListener('fullscreenchange',f);addEventListener('keydown',k)
     return()=>{document.body.style.overflow='';document.removeEventListener('fullscreenchange',f);removeEventListener('keydown',k);if(document.fullscreenElement)document.exitFullscreen().catch(()=>{})}},[auto,close])
-  const save=useCallback(h=>api(`/topics/${t.id}/highlights`,{method:'POST',body:{text:String(h.text||'').slice(0,5000),prefix:String(h.prefix||'').slice(-200)}}),[t.id])
-  const remove=useCallback(id=>api('/me/highlights/'+id,{method:'DELETE'}),[])
+  const save=useCallback(async h=>{const r=await api(`/topics/${t.id}/highlights`,{method:'POST',body:{text:String(h.text||'').slice(0,5000),prefix:String(h.prefix||'').slice(-200),color:h.color||'coral'}});setList(l=>[...l,r]);return r},[t.id])
+  const remove=useCallback(async id=>{await api('/me/highlights/'+id,{method:'DELETE'});setList(l=>l.filter(x=>x.id!==+id))},[])
+  const recolor=useCallback(async(id,color)=>{const r=await api('/me/highlights/'+id,{method:'PATCH',body:{color}});setList(l=>l.map(x=>x.id===r.id?r:x));return r},[])
+  const noteOn=useCallback(id=>{setPanel(true);setNoteFor(+id)},[])
   useEffect(()=>{if(!ready||inter||!box.current||!window.zgHighlighter)return
-    hl.current=window.zgHighlighter.attach(box.current,{list:now.current,save:h=>save(h).catch(e=>{toast(e.message);throw e}),remove:id=>remove(id).catch(e=>{toast(e.message);throw e}),changed:setList})
-    return()=>{hl.current?.detach();hl.current=null}},[ready,inter,save,remove,toast])
+    const loud=f=>(...a)=>f(...a).catch(e=>{toast(e.message);throw e})
+    hl.current=window.zgHighlighter.attach(box.current,{list:now.current,save:loud(save),remove:loud(remove),update:loud((id,c)=>recolor(id,c.color)),note:noteOn})
+    return()=>{hl.current?.detach();hl.current=null}},[ready,inter,save,remove,recolor,noteOn,toast])
   useEffect(()=>{if(!ready||!inter)return
     const win=()=>frame.current?.contentWindow,reply=(k,d)=>win()?.postMessage({zg:1,k,...d},'*')
     const on=async e=>{const d=e.data;if(!win()||e.source!==win()||!d||d.zg!==1)return  // only our own frame, and only these requests
-      if(d.type==='ready')win().postMessage({zg:1,type:'init',list:now.current.map(({id,text,prefix})=>({id,text,prefix}))},'*')
-      else if(d.type==='save'){try{const h=await save(d);reply(d.k,{id:h.id});setList(l=>[...l,h])}catch(er){toast(er.message);reply(d.k,{error:1})}}
-      else if(d.type==='remove'){try{await remove(+d.id);reply(d.k,{});setList(l=>l.filter(x=>x.id!==+d.id))}catch(er){toast(er.message);reply(d.k,{error:1})}}}
-    addEventListener('message',on);return()=>removeEventListener('message',on)},[ready,inter,save,remove,toast])
+      if(d.type==='ready')win().postMessage({zg:1,type:'init',list:now.current.map(({id,text,prefix,color})=>({id,text,prefix,color}))},'*')
+      else if(d.type==='save'){try{const h=await save(d);reply(d.k,{id:h.id})}catch(er){toast(er.message);reply(d.k,{error:1})}}
+      else if(d.type==='remove'){try{await remove(+d.id);reply(d.k,{})}catch(er){toast(er.message);reply(d.k,{error:1})}}
+      else if(d.type==='update'){try{await recolor(+d.id,String(d.color));reply(d.k,{})}catch(er){toast(er.message);reply(d.k,{error:1})}}
+      else if(d.type==='note')noteOn(d.id)
+      else if(d.type==='store'&&d.data&&typeof d.data==='object'){const data=Object.fromEntries(Object.entries(d.data).filter(([,v])=>typeof v==='string'))  // the page's localStorage, kept for this person
+        api(`/topics/${t.id}/store`,{method:'PUT',body:{data}}).catch(er=>toast(er.message))}}
+    addEventListener('message',on);return()=>removeEventListener('message',on)},[ready,inter,save,remove,recolor,noteOn,toast,t.id])
   const goTo=id=>{if(inter)frame.current?.contentWindow?.postMessage({zg:1,type:'scroll',id},'*');else hl.current?.scrollTo(id);if(innerWidth<900)setPanel(false)}
-  const drop=async id=>{try{await remove(id);if(inter)frame.current?.contentWindow?.postMessage({zg:1,type:'unpaint',id},'*');else hl.current?.remove(id);setList(l=>l.filter(x=>x.id!==id))}catch(e){toast(e.message)}}
+  const drop=async id=>{try{await remove(id);if(inter)frame.current?.contentWindow?.postMessage({zg:1,type:'unpaint',id},'*');else hl.current?.remove(id)}catch(e){toast(e.message)}}
   const toggleFs=()=>document.fullscreenElement?document.exitFullscreen().catch(()=>{}):document.documentElement.requestFullscreen?.().catch(()=>toast('Full screen is not available here'))
   return <div className="reader" role="dialog" aria-modal="true" aria-label={t.title}>
     <div className="rbar"><button className="ic" aria-label="Close" title="Close" onClick={close}><X size={20}/></button>
@@ -1033,8 +1061,8 @@ function Reader({t,auto,toast,onList,close}){
     <div className="rmain">
       {inter?(ready&&<iframe ref={frame} className="rframe" title={t.title} src={t.frame_url} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"/>)
         :<div className="rscroll"><div className="prose rtext" ref={box}>{ready?<Content text={t.content} format={t.content_format}/>:<Skeleton/>}</div></div>}
-      {panel&&<aside className="rpanel" aria-label="Your highlights"><b>Your highlights</b><p className="known">Select text to highlight it. Tap a highlight to remove it.</p>
-        {list?.length?list.map(h=><div key={h.id} className="hlrow"><button className="hltext" onClick={()=>goTo(h.id)}>{h.text}</button><button className="ic sm" aria-label="Remove highlight" title="Remove" onClick={()=>drop(h.id)}><Trash2 size={15}/></button></div>):<p className="known">None yet.</p>}</aside>}</div></div>}
+      {panel&&<aside className="rpanel" aria-label="Your highlights"><b>Your highlights</b><p className="known">Select text and pick a colour. Tap a highlight to change its colour, add a note or remove it.</p>
+        {list?.length?list.map(h=><HlItem key={h.id} h={h} toast={toast} focus={noteFor===h.id} onGo={()=>goTo(h.id)} onSaved={r=>{setList(l=>l.map(x=>x.id===r.id?r:x));setNoteFor(null)}} onDrop={()=>drop(h.id)}/>):<p className="known">None yet.</p>}</aside>}</div></div>}
 
 const TOPIC_CONFIG_TEMPLATE=`---
 title: 1. Introduction and learning objectives
@@ -1152,6 +1180,46 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
     {paste&&<Sheet close={()=>setPaste(null)}><h3>Paste text</h3><textarea aria-label="Text to add" value={paste.text} onChange={e=>setPaste({text:e.target.value})} placeholder="Paste your notes. Lines starting with # are headings."/>
       <button className="btn" disabled={!paste.text.trim()||!!busy} onClick={async()=>{await run('paste',()=>api(base+'/text',{method:'POST',body:{text:paste.text}}),'Added');setPaste(null)}}>Add</button></Sheet>}</>}
 
+// every highlight this person has made, newest first: search (passage, note or topic), a colour filter and pages; a highlight opens its topic
+function MyHighlights({toast,role}){
+  const [q,setQ]=useState(''),[color,setColor]=useState(''),[t,setT]=useState(null)
+  const {items,total,page,setPage,reload}=usePaged(o=>`/me/highlights?q=${encodeURIComponent(q)}&color=${color}&limit=${PAGE}&offset=${o}`,[q,color],toast)
+  if(t)return <Topic id={t} back={()=>{setT(null);reload()}} toast={toast} role={role}/>
+  const drop=async h=>{try{await api('/me/highlights/'+h.id,{method:'DELETE'});toast('Highlight removed');reload()}catch(e){toast(e.message)}}
+  return <><Bar title="My highlights" sub={q||color?matches(total):pl(total,'highlight')}/><div className="main">
+    <div className="search"><Search size={18}/><input type="search" aria-label="Search your highlights" placeholder="Search your highlights, notes or topics" value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="chips wrap" role="group" aria-label="Colour" style={{marginTop:12}}>{[['','All colours'],...Object.keys(HL_COL).map(c=>[c,c[0].toUpperCase()+c.slice(1)])].map(([k,l])=><button key={l} className={'sbtn'+(color===k?' on':'')} aria-pressed={color===k} onClick={()=>setColor(k)}>{k&&<i className="hldot" style={{background:HL_COL[k]}}/>}{l}</button>)}</div>
+    {items.map(h=><HlItem key={h.id} h={h} toast={toast} where={[h.topic,h.course].filter(Boolean).join(' · ')} onGo={()=>setT(h.topic_id)} onSaved={reload} onDrop={()=>drop(h)}/>)}
+    {!items.length&&<p className="known">{q||color?'No highlight matches.':'No highlights yet. Open a topic, select some text and pick a colour.'}</p>}
+    <Pager page={page} total={total} onPage={setPage}/></div></>}
+const FMT={markdown:'Markdown',html:'HTML',interactive:'HTML + JavaScript'}
+// many topic files into one unit: pick files or a whole folder (with its images), see what each file becomes, then add them all
+function BulkTopics({unit,toast,close,done}){
+  const [rows,setRows]=useState(null),[files,setFiles]=useState([]),[images,setImages]=useState({}),[scripts,setScripts]=useState(false),[pub,setPub]=useState(false),[busy,setBusy]=useState(''),pick=useRef(null),folder=useRef(null)
+  const ext=x=>(x.name.split('.').pop()||'').toLowerCase()
+  const send=(dry,o={})=>api(`/units/${unit.id}/topics/bulk`,{method:'POST',body:{files,images,scripts,published:pub,...o,dry_run:dry}})
+  const preview=async o=>{if(!(o?.files||files).length)return;setBusy('Checking the files…');try{setRows(await send(true,o))}catch(e){toast(e.message)}setBusy('')}
+  const choose=async e=>{const all=[...e.target.files];e.target.value='';if(!all.length)return
+    const docs=all.filter(x=>['html','htm','md','markdown','txt'].includes(ext(x))),imgs=all.filter(x=>/^image\//.test(x.type))
+    if(!docs.length)return toast('Choose .html or .md files, or a folder with them')
+    if(docs.length>200)return toast('Choose up to 200 files at a time')
+    const big=imgs.find(x=>x.size>3*1024*1024);if(big)return toast(big.name+' is over 3 MB. Make it smaller first.')
+    try{setBusy(`Reading ${pl(docs.length,'file')}…`);const fs=await Promise.all(docs.map(async x=>({name:x.webkitRelativePath||x.name,text:await x.text()}))),im={}
+      for(const [i,x] of imgs.entries()){setBusy(`Uploading images: ${i+1} of ${imgs.length}…`);im[x.name]=await uploadImg(x)}
+      setFiles(fs);setImages(im);await preview({files:fs,images:im})}catch(er){toast(er.message)}setBusy('')}
+  const add=async()=>{setBusy('Adding the topics…');try{const r=await send(false);toast(`${pl(r.created,'topic')} added to ${unit.name}`);done()}catch(e){toast(e.message);setBusy('')}}
+  const ok=rows?.ready||0
+  return <Sheet page close={close}><h3>Upload topic files to {unit.name}</h3>
+    <p className="known">One topic per file. Choose .html or .md files, or a whole folder: images in it are matched to the pages by file name. Topics are added in file-name order (2 before 10), after the topics already here. A Markdown file with the config sections (see Config template in the topic editor) also fills in the question pattern, sample answer and guideline.</p>
+    <label className="chk"><input type="checkbox" checked={scripts} onChange={e=>{setScripts(e.target.checked);preview({scripts:e.target.checked})}}/> Keep each HTML page's JavaScript (HTML + JavaScript, run in a sandbox)</label>
+    <label className="chk"><input type="checkbox" checked={pub} onChange={e=>{setPub(e.target.checked);preview({published:e.target.checked})}}/> Publish them now (otherwise they are drafts)</label>
+    <div className="two"><button className="btn" disabled={!!busy} onClick={()=>pick.current.click()}><Upload size={16}/> Choose files</button><button className="btn ghost" disabled={!!busy} onClick={()=>folder.current.click()}>Choose a folder</button></div>
+    <input ref={pick} type="file" hidden multiple accept=".html,.htm,.md,.markdown,.txt,image/png,image/jpeg,image/gif,image/webp" onChange={choose}/>
+    <input ref={folder} type="file" hidden multiple webkitdirectory="" onChange={choose}/>
+    {busy&&<p className="known" role="status">{busy}</p>}
+    {rows&&<><b className="sec" style={{display:'block'}}>{ok} of {pl(rows.topics.length,'file')} ready</b>
+      {rows.topics.map((r,i)=><div key={i} className="row"><div>{r.ok?<b>{r.title}</b>:<s>{r.title||r.file}</s>}<small>{r.file}{r.ok?` · ${FMT[r.format]} · ${r.published?'published':'draft'}`:''}</small>{r.warnings.map((w,j)=><small key={j} className="warnline">{w}</small>)}</div></div>)}
+      <button className="btn" disabled={!ok||!!busy} onClick={add}>Add {pl(ok,'topic')}</button></>}</Sheet>}
 function Bookmarks({toast,role}){
   const [tree,setTree]=useState(null),[sem,setSem]=useState(null),[course,setCourse]=useState(null),[t,setT]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t])
