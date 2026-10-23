@@ -25,6 +25,7 @@ import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
 import '@fontsource/instrument-sans/500.css'
 import '@fontsource/instrument-sans/600.css'
+import '@fontsource/instrument-sans/700.css'
 import './styles.css'
 
 const api=async(p,o={})=>{const t=localStorage.t
@@ -34,7 +35,7 @@ const TEMPLATE=`program,semester,course,unit,topic,content,question_pattern,samp
 B.E. Mechanical Engineering,Semester 3,Thermodynamics,Unit 1: Basic concepts,First law of thermodynamics,"Energy can change form but is never created or destroyed.","2 marks: define. 13 marks: derive and solve a numerical.","Q: State the first law for a closed system.","Introduction, labelled diagram, steps, units, conclusion"
 ,,,,Zeroth law of thermodynamics,"If A and B are each in equilibrium with C, they are in equilibrium with each other.","2 marks: state the law.","Q: State the zeroth law.","Definition, one example, significance"
 `
-const COL=['#3d63c9','#2b8a7e','#a86a2a','#7655b3','#3b7ea6']
+const COL=['#722f99','#c2464e','#7a6f70','#9a6420','#4e1d6c']
 const when=iso=>new Date(iso).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})  // shown in the viewer's own time zone
 const localInput=iso=>{if(!iso)return '';const d=new Date(iso),z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`}
 const STATUS={not_started:'Not started',in_progress:'In progress',completed:'Completed'}
@@ -50,12 +51,18 @@ const matches=n=>`${n} ${n===1?'match':'matches'}`
 const Ctx=createContext({})
 const THEMES=[['system',Monitor,'Auto'],['light',Sun,'Light'],['dark',Moon,'Dark']]
 const readTheme=()=>{try{return localStorage.theme||'system'}catch{return 'system'}}
-const applyTheme=t=>{const r=document.documentElement;if(t==='light'||t==='dark')r.dataset.theme=t;else delete r.dataset.theme;const dark=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.querySelector('meta[name=theme-color]')?.setAttribute('content',dark?'#0f1319':'#f4f5f8')}
-const Logo=({src,size=40})=>src?<img className="logo" src={src} alt="" width={size} height={size} style={{width:size,height:size}}/>:<span className="logomark" style={{width:size,height:size}} aria-hidden="true"><GraduationCap size={size*.55}/></span>
+const applyTheme=t=>{const r=document.documentElement;if(t==='light'||t==='dark')r.dataset.theme=t;else delete r.dataset.theme;const dark=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.querySelector('meta[name=theme-color]')?.setAttribute('content',dark?'#120e17':'#f6f4f7')}
+// the Zigora mark: a Z in cream and coral on plum (the same drawing as public/favicon.svg)
+const ZMark=({size=40})=><svg className="zmark" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#722f99"/><rect x="16" y="15" width="32" height="8" rx="2.5" fill="#fee7c8"/><path d="M38.5 23H48L25.5 41H16Z" fill="#ff9292"/><rect x="16" y="41" width="32" height="8" rx="2.5" fill="#fee7c8"/></svg>
+const Logo=({src,size=40})=>src?<img className="logo" src={src} alt="" width={size} height={size} style={{width:size,height:size}}/>:<ZMark size={size}/>
 const Lockup=({logo,name,size=40})=><div className="lockup"><Logo src={logo} size={size}/><b>{name}</b></div>
+// sign-in, reset and first-password pages: the form, with a brand panel beside it on wide screens
+const AuthFrame=({logo,name,children})=><div className="auth"><aside className="authart" aria-hidden="true"><Lockup logo={logo} name={name} size={44}/>
+  <div><h2>Learn engineering, one topic at a time.</h2><p>Courses, notes, practice tests and progress for every program, semester and student, in one place.</p></div>
+  <div className="bands"><i style={{background:'#722f99'}}/><i style={{background:'#c5c1c1'}}/><i style={{background:'#fee7c8'}}/><i style={{background:'#ff9292'}}/></div></aside>{children}</div>
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Eng Tutor'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Zigora'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null)
   const confirm=useCallback(o=>new Promise(res=>setAsk({o,res})),[])  // in-app replacement for window.confirm: await confirm({title,body,ok,danger})
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
   useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
@@ -64,9 +71,9 @@ export default function App(){
   useEffect(()=>{const k=e=>e.key==='Escape'&&setOpen(false);addEventListener('keydown',k);return()=>removeEventListener('keydown',k)},[])
   useEffect(()=>{document.body.style.overflow=open?'hidden':''},[open])
   if(!ready)return null
-  if(resetTok)return <ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/>
-  if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
-  if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
+  if(resetTok)return <AuthFrame logo={logo} name={name}><ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/></AuthFrame>
+  if(!user)return <AuthFrame logo={logo} name={name}><Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/></AuthFrame>
+  if(user.must_change)return <AuthFrame logo={logo} name={name}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)}
   const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>

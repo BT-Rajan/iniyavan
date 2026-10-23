@@ -1,4 +1,4 @@
-# Eng Tutor
+# Zigora
 Multi-user engineering study app: FastAPI + MariaDB/MySQL + React PWA. DeepSeek explains topics and writes sample answers; results are cached centrally so each topic costs tokens once.
 
 ## Production first run
@@ -8,6 +8,9 @@ Multi-user engineering study app: FastAPI + MariaDB/MySQL + React PWA. DeepSeek 
 6. Sign in as the admin, add the DeepSeek key under Admin, then add students.
 
 The PWA installs only over HTTPS (or localhost), so put the app behind a TLS reverse proxy.
+
+## Name, logo and colours
+The app is called Zigora (formerly Eng Tutor). The name comes from `APP_NAME` in `.env`; an older `.env` may still say `APP_NAME="Eng Tutor"`, so change it there and run `./run.sh`. An admin can also set another name and logo under Settings, which wins over `.env`. Without a custom logo the app shows the Zigora mark (`frontend/public/favicon.svg`; the PNG icons beside it are drawn from the same shape). The colours are plum `#722f99`, stone `#c5c1c1`, cream `#fee7c8` and coral `#ff9292`, set as variables at the top of `frontend/src/styles.css`. The pm2 process and the database keep the name `engtutor`, so existing servers carry on unchanged.
 
 ## Managing users from the terminal
 `./manage.sh add --name "Name" --email a@b.com [--role admin]` (prompts for the password), `passwd`, `enable`, `disable`, `role`, `list`. Use `VENV=/path/to/venv` if your venv is not `./venv`.
