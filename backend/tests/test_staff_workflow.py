@@ -9,7 +9,8 @@ def test_overview_tells_admin_what_needs_attention_and_faculty_only_their_course
     env.c.put(f"/api/topics/{topics[1]['id']}/publish", headers=env.admin, json={"published": False})
     env.add_user("new@x.com")  # an active student with no program or semester
     a = env.c.get("/api/overview", headers=env.admin).json(); kinds = {x["kind"]: x["count"] for x in a["attention"]}
-    assert a["courses"] == 1 and a["topics"] == 2 and a["drafts"] == 1 and a["people"]["faculty"] == 1 and a["people"]["active_week"] == 0
+    # Topics counts published topics only; the draft has its own count
+    assert a["courses"] == 1 and a["topics"] == 1 and a["drafts"] == 1 and a["people"]["faculty"] == 1 and a["people"]["active_week"] == 0
     assert kinds["drafts"] == 1 and kinds["unowned"] == 1 and kinds["unenrolled"] >= 1 and kinds["never_opened"] >= 1
     f = env.c.get("/api/overview", headers=env.fac).json()  # faculty own nothing yet: no college-wide numbers leak
     assert f["courses"] == 0 and "people" not in f and f["attention"] == []
@@ -174,7 +175,8 @@ def test_dashboard_card_lists_search_sort_page_and_point_at_details(env):
     assert [i["title"] for i in get("students", order="name_desc", limit=50).json()["items"]] == names[::-1]
     hit = get("students", q="stud3@x.com").json(); assert hit["total"] == 1 and hit["items"][0]["sub"] == "stud3@x.com"
     d = get("drafts").json(); assert d["total"] == 2 and d["items"][0]["target"]["type"] == "topic"
-    assert get("topics").json()["total"] == 3 and get("courses").json()["items"][0]["target"]["type"] == "course"
+    # the Topics list holds the one published topic; the two drafts are listed under drafts
+    assert get("topics").json()["total"] == 1 and get("courses").json()["items"][0]["target"]["type"] == "course"
     assert get("unowned").json()["total"] == 1 and get("empty_courses").json()["total"] == 0
     assert get("nope").status_code == 404 and get("students", h=env.fac).status_code == 403 and get("courses", h=env.stu).status_code == 403
     assert get("courses", h=env.fac).json()["total"] == 0 and get("drafts", h=env.fac).json()["total"] == 0  # faculty see only their own courses
