@@ -155,6 +155,7 @@ class Routine(Base):  # when and how long a student studies; each day's plan is 
     days = Column(String(7), default="1111110")  # Monday..Sunday, 1 = a study day
     minutes = Column(Integer, default=30); at = Column(String(5), nullable=True)  # minutes per session; "19:30" (student's day clock), only to say when it is due
     updated_at = Column(DateTime, default=dt.datetime.utcnow)
+    started_at = Column(DateTime, nullable=True, default=dt.datetime.utcnow)  # when the routine was set up; days before it are never "missed"
 class DaySession(Base):  # one day's session, fixed when it is first made so that finishing a topic doesn't add another one
     __tablename__ = "day_sessions"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); day = Column(Date)
@@ -520,7 +521,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0015_users_self_registration", registration_columns), ("0016_program_pattern", program_pattern),
               ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")]),
               ("0018_mcq_tests", mcq_columns), ("0019_topic_content_format", content_format_columns),
-              ("0020_practice_on_staff_topics", lambda c: _addcol("study_quizzes", "src_topic_id", "INT NULL")(c) if "study_quizzes" in inspect(c).get_table_names() else None)]
+              ("0020_practice_on_staff_topics", lambda c: _addcol("study_quizzes", "src_topic_id", "INT NULL")(c) if "study_quizzes" in inspect(c).get_table_names() else None),
+              ("0021_routine_started_at", _addcol("routines", "started_at", "DATETIME NULL"))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -3492,7 +3494,8 @@ def make_session(u, s, r, today, now):
     return s.query(DaySession).filter_by(user_id=u.id, day=today).one()
 def session_view(u, s, r, ds, today, now):
     days = study_days(s, u.id, today - dt.timedelta(days=60)); missed, d = 0, today - dt.timedelta(days=1)
-    while d >= today - dt.timedelta(days=14) and d not in days:  # study days missed since they last studied
+    since = max(today - dt.timedelta(days=14), local_day(r.started_at or r.updated_at or dt.datetime.utcnow()) + dt.timedelta(days=1))  # the day it was set up doesn't count
+    while d >= since and d not in days:  # study days missed since they last studied, and only since the routine began
         missed += r.days[d.weekday()] == "1"; d -= dt.timedelta(days=1)
     out = {"routine": routine_view(r), "planned_today": r.days[today.weekday()] == "1", "studied_today": today in days, "missed": missed,
            "streak": streak_of(days, today, r.days), "plan": plan_advice(r, study_queues(u, s), today), "session": None}
