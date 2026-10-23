@@ -1176,6 +1176,7 @@ M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Uni
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
     mine_p = {p.topic_id: p for p in s.query(Progress).filter_by(user_id=u.id)}; read = set(mine_p); now = dt.datetime.utcnow()
+    noted = {i for (i,) in s.query(TopicNote.topic_id).filter_by(user_id=u.id)}  # topics that have this student's own notes
     marked = set() if u.role == "admin" else {b.topic_id for b in s.query(Bookmark).filter_by(user_id=u.id)}  # admins have no bookmarks, even old ones
     def g(model, k):
         d = defaultdict(list)
@@ -1205,7 +1206,7 @@ def tree(u: User = Depends(me), s: Session = Depends(db)):
              "owner": owners[c.faculty_owner_id].name if c.faculty_owner_id in owners else None,
              "tests": [] if off and not ed else [q for q in tests[c.id] if ed or (q["published"] and q["questions"])], "units": [] if off and not ed else [  # everyone else sees an archived course as a locked name, nothing inside
             {"id": n.id, "name": n.name, "archived": off or bool(n.archived_at), "archived_self": bool(n.archived_at), "quizzes": [q for q in qz[n.id] if ed or (q["published"] and q["questions"])],
-             "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False,
+             "topics": [{"id": t.id, "title": t.title, "read": t.id in read, "bookmarked": t.id in marked, "published": t.published is not False, "has_notes": t.id in noted,
                          "archived": off or bool(n.archived_at) or bool(t.archived_at), "archived_self": bool(t.archived_at),
                          "last_read": mine_p[t.id].last_read.isoformat() + "Z" if t.id in mine_p and mine_p[t.id].last_read else None,
                          **learning_state(t.learning_due_at, mine_p.get(t.id), now)} for t in tp[n.id] if (t.published is not False or ed) and (ed or not t.archived_at)]} for n in un[c.id] if ed or not n.archived_at]}
@@ -1981,7 +1982,7 @@ def my_scores(u: User = Depends(me), s: Session = Depends(db)):
 def drop_topics(s, cond):  # topics with their reading progress, bookmarks and saved AI answers (SQLite would not cascade them)
     ids = [i for (i,) in s.query(Topic.id).filter(cond)]
     if ids:
-        for m in (Progress, Bookmark, AICache, TopicVersion): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
+        for m in (Progress, Bookmark, AICache, TopicVersion, TopicNote): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
         s.query(Topic).filter(Topic.id.in_(ids)).delete(synchronize_session=False)
 def drop_quizzes(s, cond):
     ids = [q.id for q in s.query(Quiz).filter(cond)]
@@ -2002,7 +2003,7 @@ def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(d
         uids = [i for (i,) in s.query(Unit.id).filter_by(course_id=c.id)] or [0]
         drop_quizzes(s, or_(Quiz.unit_id.in_(uids), and_(Quiz.unit_id.is_(None), Quiz.course_id == c.id))); s.query(CourseLink).filter_by(course_id=c.id).delete(); s.query(CourseFaculty).filter_by(course_id=c.id).delete()
         drop_topics(s, or_(Topic.unit_id.in_(uids), and_(Topic.unit_id.is_(None), Topic.course_id == c.id)))
-        s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
+        s.query(CourseMaterial).filter_by(course_id=c.id).delete(); s.query(Unit).filter_by(course_id=c.id).delete(); s.delete(c)
     if kind == "programs":
         sids = [i for (i,) in s.query(Semester.id).filter_by(program_id=rid)] or [0]
         for c in s.query(Course).filter(or_(Course.semester_id.in_(sids), and_(Course.semester_id.is_(None), Course.program_id == rid))).all(): drop_course(c)
@@ -2234,7 +2235,7 @@ def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     check_topic_access(u, t, s)
     p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
     edit = can_edit(u, topic_course_id(t, s), s)
-    return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+    return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "my_notes": my_notes(s, u.id, tid), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     if u.role == "admin": raise HTTPException(403, "Bookmarks are for students and faculty")  # admins manage content; they have no study list
@@ -2573,12 +2574,32 @@ class StudyAICall(Base):  # one row per AI call for a student-built course on th
     __tablename__ = "study_ai_calls"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     kind = Column(String(10)); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
+class CourseMaterial(Base):  # one student's own material for an official course, cut into sections and filed under the course's syllabus topics
+    __tablename__ = "course_materials"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), index=True)
+    sources = Column(Text, default="[]"); paras = Column(BIG, default="[]")  # as in study_courses: the files in order, and their paragraphs
+    sections = Column(BIG, nullable=True)  # JSON [{"from", "to", "topic_id" (null = not in the syllabus)}] covering the paragraphs in order
+    matched_by = Column(String(10), default=""); saved_at = Column(DateTime, nullable=True); updated_at = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "course_id", name="uq_course_material"),)
+class TopicNote(Base):  # a student's own notes for one syllabus topic, taken from their material; private to them
+    __tablename__ = "topic_notes"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); content = Column(BIG); updated_at = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "topic_id", name="uq_topic_note"),)
 
 STUDY_AI_DAILY = int(os.getenv("STUDY_AI_DAILY") or 40)  # AI calls per person per day on the shared key (people with their own key are not limited)
 MAX_SOURCE_BYTES, MAX_PARAS_CHARS = 20 * 1024 * 1024, 1_500_000
 SLICE_BUDGET = 110_000  # characters of material sent to the AI in one slicing call; longer material is sent as the start of each paragraph
 QUIZ_SIZE = {"mcq": 5, "quiz": 10}; QUIZ_PASS = 60
 STUDY_PROMPTS = {
+ "match": ("You file a student's own study material under their university syllabus. The syllabus is a list of topics like T12: title (unit). "
+           "The material is a numbered list of paragraphs like [12] text. Cut the material into consecutive sections in the material's own order, "
+           "each about one syllabus topic, and say which topic each section belongs to. Several sections may belong to the same topic, and a topic may get none. "
+           "A section that fits no syllabus topic (a preface, an index, exercises on other subjects) gets topic null. "
+           "Sections must cover the paragraphs in order without gaps or overlaps: give each the number of its first and last paragraph. "
+           "Judge by meaning, not only by matching words; headings in the material may be worded differently from the syllabus. Reply with JSON only, exactly in this shape: "
+           '{"sections":[{"from":1,"to":4,"topic":"T3"},{"from":5,"to":5,"topic":null}]}'),
  "slice": ("You turn a student's study material into a course. The material is a numbered list of paragraphs like [12] text. "
            "Group it into units, and split each unit into topics. Each topic must be the smallest logical component that can be learnt on its own: "
            "one concept, rule, definition group, worked example or story, usually 1 to 6 paragraphs. Keep the material's own order. "
@@ -2965,6 +2986,8 @@ async def staff_topic_practice(tid: int, b: NewQuizIn, u: User = Depends(me), s:
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
     body = html_text(t.content) if fmt_of(t) == "html" else (t.content or "")
+    mine = my_notes(s, u.id, tid)
+    if mine: body = (body + "\n\nThe student's own notes:\n" + mine).strip()
     qs = await write_questions(u, s, b.kind, t.title, body, s.query(StudyQuiz.questions).filter_by(src_topic_id=tid, user_id=u.id).order_by(StudyQuiz.id.desc()).limit(3).all())
     q = StudyQuiz(topic_id=None, src_topic_id=tid, course_id=None, user_id=u.id, kind=b.kind, questions=json.dumps(qs, ensure_ascii=False)); s.add(q); s.commit()
     return study_quiz_view(q, u, s)
@@ -3062,6 +3085,152 @@ def study_progress(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     return {"course": c.title, "topics": len(topics), "completed": done, "quizzed": len(areas), "average": round(sum(a["percent"] for a in areas) / len(areas)) if areas else None,
             "areas": areas, "summary": area_summary(areas)}
 REVIEW_DAYS = [1, 3, 7, 14, 30]  # spaced review: each good review pushes the next one further out; a poor one brings the topic back tomorrow
+# -- a student's own material, filed under an official course's syllabus --
+def syllabus(s, cid):  # [(unit, [topics])] in order, as students see them: published, not archived
+    units = s.query(Unit).filter(Unit.course_id == cid, Unit.archived_at.is_(None)).order_by(*ORDER[Unit]).all()
+    tops = defaultdict(list)
+    for x in s.query(Topic).filter(Topic.unit_id.in_([un.id for un in units] or [0]), Topic.published.isnot(False), Topic.archived_at.is_(None)).order_by(*ORDER[Topic]):
+        tops[x.unit_id].append(x)
+    return [(un, tops[un.id]) for un in units]
+def my_material(cid, u, s, make=False):  # only students file their own material, only in courses they may open
+    co = s.get(Course, cid)
+    if not co: raise HTTPException(404, "Course not found")
+    if u.role != "student": raise HTTPException(403, "Students add their own material to a course")
+    check_course_access(u, cid, s)
+    m = s.query(CourseMaterial).filter_by(user_id=u.id, course_id=cid).first()
+    if m is None and make:
+        s.add(CourseMaterial(user_id=u.id, course_id=cid))
+        try: s.commit()
+        except IntegrityError: s.rollback()  # two uploads raced; one row either way
+        m = s.query(CourseMaterial).filter_by(user_id=u.id, course_id=cid).one()
+    return m
+def norm_title(x): return re.sub(r"\s+", " ", re.sub(r"^(unit|chapter|lesson|topic|section)?\s*[\divxlc]+[.):-]?\s+|[^\w\s]", " ", (x or "").lower().lstrip("# "))).strip()
+def headings_sections(paras, topics):  # without AI: each heading starts a section, filed under the syllabus topic whose title it matches best
+    import difflib
+    names = [(x.id, norm_title(x.title)) for x in topics]; out, last_level = [], 0
+    def titled(p):  # PDFs often lose their headings: a paragraph that is, or opens with, a syllabus topic's title starts that topic
+        n = norm_title(p)
+        for tid, nm in names:
+            if len(nm) >= 4 and (n == nm or (n.startswith(nm + " ") and len(p.split()) > len(nm.split()) and p.split()[len(nm.split())][:1].isupper())): return tid
+    for i, p in enumerate(paras, 1):
+        m = re.match(r"^(#{1,6})\s+(.*)", p)
+        if not m and (tid := titled(p)) is not None: out.append({"from": i, "to": i, "topic_id": tid}); last_level = 6; continue
+        if m or not out:
+            hit, lvl = None, len(m.group(1)) if m else 0
+            if m:
+                h = norm_title(m.group(2)); best = max(names, key=lambda n: difflib.SequenceMatcher(None, h, n[1]).ratio(), default=None)
+                if best and (h == best[1] or difflib.SequenceMatcher(None, h, best[1]).ratio() >= 0.6 or (len(best[1]) > 4 and best[1] in h)): hit = best[0]
+            if hit is None and out and m and out[-1]["topic_id"] and lvl > last_level: out[-1]["to"] = i; continue  # a sub-heading stays with its topic
+            if hit is not None: last_level = lvl
+            out.append({"from": i, "to": i, "topic_id": hit})
+        else: out[-1]["to"] = i
+    return out
+def normalise_sections(raw, n, refs):  # any AI answer -> sections covering paragraphs 1..n in order; refs maps "T3" to a topic id
+    flat = []
+    for x in (raw or {}).get("sections") or []:
+        try: f = int(x.get("from"))
+        except (TypeError, ValueError, AttributeError): continue
+        if 1 <= f <= n: flat.append((f, refs.get(str(x.get("topic") or "").strip().upper())))
+    flat = sorted(dict(sorted(flat, reverse=True)).items())  # one section per start; keeps the first answer for a start
+    if not flat: return None
+    if flat[0][0] != 1: flat[0] = (1, flat[0][1])
+    out = []
+    for k, (f, tid) in enumerate(flat):
+        to = flat[k + 1][0] - 1 if k + 1 < len(flat) else n
+        if out and out[-1]["topic_id"] == tid: out[-1]["to"] = to  # neighbours about the same topic become one section
+        else: out.append({"from": f, "to": to, "topic_id": tid})
+    return out
+def material_view(m, s, cid, u):
+    syl = syllabus(s, cid); paras = json.loads(m.paras or "[]") if m else []; secs = json.loads(m.sections) if m and m.sections else []
+    title = {x.id: x.title for _, ts in syl for x in ts}; covered = {x["topic_id"] for x in secs if x["topic_id"] in title}
+    notes = {r.topic_id for r in s.query(TopicNote.topic_id).filter(TopicNote.user_id == m.user_id, TopicNote.topic_id.in_(list(title) or [0]))} if m else set()
+    return {"sources": json.loads(m.sources or "[]") if m else [], "matched_by": m.matched_by if m else "", "saved_at": utc_iso(m.saved_at) if m else None,
+            "syllabus": [{"id": un.id, "name": un.name, "topics": [{"id": x.id, "title": x.title, "has_notes": x.id in notes} for x in ts]} for un, ts in syl],
+            "sections": [{**x, "words": sum(len(p.split()) for p in paras[x["from"] - 1:x["to"]]), "heading": paras[x["from"] - 1].lstrip("#").strip()[:120] if paras[x["from"] - 1].startswith("#") else "",
+                          "excerpt": plain_excerpt(paras[x["from"] - 1:x["to"]])} for x in secs],
+            "topics": sum(len(ts) for _, ts in syl), "covered": len(covered), "with_notes": len(notes), **study_ai_status(u, s)}
+@app.get("/api/courses/{cid}/my-material")
+def material_get(cid: int, u: User = Depends(me), s: Session = Depends(db)): return material_view(my_material(cid, u, s), s, cid, u)
+@app.post("/api/courses/{cid}/my-material/files")
+async def material_file(cid: int, request: Request, name: str = "", u: User = Depends(me), s: Session = Depends(db)):
+    m = my_material(cid, u, s, make=True)
+    if int(request.headers.get("content-length") or 0) > MAX_SOURCE_BYTES: raise HTTPException(413, "The file is too large. Keep it under 20 MB.")
+    b = await request.body()
+    if len(b) > MAX_SOURCE_BYTES: raise HTTPException(413, "The file is too large. Keep it under 20 MB.")
+    kind, paras = await run_in_threadpool(material_paras, name or "file", b)
+    src = add_material(m, name or "file", kind, paras); m.sections = None; s.commit(); return src
+@app.post("/api/courses/{cid}/my-material/text")
+def material_text(cid: int, b: StudyTextIn, u: User = Depends(me), s: Session = Depends(db)):
+    m = my_material(cid, u, s, make=True); src = add_material(m, b.name.strip() or "Pasted text", "text", text_paras(b.text)); m.sections = None; s.commit(); return src
+@app.delete("/api/courses/{cid}/my-material/sources/{i}")
+def material_drop_source(cid: int, i: int, u: User = Depends(me), s: Session = Depends(db)):
+    m = my_material(cid, u, s)
+    sources = json.loads(m.sources or "[]") if m else []
+    if not 0 <= i < len(sources): raise HTTPException(404, "No such file")
+    paras = json.loads(m.paras or "[]"); start = sum(x["paras"] for x in sources[:i])
+    del paras[start:start + sources[i]["paras"]]; del sources[i]
+    m.paras, m.sources, m.sections, m.updated_at = json.dumps(paras, ensure_ascii=False), json.dumps(sources, ensure_ascii=False), None, dt.datetime.utcnow(); s.commit()
+    return material_view(m, s, cid, u)
+class MatchIn(BaseModel): method: str = "ai"
+@app.post("/api/courses/{cid}/my-material/match")
+async def material_match(cid: int, b: MatchIn, u: User = Depends(me), s: Session = Depends(db)):
+    m = my_material(cid, u, s); paras = json.loads(m.paras or "[]") if m else []
+    if not paras: raise HTTPException(400, "Add your material first")
+    syl = syllabus(s, cid); topics = [x for _, ts in syl for x in ts]
+    if not topics: raise HTTPException(400, "This course has no syllabus topics yet. Ask your teacher.")
+    if b.method == "headings": secs = headings_sections(paras, topics)
+    elif b.method == "ai":
+        refs = {f"T{k}": x.id for k, x in enumerate(topics, 1)}; ref = {v: k for k, v in refs.items()}
+        listing = "\n".join(f"{ref[x.id]}: {x.title} ({un.name})" for un, ts in syl for x in ts)
+        co = s.get(Course, cid)
+        msg = f"Course: {co.name}\n\nSyllabus topics:\n{listing}\n\nThe material has {len(paras)} paragraphs:\n\n" + slice_view(paras)
+        secs = normalise_sections(ai_json(await study_ask(u, s, "match", STUDY_PROMPTS["match"], msg)), len(paras), refs)
+        if not secs: raise HTTPException(502, "The AI did not return a usable matching. Try again, or match by headings.")
+    else: raise HTTPException(400, "method must be ai or headings")
+    m.sections, m.matched_by, m.updated_at = json.dumps(secs), b.method, dt.datetime.utcnow(); s.commit()
+    return material_view(m, s, cid, u)
+class SectionsIn(BaseModel): sections: list[dict]
+@app.put("/api/courses/{cid}/my-material/sections")
+def material_sections(cid: int, b: SectionsIn, u: User = Depends(me), s: Session = Depends(db)):
+    """The student's corrections: which topic each section belongs to (or none). Sections stay in order and never overlap."""
+    m = my_material(cid, u, s); n = len(json.loads(m.paras or "[]")) if m else 0
+    ok = {x.id for _, ts in syllabus(s, cid) for x in ts}; last, out = 0, []
+    for x in b.sections:
+        try: f, to = int(x["from"]), int(x["to"])
+        except (KeyError, TypeError, ValueError): raise HTTPException(400, "Each section needs its first and last paragraph")
+        if not (last < f <= to <= n): raise HTTPException(400, "Sections must stay in order without overlapping")
+        tid = x.get("topic_id")
+        if tid is not None and tid not in ok: raise HTTPException(400, "Choose a topic of this course")
+        last = to; out.append({"from": f, "to": to, "topic_id": tid})
+    m.sections, m.updated_at = json.dumps(out), dt.datetime.utcnow(); s.commit(); return material_view(m, s, cid, u)
+@app.get("/api/courses/{cid}/my-material/preview")
+def material_preview(cid: int, start: int, end: int, u: User = Depends(me), s: Session = Depends(db)):
+    m = my_material(cid, u, s); paras = json.loads(m.paras or "[]") if m else []
+    if not 1 <= start <= end <= len(paras): raise HTTPException(400, "Out of range")
+    return {"content": "\n\n".join(paras[start - 1:end])}
+@app.post("/api/courses/{cid}/my-material/save")
+def material_save(cid: int, u: User = Depends(me), s: Session = Depends(db)):
+    """Writes the student's notes into each matched topic. Their notes for this course are rebuilt from the material each time; reading, completion and quiz records stay."""
+    m = my_material(cid, u, s)
+    if not m or not m.sections: raise HTTPException(400, "Match your material to the syllabus first")
+    paras, ok = json.loads(m.paras or "[]"), {x.id for _, ts in syllabus(s, cid) for x in ts}; per = defaultdict(list)
+    for x in json.loads(m.sections):
+        if x["topic_id"] in ok: per[x["topic_id"]].append("\n\n".join(paras[x["from"] - 1:x["to"]]))
+    if not per: raise HTTPException(400, "None of the sections is filed under a syllabus topic yet")
+    course_topics = [i for (i,) in s.query(Topic.id).join(Unit, Unit.id == Topic.unit_id).filter(Unit.course_id == cid)] or [0]
+    s.query(TopicNote).filter(TopicNote.user_id == u.id, TopicNote.topic_id.in_(course_topics)).delete(synchronize_session=False)
+    now = dt.datetime.utcnow()
+    for tid, parts in per.items(): s.add(TopicNote(user_id=u.id, topic_id=tid, content="\n\n".join(parts), updated_at=now))
+    m.saved_at = now; s.commit(); return material_view(m, s, cid, u)
+@app.delete("/api/courses/{cid}/my-material")
+def material_delete(cid: int, u: User = Depends(me), s: Session = Depends(db)):  # the material and the notes it made; nothing else
+    m = my_material(cid, u, s)
+    course_topics = [i for (i,) in s.query(Topic.id).join(Unit, Unit.id == Topic.unit_id).filter(Unit.course_id == cid)] or [0]
+    s.query(TopicNote).filter(TopicNote.user_id == u.id, TopicNote.topic_id.in_(course_topics)).delete(synchronize_session=False)
+    if m: s.delete(m)
+    s.commit(); return {"ok": True}
+def my_notes(s, uid, tid):
+    n = s.query(TopicNote).filter_by(user_id=uid, topic_id=tid).first(); return n.content if n else None
 def schedule_review(p, ratio, now):
     step = p.review_step or 0
     if ratio >= 0.8: step = min(step + 1, len(REVIEW_DAYS))

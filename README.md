@@ -98,6 +98,17 @@ Topics have a Published flag. Drafts are visible to admins and the course's owne
 ## Quizzes
 Admins and faculty (for their own courses) add multiple-choice quizzes to a unit: open the unit, tap **Add quiz**, set a title and pass mark, write questions with 2 to 6 answers, tick the correct one and add an optional explanation (Markdown and `$math$` work). A quiz stays a draft until **Published** is ticked. Students open it from the unit, answer, and are graded on the server, so the correct answers are never sent to the browser before they submit. They then see their score, pass or fail and which of their answers were right; the correct answers and explanations are sent to students only when the quiz is set to show them (admins and the course's faculty always see them). Students can try again as often as they like; the best score shows on the unit. Quizzes follow the same program and semester rules as topics and disappear with their unit or course.
 
+## Students bring their own notes to a course
+The college sets the framework: program, semester, course, units and topics. A course can be just that framework (topic titles and order, no content), so staff don't have to write or format every topic. Each student brings their own material for it.
+
+On a course page a student taps **Bring your own notes** (later **Your notes in X of Y topics**):
+1. **Your files:** add PDFs (with selectable text), Word (.docx) or text files, or paste text. Several files are joined in order.
+2. **File it under the syllabus:** **Match with AI** cuts the material into parts and puts each under the course topic it is about, judging by meaning (headings may be worded differently from the syllabus). It never rewrites the text. **Match by headings** (no AI) uses headings that match topic titles; sub-headings stay with their topic, and a paragraph that starts with a topic's title counts as its heading (PDFs often lose heading styles). Parts about nothing in the syllabus (a preface, an index) are left out.
+3. **Check where each part goes:** each part shows its heading or first words, its size, **Read it**, and the topic it is filed under, which the student can change. The screen says how many topics are covered and which are not yet.
+4. **Save to my topics:** each topic gets the student's notes, shown on the topic page under **Your notes** (alone when the topic has no staff content, otherwise below it). Quick checks and quizzes on the topic also ask about them.
+
+The notes are private: classmates, faculty and admins don't see them. Saving again rebuilds the notes from the material; **Remove my material** deletes the material and its notes. Reading, completion and quiz results are never touched. Only published, non-archived topics are offered, and only students who can open the course can add material. Matching with AI counts as one request toward the daily AI limit. Tables `course_materials` and `topic_notes` are created on first start. API under `/api/courses/{id}/my-material`.
+
 ## Students build their own courses
 Students have **Build a course** in the menu. It turns their own notes, textbook chapters or handouts into a course they study in the app, next to the courses staff set up.
 

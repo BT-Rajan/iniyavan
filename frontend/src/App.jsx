@@ -19,7 +19,7 @@ export function fixTables(text){
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
 const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock,FileText} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -200,12 +200,14 @@ function ArchiveSheet({a,close,done,toast}){  // archive or restore one item; ar
 const ArchPill=({x})=>x.archived?<span className="pill off sm">{x.archived_self?'Archived':'Archived with its parent'}</span>:null
 function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
+  const [mat,setMat]=useState(false)
   const [copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet,arch,qr])
   const landed=useRef(false);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
   const prog=tree.find(x=>x.id===nav[0]),sem=prog?.semesters.find(x=>x.id===nav[1]),co=sem?.courses.find(x=>x.id===nav[2]),unit=co?.units.find(x=>x.id===nav[3])
   const mayEdit=isAdmin||(user.role==='faculty'&&!!co?.editable)
   useEffect(()=>{setCp(null);if(co&&mayEdit&&!co.shared)api(`/courses/${co.id}/progress`).then(setCp).catch(()=>{})},[co?.id,mayEdit,t])
+  if(mat&&co)return <MyMaterial cid={co.id} name={co.name} back={()=>{setMat(false);load()}} toast={toast}/>
   if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role={user.role}/>
   if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast} role={user.role}/>
   if(qe)return <QuizEditor {...qe} done={()=>setQe(null)} toast={toast}/>
@@ -235,6 +237,8 @@ function Learn({user,toast,appName,start}){
      {isAdmin&&!sem&&<button className="btn ghost lead" onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add '+prog.term.toLowerCase()+' to '+prog.name:'New program'}</button>}
      {isAdmin&&sem&&!co&&<button className="btn ghost lead" onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
      {co&&!unit&&!staff&&<p className="known" style={{marginTop:0}}>{doneOf(co.units.flatMap(n=>n.topics))} topics completed</p>}
+     {co&&!unit&&!staff&&(()=>{const ts=co.units.flatMap(n=>n.topics),k=ts.filter(x=>x.has_notes).length;return <div className="card"><button className="hit" onClick={()=>setMat(true)}><span className="dot" style={{background:COL[3]}}><FileText size={20}/></span>
+       <div><b>{k?'Your notes in '+k+' of '+ts.length+' topics':'Bring your own notes'}</b><span>{k?'Add or update your material':'Upload your PDF or Word notes. They are filed under this course\'s topics, for you only.'}</span></div></button></div>})()}
      {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],[prog.term,sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
        {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
      {!nav.length&&user.role==='faculty'&&<><h3 className="sec first">My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}<ArchPill x={c}/></b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
@@ -892,7 +896,7 @@ function Topic({id:first,back,toast,role}){
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
     <Tabs label="Topic sections" items={[['notes','Notes'],['explain','Explain'],['answer','Sample answer']]} value={tab} onChange={setTab}/>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
-    {tab==='notes'&&<div className="prose">{t.content?<Body text={t.content} format={t.content_format}/>:<Md>No notes yet.</Md>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
+    {tab==='notes'&&<div className="prose">{t.content?<Body text={t.content} format={t.content_format}/>:!t.my_notes&&<Md>No notes yet.</Md>}{t.my_notes&&<>{t.content&&<h3>Your notes</h3>}{!t.content&&<span className="chip">Your notes</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
     {role==='student'&&aiOk!==false&&<><h3 className="sec">Check yourself</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
       <p className="known" style={{marginTop:4}}>The AI writes new questions from this topic's notes each time. Quick check: the answer right after each question. Full quiz: scored at the end.</p></>}
@@ -974,6 +978,38 @@ function UnitSheet({un,cid,courses,close,done,toast}){  // courses is given to a
 
 const unmarked=(tree,id)=>tree.map(p=>({...p,semesters:p.semesters.map(s=>({...s,courses:s.courses.map(c=>({...c,units:c.units.map(u=>({...u,topics:u.topics.map(x=>x.id===id?{...x,bookmarked:false}:x)}))}))}))}))
 const tabTo=e=>e.currentTarget.scrollIntoView?.({inline:'center',block:'nearest'})
+
+function MyMaterial({cid,name,back,toast}){  // a student's own material, filed under the course's syllabus topics (private to them)
+  const [v,setV]=useState(null),[busy,setBusy]=useState(''),[paste,setPaste]=useState(null),[open,setOpen]=useState({}),fileRef=useRef()
+  const base=`/courses/${cid}/my-material`,load=()=>api(base).then(setV).catch(e=>{toast(e.message);back()})
+  useEffect(()=>{load()},[cid])
+  const run=async(label,fn,msg)=>{setBusy(label);try{const r=await fn();if(r&&r.syllabus)setV(r);else await load();msg&&toast(msg)}catch(e){toast(e.message)}setBusy('')}
+  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed')},'Added '+f.name)}
+  const match=m=>run(m,()=>api(base+'/match',{method:'POST',body:{method:m}}),'Matched to the syllabus. Check it below, then save.')
+  const file=(i,tid)=>run('sec',()=>api(base+'/sections',{method:'PUT',body:{sections:v.sections.map((x,k)=>({from:x.from,to:x.to,topic_id:k===i?(tid?+tid:null):x.topic_id}))}}))
+  const read=async x=>{const k=x.from;if(open[k]!==undefined)return setOpen({...open,[k]:undefined});try{const r=await api(`${base}/preview?start=${x.from}&end=${x.to}`);setOpen({...open,[k]:r.content})}catch(e){toast(e.message)}}
+  if(!v)return <><Bar title="Your material" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
+  const filed=new Set(v.sections.map(x=>x.topic_id).filter(Boolean)),missing=v.syllabus.flatMap(u=>u.topics.filter(x=>!filed.has(x.id)).map(x=>x.title)),noAi=!v.ai_available||v.ai_left===0
+  return <><Bar title="Your material" sub={name} back={back}/><div className="main">
+    <p className="known" style={{marginTop:0}}>Your college sets the course, units and topics. Bring your own notes or book chapters and they are filed under the right topics, so you study the syllabus in your own words. Only you see them.</p>
+    <h3>1. Your files</h3>
+    {v.sources.length?v.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small>{x.words.toLocaleString()} words</small></div><button className="ic sm" aria-label={'Remove '+x.name} disabled={!!busy} onClick={()=>run('drop',()=>api(base+'/sources/'+i,{method:'DELETE'}))}><X size={16}/></button></div>):<p className="known">No files yet. PDFs with selectable text, Word (.docx) and text files work.</p>}
+    <div className="two"><button className="btn ghost" disabled={!!busy} onClick={()=>fileRef.current.click()}><Upload size={16}/> {busy==='file'?'Reading…':'Add a file'}</button><button className="btn ghost" disabled={!!busy} onClick={()=>setPaste({text:''})}>Paste text</button></div>
+    <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md" onChange={upload}/>
+    {v.sources.length>0&&<><h3>2. File it under the syllabus</h3>
+      <button className={'btn'+(noAi?' ghost':'')} disabled={!!busy||noAi} onClick={()=>match('ai')}><Sparkles size={16}/> {busy==='ai'?'Matching…':'Match with AI'}</button>
+      <button className={'btn'+(noAi?'':' ghost')} disabled={!!busy} onClick={()=>match('headings')}>{busy==='headings'?'Matching…':'Match by headings (no AI)'}</button>
+      {noAi&&<p className="known">{v.ai_available?'No AI requests are left today.':'AI is not available.'} Matching by headings works best when your notes use the topic names as headings.</p>}</>}
+    {v.sections.length>0&&<><h3>3. Check where each part goes</h3>
+      <p className="known">Your notes cover {v.covered} of {v.topics} topics.{missing.length>0&&' Not covered yet: '+missing.slice(0,6).join(', ')+(missing.length>6?' and '+(missing.length-6)+' more':'')+'.'}</p>
+      {v.sections.map((x,i)=><div className="qbox" key={x.from}><b>{x.heading||x.excerpt.slice(0,80)+(x.excerpt.length>80?'…':'')}</b><small className="known" style={{display:'block'}}>{x.words} words</small>
+        <select aria-label={'Topic for part '+(i+1)} value={x.topic_id||''} disabled={!!busy} onChange={e=>file(i,e.target.value)}><option value="">Not in the syllabus (left out)</option>{v.syllabus.map(u=><optgroup key={u.id} label={u.name}>{u.topics.map(tp=><option key={tp.id} value={tp.id}>{tp.title}</option>)}</optgroup>)}</select>
+        <button className="tool" onClick={()=>read(x)}>{open[x.from]!==undefined?'Hide':'Read it'}</button>{open[x.from]!==undefined&&<div className="prose"><Md>{open[x.from]}</Md></div>}</div>)}
+      <button className="btn" disabled={!!busy||!filed.size} onClick={()=>run('save',()=>api(base+'/save',{method:'POST'}),'Saved. Open a topic to study your notes.')}>{v.saved_at?'Save again to my topics':'Save to my topics'}</button>
+      {v.saved_at&&<p className="known">Last saved {when(v.saved_at)}. Saving again rebuilds your notes from this material; your progress and quiz results stay.</p>}</>}
+    {v.sources.length>0&&<button className="btn danger" disabled={!!busy} onClick={()=>confirm('Remove your material and the notes it made in this course? Your progress stays.')&&run('del',()=>api(base,{method:'DELETE'}),'Your material was removed')}>Remove my material</button>}</div>
+    {paste&&<Sheet close={()=>setPaste(null)}><h3>Paste text</h3><textarea aria-label="Text to add" value={paste.text} onChange={e=>setPaste({text:e.target.value})} placeholder="Paste your notes. Lines starting with # are headings."/>
+      <button className="btn" disabled={!paste.text.trim()||!!busy} onClick={async()=>{await run('paste',()=>api(base+'/text',{method:'POST',body:{text:paste.text}}),'Added');setPaste(null)}}>Add</button></Sheet>}</>}
 
 function Bookmarks({toast,role}){
   const [tree,setTree]=useState(null),[sem,setSem]=useState(null),[course,setCourse]=useState(null),[t,setT]=useState(null)
