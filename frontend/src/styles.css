@@ -233,3 +233,10 @@ textarea.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:
 .cheer{font:800 18px 'Bricolage Grotesque';margin-bottom:6px;animation:pop .5s ease-out}
 @keyframes pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
 @media (prefers-reduced-motion:reduce){.cheer{animation:none}}
+.hero.session{margin-bottom:14px}.hero.session h2{display:flex;align-items:center;gap:8px;margin:6px 0}
+.sitems{list-style:none;margin:10px 0 4px;padding:0;display:grid;gap:6px}
+.sitem{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 12px;border-radius:14px;background:#ffffff1f;color:inherit}
+.sitem small{display:block;opacity:.8;font-size:12px}.sitem.done b{text-decoration:line-through;opacity:.75}
+.sitem .sx{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#ffffff2e;flex:none}
+.splan{font-size:13px;opacity:.85;margin:12px 0 0}.splan .link{color:inherit;text-decoration:underline;padding:0;background:none}
+.chips.wrap{flex-wrap:wrap;overflow:visible}.chips.wrap .sbtn{padding:10px 14px}

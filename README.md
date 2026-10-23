@@ -241,6 +241,17 @@ Students find topics from **Search** in the menu, or the search bar on Home.
 
 Settings > AI prompts lets an admin rewrite the instructions the AI gets for **Explain**, **Sample answer** and **Student search**: tone, language, depth, format. Saving discards the saved answers that the old wording produced, so the new prompt applies from the next question (that spends tokens again). "Reset to built-in" restores the original. Prompts are 20 to 4000 characters.
 
+## Own-pace routine
+Students pick **My routine** in the menu: their study days (Mon to Sun), minutes a session (15, 30, 45 or 60) and, optionally, their usual time. Home then shows **Today's session**:
+
+- **One small session a study day:** 1 new topic (15 or 30 minutes), 2 (45) or 3 (60), plus one review set when reviews are due. The topic they already started comes first, then topics with deadlines (nearest first), then each course's next topic in turn, so no course is left behind. Staff courses and their own courses are both included.
+- **Fixed for the day:** finishing a topic ticks it off; it doesn't add another. When every item is done the card says **Done for today** and when the next session is. Changing the routine redoes today's session only if nothing in it was done yet.
+- **No pile-up:** after missed days, today is still one session, with "Welcome back… no catching up needed". The plan is worked out again each day from what is left: how many topics remain, when they'd be finished at this pace, how many would miss their deadline, and one suggestion (add a study day, or study longer) when that helps.
+- **Rest days:** no session is made; **Study anyway** makes one. With a routine, the streak counts only the chosen days: a rest day doesn't break it, studying on one still counts. Without a routine nothing changes.
+- **In the app only:** no messages are sent.
+
+**Stop the routine** removes it and its daily sessions; progress is untouched. Tables `routines` and `day_sessions` are created on first start. API: `GET`/`POST /api/me/session`, `PUT /api/me/routine`, `POST /api/me/routine/stop`.
+
 ## Student dashboard
 
 Home for a student is a plan for the day, not a list of everything.

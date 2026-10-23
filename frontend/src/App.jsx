@@ -66,9 +66,10 @@ export default function App(){
   if(!user)return <Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/>
   if(user.must_change)return <ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)}
-  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['progress',TrendingUp,'My progress'],['build',Upload,'Build a course']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')} onStudy={openStudy}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
+    {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
     {page==='search'&&<SearchPage user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
@@ -347,7 +348,7 @@ function StaffHome({user,toast,open}){
     {o?.courses>0&&<><h3 className="sec">{admin?'Courses':'Your courses'}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
 const FOCUS={overdue:[AlertTriangle,'Overdue','Open it'],due_soon:[Clock,'Due soon','Open it'],weak:[Target,'Needs review','Review'],resume:[Play,'Continue','Continue'],quiz_retake:[RotateCcw,'Retake the quiz','Retake'],quiz_new:[ClipboardList,'Quiz','Take the quiz'],next:[ArrowRight,'Next up','Start']}
-function Dashboard({user,toast,onOpen,onSearch,onStudy}){
+function Dashboard({user,toast,onOpen,onSearch,onStudy,onRoutine}){
   const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
   const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[planErr,setPlanErr]=useState(''),[topic,setTopic]=useState(null)
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{});api('/me/today').then(r=>{setToday(r);setPlanErr('')}).catch(e=>setPlanErr(e.message))},[topic,toast])
@@ -362,6 +363,7 @@ function Dashboard({user,toast,onOpen,onSearch,onStudy}){
   const act=f=>f.topic_id?setTopic(f.topic_id):onOpen(f.nav)
   const sub=!today?'Here is where you are today':today.streak>1?`${today.streak}-day study streak. Keep it going`:today.active_today?'You have studied today. Nice start':focus.length?'Here is what to do next':'Here is where you are today'
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={sub}/><div className="main">
+    <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic}/>
     <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
     {sme&&sme.courses>0&&<><h3 className="sec first">Your own courses</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}
     {sme&&!sme.courses&&<button className="row rowbtn" onClick={()=>onStudy(null)}><span className="dot" style={{background:'var(--acc)'}}><Upload size={18}/></span><div>Build a course from your own notes<small>Upload a PDF or Word file and study it with quick checks, quizzes and reviews</small></div><ChevronRight size={18}/></button>}
@@ -385,6 +387,40 @@ function Dashboard({user,toast,onOpen,onSearch,onStudy}){
     {due.length>0&&<><h3 className="sec">Coming up</h3>{due.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {when(t.learning_due_at)}</small></div>{t.overdue&&<span className="pill off sm">Overdue</span>}<ChevronRight size={18}/></button>)}</>}
     {need.length>0&&<><h3 className="sec">Worth another round of study</h3><AreaList areas={need} onStudy={setTopic}/></>}
   </div></>}
+const WD=['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+const nextStudyDay=days=>{for(let k=1;k<=7;k++){const d=new Date(Date.now()+k*864e5);if(days[(d.getDay()+6)%7]==='1')return k===1?'tomorrow':WD[(d.getDay()+6)%7]}return ''}
+function SessionCard({toast,onRoutine,openTopic,onStudy,refresh}){  // today's one session, from the student's own routine
+  const [v,setV]=useState(null),[busy,setBusy]=useState(false)
+  useEffect(()=>{api('/me/session').then(setV).catch(()=>{})},[refresh])
+  if(!v)return null
+  if(!v.routine)return <button className="row rowbtn" onClick={onRoutine}><span className="dot" style={{background:'var(--acc)'}}><Clock size={18}/></span><div>Set your study routine<small>Pick your study days and minutes. Each day you get one small session, at your own pace.</small></div><ChevronRight size={18}/></button>
+  const open=x=>x.kind==='review'?onStudy({review:x.course_id}):x.src==='study'?onStudy({id:x.course_id,topic:x.id}):openTopic(x.id)
+  const extra=async()=>{setBusy(true);try{setV(await api('/me/session',{method:'POST'}))}catch(e){toast(e.message)}setBusy(false)}
+  const r=v.routine,ss=v.session,left=ss?.items.filter(x=>!x.done)||[]
+  return <div className="hero session"><small>Today's session · {r.minutes} min{r.at?' · '+r.at:''}{v.streak>0?` · ${v.streak}-day streak`:''}</small>
+    {v.missed>=2&&!v.studied_today&&<p style={{margin:'6px 0 0'}}>Welcome back. Today is just one session, the same as always. No catching up needed.</p>}
+    {!ss&&<><h2 style={{fontSize:22}}>Rest day</h2><p>Your next session is {nextStudyDay(r.days)}.</p><button className="btn inv" disabled={busy} onClick={extra}>Study anyway</button></>}
+    {ss&&ss.caught_up&&<><h2 style={{fontSize:22}}>All caught up</h2><p>Nothing is left to study right now. Well done.</p></>}
+    {ss&&!ss.caught_up&&<>{ss.done?<h2 style={{fontSize:22}}><Check size={22}/> Done for today</h2>:<h2 style={{fontSize:22}}>{left.length} of {ss.items.length} to go</h2>}
+      <ul className="sitems">{ss.items.map((x,i)=><li key={i}><button className={'sitem'+(x.done?' done':'')} onClick={()=>open(x)}><span className="sx">{x.done?<Check size={16}/>:x.kind==='review'?<RotateCcw size={16}/>:<Play size={16}/>}</span><span><b>{x.title}</b><small>{x.course}</small></span></button></li>)}</ul>
+      {!ss.done&&<button className="btn inv" onClick={()=>open(left[0])}>{left.length===ss.items.length?'Start':'Continue'}: {left[0].title}</button>}
+      {ss.done&&<p>See you {nextStudyDay(r.days)}.</p>}</>}
+    <p className="splan">{v.plan.left?`${v.plan.left} topics left · at this pace, done by ${new Date(v.plan.finish+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'})}`:'Nothing left in your courses'}{v.plan.late>0?` · ${v.plan.late} would miss their deadline. ${v.plan.advice||''}`:''} <button className="link" onClick={onRoutine}>Change routine</button></p></div>}
+function RoutinePage({toast,done}){
+  const [v,setV]=useState(null),[f,setF]=useState({days:'1111110',minutes:30,at:''}),[busy,setBusy]=useState(false)
+  useEffect(()=>{api('/me/session').then(x=>{setV(x);if(x.routine)setF({days:x.routine.days,minutes:x.routine.minutes,at:x.routine.at||''})}).catch(e=>toast(e.message))},[])
+  const flip=k=>setF({...f,days:f.days.slice(0,k)+(f.days[k]==='1'?'0':'1')+f.days.slice(k+1)})
+  const save=async()=>{setBusy(true);try{setV(await api('/me/routine',{method:'PUT',body:{...f,at:f.at||null}}));toast('Routine saved');done()}catch(e){toast(e.message)}setBusy(false)}
+  const stop=async()=>{if(!confirm('Stop your routine? Your progress stays; Home goes back to showing what to do next.'))return;try{await api('/me/routine/stop',{method:'POST'});toast('Routine stopped');done()}catch(e){toast(e.message)}}
+  const per={15:1,30:1,45:2,60:3}[f.minutes]
+  return <><Bar title="My routine" sub="Study at your own pace, a little every day"/><div className="main">
+    <p className="known" style={{marginTop:0}}>Pick the days you study and how long. Each study day you get one session: {per===1?'one new topic':per+' new topics'} and any reviews that are due. Miss a day and nothing piles up: the next session is the same size, and your streak only counts the days you picked.</p>
+    <label>Study days</label><div className="chips wrap" role="group" aria-label="Study days">{WD.map((d,k)=><button key={d} className={'sbtn'+(f.days[k]==='1'?' on':'')} aria-pressed={f.days[k]==='1'} onClick={()=>flip(k)}><span className="lbl">{d}</span></button>)}</div>
+    <label htmlFor="mins">Minutes a session</label><select id="mins" value={f.minutes} onChange={e=>setF({...f,minutes:+e.target.value})}>{[15,30,45,60].map(m=><option key={m} value={m}>{m} minutes</option>)}</select>
+    <label htmlFor="at">Usual time (optional)</label><input id="at" type="time" value={f.at} onChange={e=>setF({...f,at:e.target.value})}/>
+    {v?.plan&&<p className="known">{v.plan.left?`With your current routine you would finish the ${v.plan.left} topics left by ${new Date(v.plan.finish+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}.`:'Nothing is left to study right now.'}{v.plan.late>0?` ${v.plan.late} topics would miss their deadline. ${v.plan.advice||''}`:''}</p>}
+    <button className="btn" disabled={busy||!f.days.includes('1')} onClick={save}>Save routine</button>
+    {v?.routine&&<button className="btn ghost" onClick={stop}>Stop the routine</button>}</div></>}
 function SearchPage({user,toast}){
   const [q,setQ]=useState(''),[live,setLive]=useState(null),[asked,setAsked]=useState(''),[ai,setAi]=useState(null),[aiBusy,setAiBusy]=useState(false),[aiErr,setAiErr]=useState(''),[topic,setTopic]=useState(null),[pend,setPend]=useState(false)
   const typed=q.trim()

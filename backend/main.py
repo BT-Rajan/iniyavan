@@ -149,6 +149,17 @@ class ActivityDay(Base):  # one row per student per local day they opened topics
     __tablename__ = "activity_days"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); day = Column(Date); reads = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint("user_id", "day", name="uq_activity_user_day"),)
+class Routine(Base):  # when and how long a student studies; each day's plan is worked out from it
+    __tablename__ = "routines"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    days = Column(String(7), default="1111110")  # Monday..Sunday, 1 = a study day
+    minutes = Column(Integer, default=30); at = Column(String(5), nullable=True)  # minutes per session; "19:30" (student's day clock), only to say when it is due
+    updated_at = Column(DateTime, default=dt.datetime.utcnow)
+class DaySession(Base):  # one day's session, fixed when it is first made so that finishing a topic doesn't add another one
+    __tablename__ = "day_sessions"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); day = Column(Date)
+    items = Column(Text, default="[]"); done_at = Column(DateTime, nullable=True)
+    __table_args__ = (UniqueConstraint("user_id", "day", name="uq_day_session"),)
 class Attempt(Base):
     __tablename__ = "quiz_attempts"
     id = Column(Integer, primary_key=True); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), index=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
@@ -2269,11 +2280,15 @@ def study_days(s, uid, since):  # {local day: activity count}: topics opened, to
     for (t,) in s.query(StudyAttempt.at).filter(StudyAttempt.user_id == uid): days[local_day(t)] += 1  # courses students build count toward the streak too
     for (t,) in s.query(StudyProgress.opened_at).filter(StudyProgress.user_id == uid, StudyProgress.opened_at.isnot(None)): days[local_day(t)] += 1
     return {d: n for d, n in days.items() if d >= since}
-def streak_of(days, today):
+def streak_of(days, today, plan=None):  # plan = a routine's days ("1111110"): then only a missed study day breaks the streak, rest days don't
     d = today if today in days else today - dt.timedelta(days=1)  # no study yet today does not break a streak that is still alive
-    n = 0
-    while d in days: n += 1; d -= dt.timedelta(days=1)
+    n, first = 0, min(days, default=today)
+    while d >= first:
+        if d in days: n += 1
+        elif not plan or plan[d.weekday()] == "1": break
+        d -= dt.timedelta(days=1)
     return n
+def plan_of(s, uid): r = s.get(Routine, uid); return r.days if r else None
 def due_phrase(due, now):  # in the student's own calendar days, so "tomorrow" means tomorrow
     n = (local_day(due) - local_day(now)).days
     if due < now: return f"Overdue by {-n} day{'s' if n != -1 else ''}" if n < 0 else "Overdue since earlier today"
@@ -2281,7 +2296,7 @@ def due_phrase(due, now):  # in the student's own calendar days, so "tomorrow" m
 @app.get("/api/me/today")
 def my_today(u: User = Depends(me), s: Session = Depends(db)):
     now = dt.datetime.utcnow(); today = local_day(now); since = today - dt.timedelta(days=400)
-    days = study_days(s, u.id, since); streak = streak_of(days, today)
+    days = study_days(s, u.id, since); streak = streak_of(days, today, plan_of(s, u.id))
     week = [{"date": (today - dt.timedelta(days=i)).isoformat(), "label": (today - dt.timedelta(days=i)).strftime("%a")[0], "active": (today - dt.timedelta(days=i)) in days, "today": i == 0} for i in range(6, -1, -1)]
     courses, seen = [], set()
     for p in tree(u, s):
@@ -3373,7 +3388,7 @@ def study_me(u: User = Depends(me), s: Session = Depends(db)):
         t = next((t for t in order if t.id not in done), None)
         if t: nxt = {"course_id": c.id, "course": c.title, "topic_id": t.id, "topic": t.title, "done": len(done), "topics": len(order)}; break
     week = [{"date": (today - dt.timedelta(days=i)).isoformat(), "label": (today - dt.timedelta(days=i)).strftime("%a")[0], "active": (today - dt.timedelta(days=i)) in days, "today": i == 0} for i in range(6, -1, -1)]
-    return {**study_ai_status(u, s), "xp": level_of(study_xp(s, u.id)), "streak": streak_of(days, today), "active_today": today in days, "week": week, "courses": len(courses),
+    return {**study_ai_status(u, s), "xp": level_of(study_xp(s, u.id)), "streak": streak_of(days, today, plan_of(s, u.id)), "active_today": today in days, "week": week, "courses": len(courses),
             "reviews_due": len(due), "review_courses": [{"course_id": cid, "course": cmap[cid].title, "due": n} for cid, n in due_by.items()], "next": nxt}
 @app.post("/api/study/courses/{cid}/review")
 def study_review(cid: int, u: User = Depends(me), s: Session = Depends(db)):
@@ -3390,6 +3405,132 @@ def study_review(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     random.shuffle(picked)
     q = StudyQuiz(topic_id=None, course_id=c.id, user_id=u.id, kind="review", questions=json.dumps(picked[:10], ensure_ascii=False)); s.add(q); s.commit()
     return study_quiz_view(q, u, s)
+# -- own-pace routine: one session a day, never a pile of catching up --
+SLOTS = {15: 1, 30: 1, 45: 2, 60: 3}  # new topics per session for the minutes a student picks
+FAR = dt.datetime(9999, 1, 1)
+def study_queues(u, s):
+    """Every course the student studies, as a queue of topics not yet completed, in syllabus order: staff courses (with their deadlines) and their own."""
+    qs, seen = [], set()
+    for p in tree(u, s):
+        for sm in p["semesters"]:
+            for c in sm["courses"]:
+                if c["id"] in seen or c.get("archived"): continue
+                seen.add(c["id"]); items = []
+                for un in c["units"]:
+                    for x in un["topics"]:
+                        if x["status"] == "completed": continue
+                        due = dt.datetime.fromisoformat(x["learning_due_at"].replace("Z", "")) if x.get("learning_due_at") else None
+                        items.append({"kind": "topic", "src": "course", "id": x["id"], "title": x["title"], "course": c["name"], "course_id": c["id"], "nav": [p["id"], sm["id"], c["id"], un["id"]],
+                                      "due": due, "started": x["status"] == "in_progress"})
+                if items: qs.append(items)
+    for c in visible_study_courses(u, s):
+        order = s.query(StudyTopic).join(StudyUnit, StudyUnit.id == StudyTopic.unit_id).filter(StudyTopic.course_id == c.id).order_by(StudyUnit.position, StudyUnit.id, StudyTopic.position, StudyTopic.id).all()
+        prog = {p.topic_id: p for p in s.query(StudyProgress).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_([x.id for x in order] or [0]))}
+        items = [{"kind": "topic", "src": "study", "id": x.id, "title": x.title, "course": c.title, "course_id": c.id, "due": None, "started": x.id in prog}
+                 for x in order if not (prog.get(x.id) and prog[x.id].completed_at)]
+        if items: qs.append(items)
+    return qs
+def pick_topics(qs, n):
+    """The next n topics: ones already started, then those with deadlines (nearest first), then each course's next topic in turn so no course is left behind."""
+    out, heads, used = [], [list(q) for q in qs], [0] * len(qs)
+    for q in heads:
+        for x in [x for x in q if x["started"]]:
+            if len(out) < n: out.append(x); q.remove(x)
+    for k, x in sorted(((k, x) for k, q in enumerate(heads) for x in q if x["due"]), key=lambda kx: kx[1]["due"]):
+        if len(out) < n: out.append(x); heads[k].remove(x); used[k] += 1
+    while len(out) < n and any(heads):
+        k = min((k for k, q in enumerate(heads) if q), key=lambda k: (heads[k][0]["due"] or FAR, used[k], k))
+        out.append(heads[k].pop(0)); used[k] += 1
+    return out
+def review_item(u, s, now):  # one review set a session: the student's course with the most topics due
+    courses = {c.id: c for c in visible_study_courses(u, s)}; by = defaultdict(list)
+    for _, x in due_topics(u, s, courses, now): by[x.course_id].append(x.id)
+    if not by: return None
+    cid = max(by, key=lambda k: len(by[k]))
+    return {"kind": "review", "src": "study", "course_id": cid, "course": courses[cid].title, "title": f"Review {len(by[cid])} topic{'s' if len(by[cid]) > 1 else ''}", "topic_ids": by[cid][:5]}
+def nth_study_day(days, start, k):  # the date of the k-th study day from start (0 = start itself when it is a study day)
+    d, seen = start, -1
+    for _ in range(3660):
+        if days[d.weekday()] == "1":
+            seen += 1
+            if seen == k: return d
+        d += dt.timedelta(days=1)
+    return d
+def projection(days, minutes, qs, today):
+    """When everything left would be finished at this pace, and how many topics would miss their deadline. Worked out again every day from what is left."""
+    slots = SLOTS.get(minutes, 1); order = pick_topics(qs, 10 ** 6)
+    late = sum(1 for k, x in enumerate(order) if x["due"] and nth_study_day(days, today, k // slots) > local_day(x["due"]))
+    return {"left": len(order), "finish": nth_study_day(days, today, (len(order) - 1) // slots).isoformat() if order else None, "late": late}
+def plan_advice(r, qs, today):
+    p = projection(r.days, r.minutes, qs, today)
+    if p["late"]:
+        tries = []
+        if "0" in r.days: tries.append(("Add one more study day a week", r.days.replace("0", "1", 1), r.minutes))
+        bigger = [m for m in sorted(SLOTS) if SLOTS[m] > SLOTS.get(r.minutes, 1)]
+        if bigger: tries.append((f"Study {bigger[0]} minutes a session", r.days, bigger[0]))
+        for text_, d, m in tries:
+            if projection(d, m, qs, today)["late"] < p["late"]: p["advice"] = text_ + " to meet more of your deadlines."; break
+    return p
+def routine_view(r): return {"days": r.days, "minutes": r.minutes, "at": r.at, "new_per_session": SLOTS.get(r.minutes, 1)}
+def item_done(it, u, s, now):
+    if it["kind"] == "review":
+        due = s.query(func.count(StudyProgress.id)).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_(it["topic_ids"] or [0]), StudyProgress.review_due <= now).scalar()
+        return due == 0
+    if it["src"] == "study":
+        p = s.query(StudyProgress).filter_by(user_id=u.id, topic_id=it["id"]).first(); return bool(p and p.completed_at)
+    p = s.query(Progress).filter_by(user_id=u.id, topic_id=it["id"]).first(); return bool(p and p.completed_at)
+def item_alive(it, s):
+    if it["kind"] == "review" or it["src"] == "study": return it["kind"] == "review" or s.get(StudyTopic, it["id"]) is not None
+    x = s.get(Topic, it["id"]); return bool(x and x.published is not False and not topic_off(s, x))
+def make_session(u, s, r, today, now):
+    items = pick_topics(study_queues(u, s), SLOTS.get(r.minutes, 1)); rv = review_item(u, s, now)
+    if rv: items.append(rv)
+    for x in items: x.pop("due", None); x.pop("started", None)
+    s.add(DaySession(user_id=u.id, day=today, items=json.dumps(items, ensure_ascii=False)))
+    try: s.commit()
+    except IntegrityError: s.rollback()  # made by a request that came at the same moment; one session either way
+    return s.query(DaySession).filter_by(user_id=u.id, day=today).one()
+def session_view(u, s, r, ds, today, now):
+    days = study_days(s, u.id, today - dt.timedelta(days=60)); missed, d = 0, today - dt.timedelta(days=1)
+    while d >= today - dt.timedelta(days=14) and d not in days:  # study days missed since they last studied
+        missed += r.days[d.weekday()] == "1"; d -= dt.timedelta(days=1)
+    out = {"routine": routine_view(r), "planned_today": r.days[today.weekday()] == "1", "studied_today": today in days, "missed": missed,
+           "streak": streak_of(days, today, r.days), "plan": plan_advice(r, study_queues(u, s), today), "session": None}
+    if ds:
+        items = [x for x in json.loads(ds.items or "[]") if item_alive(x, s)]  # a topic deleted or hidden since the morning just drops out
+        for x in items: x["done"] = item_done(x, u, s, now)
+        if items and all(x["done"] for x in items) and not ds.done_at: ds.done_at = now; s.commit()
+        out["session"] = {"day": ds.day.isoformat(), "items": items, "done": bool(ds.done_at) or not items, "caught_up": not items}
+    return out
+@app.get("/api/me/session")
+def my_session(u: User = Depends(me), s: Session = Depends(db)):
+    """Today's session on a study day (made the first time it is asked for), what the routine is, and where the plan stands. No routine: {"routine": null}."""
+    r = s.get(Routine, u.id)
+    if not r: return {"routine": None}
+    now = dt.datetime.utcnow(); today = local_day(now); ds = s.query(DaySession).filter_by(user_id=u.id, day=today).first()
+    if ds is None and r.days[today.weekday()] == "1": ds = make_session(u, s, r, today, now)
+    return session_view(u, s, r, ds, today, now)
+@app.post("/api/me/session")
+def extra_session(u: User = Depends(me), s: Session = Depends(db)):  # study on a rest day too
+    r = s.get(Routine, u.id)
+    if not r: raise HTTPException(400, "Set your study routine first")
+    now = dt.datetime.utcnow(); today = local_day(now); ds = s.query(DaySession).filter_by(user_id=u.id, day=today).first() or make_session(u, s, r, today, now)
+    return session_view(u, s, r, ds, today, now)
+class RoutineIn(BaseModel): days: str; minutes: int = 30; at: str | None = None
+@app.put("/api/me/routine")
+def set_routine(b: RoutineIn, u: User = Depends(me), s: Session = Depends(db)):
+    if u.role != "student": raise HTTPException(403, "The study routine is for students")
+    if not re.fullmatch(r"[01]{7}", b.days or "") or "1" not in b.days: raise HTTPException(400, "Pick at least one study day")
+    if b.minutes not in SLOTS: raise HTTPException(400, "Pick 15, 30, 45 or 60 minutes")
+    at = (b.at or "").strip() or None
+    if at and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", at): raise HTTPException(400, "Give the time as HH:MM, for example 19:30")
+    r = s.get(Routine, u.id) or Routine(user_id=u.id); r.days, r.minutes, r.at, r.updated_at = b.days, b.minutes, at, dt.datetime.utcnow(); s.add(r)
+    today = local_day(dt.datetime.utcnow()); ds = s.query(DaySession).filter_by(user_id=u.id, day=today).first()
+    if ds and not any(item_done(x, u, s, dt.datetime.utcnow()) for x in json.loads(ds.items or "[]")): s.delete(ds)  # an untouched session today follows the new routine
+    s.commit(); return my_session(u, s)
+@app.post("/api/me/routine/stop")  # (not DELETE /api/me/routine: the older DELETE /api/{kind}/{id} route would take it)
+def stop_routine(u: User = Depends(me), s: Session = Depends(db)):  # back to studying without a routine; progress is untouched
+    s.query(DaySession).filter_by(user_id=u.id).delete(); s.query(Routine).filter_by(user_id=u.id).delete(); s.commit(); return {"routine": None}
 def read_head():  # the commit this server's code is at (None when it is not a git checkout)
     try: return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=5).stdout.strip() or None
     except Exception: return None
