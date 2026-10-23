@@ -44,6 +44,7 @@ const ownerLine=c=>c.mine?'Your course':c.owner_problem||(c.owner?'Owner: '+c.ow
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
 const firstName=n=>{const w=(n||'').trim().split(/\s+/);return w.length>1&&/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w[0])?w[0]+' '+w[1]:w[0]}  // a title stays with the name it belongs to
+const MAX_FILE_MB=20,tooBig=f=>f.size>MAX_FILE_MB*1024*1024  // the server's limit for one file of study material
 const pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`
 const matches=n=>`${n} ${n===1?'match':'matches'}`
 const Ctx=createContext({})
@@ -241,7 +242,7 @@ function Learn({user,toast,appName,start}){
      {co&&!unit&&!staff&&<p className="known" style={{marginTop:0}}>{doneOf(co.units.flatMap(n=>n.topics))} topics completed</p>}
      {co&&!unit&&!staff&&(()=>{const ts=co.units.flatMap(n=>n.topics),k=ts.filter(x=>x.has_notes).length;return <div className="card"><button className="hit" onClick={()=>setMat(true)}><span className="dot" style={{background:COL[3]}}><FileText size={20}/></span>
        <div><b>{k?'Your notes in '+k+' of '+ts.length+' topics':'Bring your own notes'}</b><span>{k?'Add or update your material':'Upload your PDF or Word notes. They are filed under this course\'s topics, for you only.'}</span></div></button></div>})()}
-     {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}>{[['Program',prog.name],[prog.term,sem.name+(sem.number?' (no. '+sem.number+')':'')],['Owner',co.mine?'You':co.owner_problem||co.owner||'Not assigned']].map(([l,v])=><div className="row" key={l}><div>{v}<small>{l}</small></div></div>)}
+     {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}><p className="known" style={{margin:0}}>Owner: <b>{co.mine?'You':co.owner_problem||co.owner||'Not assigned'}</b>{sem.number?` · ${prog.term} no. ${sem.number}`:''}</p>
        {isAdmin&&!co.shared&&<div className="two"><button className="btn ghost" onClick={()=>setSheet({type:'course',c:co,pid:prog.id,sid:co.semester_id})}>Edit course</button><button className="btn ghost" onClick={()=>setSheet({type:'owner',c:co})}>Change owner</button></div>}</div>}
      {!nav.length&&user.role==='faculty'&&<><h3 className="sec first">My courses</h3>{myCourses.length?myCourses.map(({p,s,c},i)=><div key={c.id} className="card"><button className="hit" onClick={()=>setNav([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div><b>{c.name}<ArchPill x={c}/></b><span>{p.name} › {s.name} · {c.units.length} units</span></div></button></div>)
        :<p className="known">No course is assigned to you yet. An admin makes you the owner of a course.</p>}<h3 className="sec">All programs</h3></>}
@@ -705,7 +706,7 @@ function StudyWizard({id,toast,back,done}){
   const load=async(go)=>{try{const d=await api('/study/courses/'+id);setC(d);setNotes(d.notes);setPlan(d.plan);setDirty(false);setStep(go??(d.plan?3:d.sources.length?2:1));return d}catch(e){toast(e.message);back()}}
   useEffect(()=>{load()},[id]);usePoll(!!c?.reading,()=>api('/study/courses/'+id).then(d=>setC(d)).catch(()=>{}))  // only the file list refreshes; the step and outline stay
   if(!c||step==null)return <><Bar title="Set up your course" back={back}/><div className="main"><Skeleton/></div></>
-  const files=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs){setBusy('Reading '+f.name+'…')
+  const files=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs){if(tooBig(f)){toast(`${f.name} is over ${MAX_FILE_MB} MB. Split it into smaller files.`);continue}setBusy('Reading '+f.name+'…')
       try{const r=await fetch(`/api/study/courses/${id}/files?name=${encodeURIComponent(f.name)}`,{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');toast(j.status==='reading'?`${f.name} is scanned pages. Reading them now…`:`${f.name}: ${pl(j.words,'word')} read`)}catch(x){toast(f.name+': '+x.message)}}
     setBusy('');load(1)}
   const paste=async()=>{setBusy('Adding…');try{const r=await api(`/study/courses/${id}/text`,{method:'POST',body:{text}});setText('');toast(pl(r.words,'word')+' added')}catch(e){toast(e.message)}setBusy('');load(1)}
@@ -730,7 +731,7 @@ function StudyWizard({id,toast,back,done}){
     <Steps at={step}/>
     {busy&&<div className="qbox" role="status" style={{marginTop:0}}><b>{busy}</b></div>}
     {step===1&&<>
-      <h3 className="sec first">Add your material</h3><p className="known" style={{marginTop:0}}>PDF, Word (.docx), or .txt and .md files. Add several and they are joined in the order you add them. You can also paste text.{c.ocr_available?' Scanned PDFs are read with text recognition, a few seconds a page.':' Scanned PDFs can\'t be read on this server yet.'}</p>
+      <h3 className="sec first">Add your material</h3><p className="known" style={{marginTop:0}}>PDF, Word (.docx), or .txt and .md files, up to {MAX_FILE_MB} MB each. Add several and they are joined in the order you add them. You can also paste text.{c.ocr_available?' Scanned PDFs are read with text recognition, a few seconds a page.':' Scanned PDFs can\'t be read on this server yet.'}</p>
       <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={files}/>
       <button className="btn" disabled={!!busy} onClick={()=>fileRef.current.click()}><Upload size={16}/> Choose files</button>
       <label htmlFor="pst">Or paste text</label><textarea id="pst" value={text} onChange={e=>setText(e.target.value)} placeholder="Paste notes here. Leave an empty line between paragraphs; lines starting with # become headings."/>
@@ -921,9 +922,9 @@ function Topic({id:first,back,toast,role}){
   if(gone)return <><Bar title="Unavailable" back={back}/><div className="main"><div className="hero"><h2>{gone}</h2><p>It has been archived. Check back later or ask your teacher.</p></div></div></>
   if(!t)return <><Bar title="Loading" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const flip=async()=>{const on=!bm;setBm(on);try{await api(`/topics/${id}/bookmark`,{method:on?'PUT':'DELETE'});toast(on?'Bookmarked':'Bookmark removed')}catch(e){setBm(!on);toast(e.message)}}
-  const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">Saved answer · no tokens used</span>}<Md>{ai[k].text}</Md></div>
+  const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">Saved answer · no tokens used</span>}{ai[k].own_notes&&<span className="chip">Written with your own notes</span>}<Md>{ai[k].text}</Md></div>
     :aiOk===false?<p className="known">{ownKey?'Add your own DeepSeek API key under “My AI key” in the menu to use AI help.':'AI unavailable. Try again later.'}</p>
-    :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?'Thinking…':k==='explain'?'Explain it to me':'Show a sample answer'}</button>{aiMsg&&<p className="known">{aiMsg}</p>}</>
+    :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?'Thinking…':k==='explain'?'Explain it to me':'Show a sample answer'}</button>{t.my_notes&&<p className="known">Uses your own notes too. It counts toward your daily AI requests.</p>}{aiMsg&&<p className="known">{aiMsg}</p>}</>
   return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={role!=='admin'&&<button className={'ic'+(bm?' on':'')} aria-label={bm?'Remove bookmark':'Bookmark this topic'} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
     {t.can_edit&&pv&&<div className="qbox" style={{marginTop:0}}><b>Previewing as a student</b><p className="known" style={{margin:'4px 0 8px'}}>This is what students see: no editing buttons, and drafts show as unavailable to them.</p><button className="btn ghost" style={{marginTop:0}} onClick={()=>setPv(false)}>Back to editing</button></div>}
     {t.can_edit&&!pv&&<div className="two" style={{marginBottom:12}}><button className="btn ghost" style={{marginTop:0}} onClick={()=>setEditing(true)}><Pencil size={16}/> Edit topic</button>
@@ -1035,7 +1036,7 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
   const base=`/courses/${cid}/my-material`,load=()=>api(base).then(setV).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[cid]);usePoll(!!v?.reading,()=>api(base).then(setV).catch(()=>{}))
   const run=async(label,fn,msg)=>{setBusy(label);try{const r=await fn();if(r&&r.syllabus)setV(r);else await load();msg&&toast(msg)}catch(e){toast(e.message)}setBusy('')}
-  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');if(j.status==='reading')toast(f.name+' is scanned pages. Reading them now; you can stay or come back later.')},f.name.toLowerCase().endsWith('.pdf')?'':'Added '+f.name)}
+  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)if(tooBig(f))toast(`${f.name} is over ${MAX_FILE_MB} MB. Split it into smaller files.`);else await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');if(j.status==='reading')toast(f.name+' is scanned pages. Reading them now; you can stay or come back later.')},f.name.toLowerCase().endsWith('.pdf')?'':'Added '+f.name)}
   const match=m=>run(m,()=>api(base+'/match',{method:'POST',body:{method:m}}),'Matched to the syllabus. Check it below, then save.')
   const file=(i,tid)=>{setPick(null);return run('sec',()=>api(base+'/sections',{method:'PUT',body:{sections:v.sections.map((x,k)=>({from:x.from,to:x.to,topic_id:k===i?(tid?+tid:null):x.topic_id}))}}))}
   const read=async x=>{const k=x.from;if(open[k]!==undefined)return setOpen({...open,[k]:undefined});try{const r=await api(`${base}/preview?start=${x.from}&end=${x.to}`);setOpen({...open,[k]:r.content})}catch(e){toast(e.message)}}
@@ -1044,7 +1045,7 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
   return <><Bar title="Your material" sub={name} back={back}/><div className="main">
     <p className="known" style={{marginTop:0}}>Your college sets the course, units and topics. Bring your own notes or book chapters and they are filed under the right topics, so you study the syllabus in your own words. Only you see them.</p>
     <h3>1. Your files</h3>
-    {v.sources.length?v.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small role={x.status==='reading'?'status':undefined}>{srcLine(x)}</small></div><button className="ic sm" aria-label={'Remove '+x.name} disabled={!!busy} onClick={()=>run('drop',()=>api(base+'/sources/'+i,{method:'DELETE'}))}><X size={16}/></button></div>):<p className="known">No files yet. PDFs, Word (.docx) and text files work.{v.ocr_available?' Scanned PDFs are read too; that takes a few seconds a page.':' Scanned PDFs can\'t be read on this server yet.'}</p>}
+    {v.sources.length?v.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small role={x.status==='reading'?'status':undefined}>{srcLine(x)}</small></div><button className="ic sm" aria-label={'Remove '+x.name} disabled={!!busy} onClick={()=>run('drop',()=>api(base+'/sources/'+i,{method:'DELETE'}))}><X size={16}/></button></div>):<p className="known">No files yet. PDFs, Word (.docx) and text files work, up to {MAX_FILE_MB} MB each.{v.ocr_available?' Scanned PDFs are read too; that takes a few seconds a page.':' Scanned PDFs can\'t be read on this server yet.'}</p>}
     <div className="two"><button className="btn ghost" disabled={!!busy} onClick={()=>fileRef.current.click()}><Upload size={16}/> {busy==='file'?'Reading…':'Add a file'}</button><button className="btn ghost" disabled={!!busy} onClick={()=>setPaste({text:''})}>Paste text</button></div>
     <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md" onChange={upload}/>
     {v.sources.length>0&&<><h3>2. File it under the syllabus</h3>
@@ -1330,20 +1331,21 @@ function Branding({toast,onSaved}){
     <button className="btn" disabled={busy} onClick={()=>save({name,logo_url:logo||undefined})}>Save name and logo</button></>}
 function AiConfig({toast,onBrand}){
   const confirm=useConfirm()
-  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({})
+  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai')
   const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model)});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
-  return <><Bar title="Settings" sub={cfg.key_set?'AI is on · key '+cfg.key_hint:'AI is off · no key yet'}/><div className="main"><Branding toast={toast} onSaved={onBrand}/><h3 className="sec">AI</h3>
+  return <><Bar title="Settings" sub={cfg.key_set?'AI is on · key '+cfg.key_hint:'AI is off · no key yet'}/><div className="main"><Tabs label="Settings sections" scroll items={[['ai','AI'],['prompts','AI prompts'],['school','Institution'],['access','Sign-in']]} value={tab} onChange={setTab}/>
+    {tab==='school'&&<Branding toast={toast} onSaved={onBrand}/>}{tab==='ai'&&<>
     <label>DeepSeek API key</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={cfg.key_set?'Leave blank to keep the current key':'sk-…'}/>
     <label>Model</label><input value={model} onChange={e=>setModel(e.target.value)} placeholder="deepseek-chat"/>
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key,model}}).then(()=>setKey('')),'AI settings saved')}>Save</button>
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Test the key</button>
       <button className="btn ghost" onClick={async()=>{if(await confirm({title:'Turn AI off for everyone?',body:'Students will see “AI unavailable” until you save a key again.',ok:'Turn AI off',danger:true}))run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}}>Remove the key (turn AI off)</button></>}
     <p className="known" style={{marginTop:20}}>One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {(st.cached??0).toLocaleString()} answers are saved so far, which has saved about {(st.tokens_saved??0).toLocaleString()} tokens.</p>
-    <h3 className="sec">AI prompts</h3><PromptEditor toast={toast}/>
-    <h3 className="sec">Self-registration</h3><SelfReg cfg={cfg} run={run}/>
+    </>}{tab==='prompts'&&<PromptEditor toast={toast}/>}
+    {tab==='access'&&<><h3 className="sec first">Self-registration</h3><SelfReg cfg={cfg} run={run}/>
     <h3 className="sec">Password reset email</h3><p className="known">{cfg.mail_on?'On. People can reset their own password from the sign-in page.':'Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).'}</p>
-    {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</div></>}
+    {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>Send a test email to me</button>}</>}</div></>}
 
 const VERB={POST:'Created',PUT:'Changed',PATCH:'Edited',DELETE:'Deleted'}
 const describe=(m,p)=>{const s=p.replace(/^\/api\//,'').split('/'),id=s.find(x=>/^\d+$/.test(x)),n=s.filter(x=>!/^\d+$/.test(x)),last=n[n.length-1],noun=n[0]==='admin'?n[1]:n[0],one=(noun||'').replace(/s$/,'')
