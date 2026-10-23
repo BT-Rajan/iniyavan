@@ -398,7 +398,7 @@ function SessionCard({toast,onRoutine,openTopic,onStudy,refresh,onLoad}){  // to
   const open=x=>x.kind==='review'?onStudy({review:x.course_id}):x.src==='study'?onStudy({id:x.course_id,topic:x.id}):openTopic(x.id)
   const extra=async()=>{setBusy(true);try{const x=await api('/me/session',{method:'POST'});setV(x);onLoad?.(x)}catch(e){toast(e.message)}setBusy(false)}
   const r=v.routine,ss=v.session,left=ss?.items.filter(x=>!x.done)||[]
-  return <div className="hero session"><small>Today's session · {r.minutes} min{r.at?' · '+r.at:''}{v.streak>0?` · ${v.streak}-day streak`:''}</small>
+  return <div className="hero session"><div className="shead"><small>Today's session · {r.minutes} min{r.at?' · '+r.at:''}{v.streak>0?` · ${v.streak}-day streak`:''}</small><button className="schip" onClick={onRoutine} aria-label="Change my routine"><Clock size={14}/> Routine</button></div>
     {v.missed>=2&&!v.studied_today&&<p style={{margin:'6px 0 0'}}>Welcome back. Today is just one session, the same as always. No catching up needed.</p>}
     {!ss&&<><h2 style={{fontSize:22}}>Rest day</h2><p>Your next session is {nextStudyDay(r.days)}.</p><button className="btn inv" disabled={busy} onClick={extra}>Study anyway</button></>}
     {ss&&ss.caught_up&&<><h2 style={{fontSize:22}}>All caught up</h2><p>Nothing is left to study right now. Well done.</p></>}
@@ -406,7 +406,7 @@ function SessionCard({toast,onRoutine,openTopic,onStudy,refresh,onLoad}){  // to
       <ul className="sitems">{ss.items.map((x,i)=><li key={i}><button className={'sitem'+(x.done?' done':'')} onClick={()=>open(x)}><span className="sx">{x.done?<Check size={16}/>:x.kind==='review'?<RotateCcw size={16}/>:<Play size={16}/>}</span><span><b>{x.title}</b><small>{x.course}</small></span></button></li>)}</ul>
       {!ss.done&&<button className="btn inv" onClick={()=>open(left[0])}>{left.length===ss.items.length?'Start':'Continue'}: {left[0].title}</button>}
       {ss.done&&<p>See you {nextStudyDay(r.days)}.</p>}</>}
-    <p className="splan">{v.plan.left?`${v.plan.left} topics left · at this pace, done by ${new Date(v.plan.finish+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'})}`:'Nothing left in your courses'}{v.plan.late>0?` · ${v.plan.late} would miss their deadline. ${v.plan.advice||''}`:''} <button className="link" onClick={onRoutine}>Change routine</button></p></div>}
+    <p className="splan">{v.plan.left?`${v.plan.left} topics left · at this pace, done by ${new Date(v.plan.finish+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'})}`:'Nothing left in your courses'}{v.plan.late>0?` · ${v.plan.late} would miss their deadline. ${v.plan.advice||''}`:''}</p></div>}
 function RoutinePage({toast,done}){
   const confirm=useConfirm()
   const [v,setV]=useState(null),[f,setF]=useState({days:'1111110',minutes:30,at:''}),[busy,setBusy]=useState(false)
@@ -905,10 +905,12 @@ function HistorySheet({tid,close,done,toast}){
 function Topic({id:first,back,toast,role}){
   const [practice,setPractice]=useState(null),[checking,setChecking]=useState('')
   const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
-  const [mat,setMat]=useState(false),opened=useRef(false),jump=nid=>{opened.current=false;setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
+  const [mat,setMat]=useState(false),[upNext,setUpNext]=useState(null),opened=useRef(false),jump=nid=>{opened.current=false;setUpNext(null);setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>{toast(e.message);if(/unavailable right now/.test(e.message))setGone(e.message)})},[id,v])  // opening starts it, after the page has loaded
-  const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
+  const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message);return}
+    setUpNext(null);if(!on||role!=='student')return
+    try{const items=(await api('/me/session')).session?.items||[];if(items.some(x=>x.id===id&&x.kind!=='review'&&x.src!=='study'))setUpNext({items,next:items.find(x=>!x.done)})}catch{/* no session today: nothing to lead on to */}}
   useEffect(()=>{api('/ai/status').then(r=>{setAiOk(r.available);setOwnKey(!!r.own_key)}).catch(()=>{})},[id])
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
   async function practise(kind){setChecking(kind);try{setPractice(await api(`/topics/${id}/practice`,{method:'POST',body:{kind}}))}catch(e){toast(e.message)}setChecking('')}
@@ -928,6 +930,10 @@ function Topic({id:first,back,toast,role}){
     <div className="qbox" style={{marginTop:0}}><div className="row"><div>{t.learning_due_at?when(t.learning_due_at):'No deadline'}<small>Learn by</small></div>{t.overdue&&role==='student'&&<span className="pill off sm">Overdue</span>}</div>
       {role==='student'&&<><div className="row"><div>{STATUS[t.status]}{t.status==='completed'&&t.completed_at&&' on '+when(t.completed_at)+(t.late?', after the deadline':'')}<small>Your status</small></div></div>
         {t.status==='completed'?<button className="btn ghost" onClick={()=>setDone(false)}>Mark as not completed</button>:<button className="btn" onClick={()=>setDone(true)}><Check size={16}/> Mark as completed</button>}</>}</div>
+    {upNext&&<div className="qbox" role="status"><b>Today's session · {upNext.items.filter(x=>x.done).length} of {upNext.items.length} done</b>
+      {!upNext.next?<p className="known" style={{margin:'4px 0 0'}}>That's today's session done. See you next study day.</p>
+        :upNext.next.kind!=='review'&&upNext.next.src!=='study'?<button className="btn" onClick={()=>jump(upNext.next.id)}>Next: {upNext.next.title}<ChevronRight size={16}/></button>
+        :<button className="btn ghost" onClick={back}>Back for the next part: {upNext.next.title}</button>}</div>}
     {t.can_edit&&!pv&&<><button className="tool" onClick={()=>setPv(true)}><Eye size={14}/> Preview as student</button><button className="tool" onClick={()=>setHist(true)}><History size={14}/> Version history</button></>}
     {role!=='student'&&!pv&&<button className="tool" onClick={()=>setCp(true)}><Copy size={14}/> Copy to another course</button>}
     {cp&&<CopySheet kind="topic" id={id} title={t.title} toast={toast} close={()=>setCp(false)}/>}
@@ -1023,16 +1029,16 @@ const srcLine=x=>x.status==='reading'?(x.done?`Reading scanned pages… ${x.done
 const usePoll=(on,fn,ms=3000)=>useEffect(()=>{if(!on)return;const h=setInterval(fn,ms);return()=>clearInterval(h)},[on])  // while scanned pages are being read
 function MyMaterial({cid,name,back,toast}){  // a student's own material, filed under the course's syllabus topics (private to them)
   const confirm=useConfirm()
-  const [v,setV]=useState(null),[busy,setBusy]=useState(''),[paste,setPaste]=useState(null),[open,setOpen]=useState({}),fileRef=useRef()
+  const [v,setV]=useState(null),[busy,setBusy]=useState(''),[paste,setPaste]=useState(null),[open,setOpen]=useState({}),[pick,setPick]=useState(null),fileRef=useRef()
   const base=`/courses/${cid}/my-material`,load=()=>api(base).then(setV).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[cid]);usePoll(!!v?.reading,()=>api(base).then(setV).catch(()=>{}))
   const run=async(label,fn,msg)=>{setBusy(label);try{const r=await fn();if(r&&r.syllabus)setV(r);else await load();msg&&toast(msg)}catch(e){toast(e.message)}setBusy('')}
   const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');if(j.status==='reading')toast(f.name+' is scanned pages. Reading them now; you can stay or come back later.')},f.name.toLowerCase().endsWith('.pdf')?'':'Added '+f.name)}
   const match=m=>run(m,()=>api(base+'/match',{method:'POST',body:{method:m}}),'Matched to the syllabus. Check it below, then save.')
-  const file=(i,tid)=>run('sec',()=>api(base+'/sections',{method:'PUT',body:{sections:v.sections.map((x,k)=>({from:x.from,to:x.to,topic_id:k===i?(tid?+tid:null):x.topic_id}))}}))
+  const file=(i,tid)=>{setPick(null);return run('sec',()=>api(base+'/sections',{method:'PUT',body:{sections:v.sections.map((x,k)=>({from:x.from,to:x.to,topic_id:k===i?(tid?+tid:null):x.topic_id}))}}))}
   const read=async x=>{const k=x.from;if(open[k]!==undefined)return setOpen({...open,[k]:undefined});try{const r=await api(`${base}/preview?start=${x.from}&end=${x.to}`);setOpen({...open,[k]:r.content})}catch(e){toast(e.message)}}
   if(!v)return <><Bar title="Your material" back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
-  const filed=new Set(v.sections.map(x=>x.topic_id).filter(Boolean)),missing=v.syllabus.flatMap(u=>u.topics.filter(x=>!filed.has(x.id)).map(x=>x.title)),noAi=!v.ai_available||v.ai_left===0
+  const names=new Map(v.syllabus.flatMap(u=>u.topics.map(x=>[x.id,x.title]))),filed=new Set(v.sections.map(x=>x.topic_id).filter(Boolean)),missing=v.syllabus.flatMap(u=>u.topics.filter(x=>!filed.has(x.id)).map(x=>x.title)),noAi=!v.ai_available||v.ai_left===0
   return <><Bar title="Your material" sub={name} back={back}/><div className="main">
     <p className="known" style={{marginTop:0}}>Your college sets the course, units and topics. Bring your own notes or book chapters and they are filed under the right topics, so you study the syllabus in your own words. Only you see them.</p>
     <h3>1. Your files</h3>
@@ -1047,7 +1053,8 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
     {v.sections.length>0&&<><h3>3. Check where each part goes</h3>
       <p className="known">Your notes cover {v.covered} of {v.topics} topics.{missing.length>0&&' Not covered yet: '+missing.slice(0,6).join(', ')+(missing.length>6?' and '+(missing.length-6)+' more':'')+'.'}</p>
       {v.sections.map((x,i)=><div className="qbox" key={x.from}>{x.heading?<b>{x.heading}</b>:<span style={{display:'block'}}>“{x.excerpt.slice(0,80)+(x.excerpt.length>80?'…':'')}”</span>}<small className="known" style={{display:'block'}}>Part {i+1} · {x.words} words</small>
-        <select aria-label={'Topic for part '+(i+1)} value={x.topic_id||''} disabled={!!busy} onChange={e=>file(i,e.target.value)}><option value="">Not in the syllabus (left out)</option>{v.syllabus.map(u=><optgroup key={u.id} label={u.name}>{u.topics.map(tp=><option key={tp.id} value={tp.id}>{tp.title}</option>)}</optgroup>)}</select>
+        <div className="sfile">{x.topic_id?<span className="chip">{names.get(x.topic_id)||'Topic'}</span>:<span className="chip none">Left out</span>}<button className="tool" disabled={!!busy} aria-expanded={pick===i} onClick={()=>setPick(pick===i?null:i)}>{pick===i?'Cancel':x.topic_id?'Change':'File it'}</button></div>
+        {pick===i&&<select aria-label={'Topic for part '+(i+1)} autoFocus value={x.topic_id||''} disabled={!!busy} onChange={e=>file(i,e.target.value)}><option value="">Not in the syllabus (left out)</option>{v.syllabus.map(u=><optgroup key={u.id} label={u.name}>{u.topics.map(tp=><option key={tp.id} value={tp.id}>{tp.title}</option>)}</optgroup>)}</select>}
         <button className="tool" onClick={()=>read(x)}>{open[x.from]!==undefined?'Hide':'Read it'}</button>{open[x.from]!==undefined&&<div className="prose"><Md>{open[x.from]}</Md></div>}</div>)}
       <button className="btn" disabled={!!busy||!filed.size} onClick={()=>run('save',()=>api(base+'/save',{method:'POST'}),'Saved. Open a topic to study your notes.')}>{v.saved_at?'Save again to my topics':'Save to my topics'}</button>
       {v.saved_at&&<p className="known">Last saved {when(v.saved_at)}. Saving again rebuilds your notes from this material; your progress and quiz results stay.</p>}</>}

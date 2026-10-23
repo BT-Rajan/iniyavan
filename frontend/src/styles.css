@@ -240,3 +240,7 @@ textarea.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:
 .sitem .sx{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#ffffff2e;flex:none}
 .splan{font-size:13px;opacity:.85;margin:12px 0 0}.splan .link{color:inherit;text-decoration:underline;padding:0;background:none}
 .chips.wrap{flex-wrap:wrap;overflow:visible}.chips.wrap .sbtn{padding:10px 14px}
+.shead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.schip{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;border-radius:99px;background:rgba(255,255,255,.16);color:inherit;font-size:13px;font-weight:600;flex:none}
+.sfile{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}.sfile .chip{margin:0}.sfile .tool{margin:0}
+.chip.none{background:transparent;border:1px solid var(--line);color:var(--mut)}
