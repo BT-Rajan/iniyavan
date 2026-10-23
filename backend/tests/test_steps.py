@@ -48,3 +48,43 @@ def test_remember_this_asks_from_a_topic_read_days_ago(env, monkeypatch):
 
 def test_students_are_not_nudged_about_lateness_or_low_scores():
     assert "overdue" not in main.STUDENT_NOTES and "quiz_retake" not in main.STUDENT_NOTES
+
+def stu_id():
+    with Session_() as s: return s.query(User).filter_by(email="stu@x.com").one().id
+
+def test_the_steps_adapt_to_what_the_student_does(env, monkeypatch):
+    t = setup(env, monkeypatch); get = lambda k: env.c.get(f"/api/topics/{t}/ai/{k}", headers=env.stu).json()
+    you = get("gist")["you"]; assert you["order"] == ["why", "example", "exam", "check"] and you["level"] == "normal" and you["question_first"] is False
+    Fake.reply = {"text": "A kettle.", "hook": "And then?"}
+    for _ in range(3): get("example")
+    assert get("gist")["you"]["order"][0] == "example"  # the step they reach for comes first
+    Fake.reply = {"question": "Q?", "answer": "A."}
+    for _ in range(3): assert env.c.post(f"/api/topics/{t}/check-result", headers=env.stu, json={"outcome": "not_yet"}).status_code == 200
+    r = get("check"); assert r["level"] == "easy" and "found these questions hard" in Fake.last["messages"][0]["content"]
+    for _ in range(8): env.c.post(f"/api/topics/{t}/check-result", headers=env.stu, json={"outcome": "knew"})
+    get("check"); assert "apply the idea" in Fake.last["messages"][0]["content"]
+    assert env.c.post(f"/api/topics/{t}/check-result", headers=env.stu, json={"outcome": "great"}).status_code == 400
+    assert env.c.get(f"/api/topics/{t}/ai/gist", headers=env.admin).json().get("you") is None  # staff are not profiled
+    me = env.c.get("/api/me/learning", headers=env.stu).json(); assert me["level"] == "hard" and me["taps"]["example"] == 3
+    assert env.c.delete("/api/me/learning/steps", headers=env.stu).json()["cleared"] > 0
+    assert env.c.get("/api/me/learning", headers=env.stu).json()["level"] == "normal"
+
+def test_question_first_after_a_few_topics_in_the_unit(env, monkeypatch):
+    t = setup(env, monkeypatch); i = ids()
+    with Session_() as s:
+        unit = s.get(main.Topic, t).unit_id; others = [x.id for x in s.query(main.Topic).filter(main.Topic.unit_id == unit, main.Topic.id != t)]
+    for o in others[:3]: env.c.post(f"/api/topics/{o}/read", headers=env.stu)
+    assert env.c.get(f"/api/topics/{t}/ai/gist", headers=env.stu).json()["you"]["question_first"] is (len(others) >= 3)
+
+def test_a_not_quite_topic_comes_back_first(env, monkeypatch):
+    t = setup(env, monkeypatch); i = ids(); other = next(v for k, v in i["topic"].items() if v != t)
+    for x in (t, other): env.c.post(f"/api/topics/{x}/read", headers=env.stu); env.c.get(f"/api/topics/{x}/ai/gist", headers=env.stu)
+    old = dt.datetime.utcnow() - dt.timedelta(days=4)
+    with Session_() as s:
+        s.query(Progress).filter_by(user_id=stu_id()).update({"last_read": old}); s.add(main.StepLog(user_id=stu_id(), topic_id=other, kind="check", outcome="not_yet", at=old)); s.commit()
+    assert env.c.get("/api/me/recall", headers=env.stu).json()["item"]["topic_id"] == other
+
+def test_a_step_missing_what_the_page_shows_is_not_saved(env, monkeypatch):
+    t = setup(env, monkeypatch); Fake.reply = {"text": "no question here"}
+    assert env.c.get(f"/api/topics/{t}/ai/check", headers=env.stu).status_code == 502
+    with Session_() as s: assert s.query(AICache).filter_by(kind="check").count() == 0

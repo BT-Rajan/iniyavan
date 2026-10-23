@@ -513,7 +513,21 @@ function Insights({toast,role}){
     {!d&&<Skeleton/>}
     {d&&!d.courses.length&&<p className="known">{tl("Take a quiz and your strengths and weak spots will show up here.")}</p>}
     {d?.courses.length>0&&<div className="qbox"><b>{n?tl("{n} {v} another round of study",{n:n,v:n===1?'area needs':'areas need'}):tl("Nothing needs another round of study right now")}</b><p className="known" style={{margin:'4px 0 0'}}>{d.strong.length}{" "}{tl("strong · {length} getting there · based on your latest result in {quizzes_taken}",{length:d.getting_there.length,quizzes_taken:d.quizzes_taken})}{" "}{d.quizzes_taken===1?'quiz':'quizzes'}</p></div>}
-    {<Paged rows={d?.courses} render={c=><section key={c.course_id}><h3 className="sec">{c.course}{" "}{tl("· {percent}% right",{percent:c.percent})}</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>}/>}</div></>}
+    {<Paged rows={d?.courses} render={c=><section key={c.course_id}><h3 className="sec">{c.course}{" "}{tl("· {percent}% right",{percent:c.percent})}</h3><AreaList areas={c.areas} onStudy={setTopic}/></section>}/>}
+    <AdaptCard toast={toast}/></div></>}
+// what the app has picked up from how this student uses a topic's steps, in plain words, with a way to start fresh. Only they see it
+function AdaptCard({toast}){
+  const {appName}=useContext(Ctx),[d,setD]=useState(null),load=()=>api('/me/learning').then(setD).catch(()=>{});useEffect(()=>{load()},[])
+  if(!d)return null
+  const taps=Object.values(d.taps||{}).reduce((a,b)=>a+b,0),fav=taps>=3?STEP_LABEL(d.order[0]):null
+  const lines=[fav&&tl("{step} comes first on a topic, since you reach for it most",{step:fav}),
+    d.level==='hard'&&tl("Quick checks ask you to apply ideas, since you have been getting them"),d.level==='easy'&&tl("Quick checks are plainer for now, with a hint when it helps"),
+    tl("After a few topics in a unit, a topic starts with its question and keeps the gist one tap away"),
+    tl("Remember this? brings back topics you marked “Not quite”")].filter(Boolean)
+  const reset=async()=>{try{await api('/me/learning/steps',{method:'DELETE'});toast(tl("Started fresh"));load()}catch(e){toast(e.message)}}
+  return <><h3 className="sec">{tl("How {name} adapts to you",{name:appName})}</h3><div className="qbox"><ul className="adapt">{lines.map((x,i)=><li key={i}>{x}</li>)}</ul>
+    <p className="known" style={{margin:'8px 0 0'}}>{tl("It learns only from the steps you open and your own “I had it” / “Not quite”. Your teachers never see this.")}</p>
+    {(taps>0||d.checks>0)&&<button className="btn ghost" onClick={reset}>{tl("Start fresh")}</button>}</div></>}
 
 const uploadImg=async f=>{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':f.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));return j.url}
 // one image place on a question or an answer: shows the image, the file the CSV asked for, or a small "Add image" button
@@ -994,7 +1008,7 @@ function Topic({id:first,back,toast,role}){
     {cp&&<CopySheet kind="topic" id={id} title={t.title} toast={toast} close={()=>setCp(false)}/>}
     {hist&&<HistorySheet tid={id} toast={toast} close={()=>setHist(false)} done={()=>{setHist(false);setV(v+1)}}/>}
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>{tl("Draft · students cannot see it")}</p>}
-    {aiOk&&<TopicSteps id={id}/>}
+    {aiOk&&<TopicSteps id={id} student={role==='student'}/>}
     <Tabs label={tl("Topic sections")} items={[['notes',tl("Notes")],['explain',tl("Explain")],['answer',tl("Sample answer")]]} value={tab} onChange={setTab}/>
     {known.length>0&&tab==='explain'&&<p className="known">{tl("You’ve already covered:")}{" "}{known.join(', ')}</p>}
     {tab==='notes'&&t.content&&<button className="btn lead" onClick={()=>setReading(true)}><Maximize2 size={16}/> {t.content_format==='interactive'?tl("Open the interactive page"):tl("Read in full screen")}</button>}
@@ -1013,26 +1027,40 @@ function Topic({id:first,back,toast,role}){
 // the top of a topic page: the gist and one curious question, then short steps the reader picks (Why?, Example, Exam angle, Quick check).
 // Every reply is a few lines and saved for everyone; the notes below stay the reference
 const STEP_KINDS=L([['why',tl("Why?")],['example',tl("Example")],['exam',tl("Exam angle")],['check',tl("Quick check")]])
+const STEP_LABEL=k=>k==='simpler'?tl("More simply"):STEP_KINDS.find(x=>x[0]===k)?.[1]
 const Reveal=({label,children})=>{const [on,setOn]=useState(false);return on?<div className="reveal">{children}</div>:<button className="link" onClick={()=>setOn(true)}>{label}</button>}
 const Hook=({q,a})=><div className="hook"><p>{q}</p>{a&&<Reveal label={tl("Think, then tap for the answer")}><Md>{a}</Md></Reveal>}</div>
-function StepCard({k,d}){
-  const label=STEP_KINDS.find(x=>x[0]===k)?.[1]
-  return <div className={'stepcard '+k}><small className="steplab">{label}</small>
-    {k==='why'||k==='example'?<><Md>{d.text||''}</Md>{d.hook&&<p className="hookq">{d.hook}</p>}</>
-      :<><div className="stepq"><Md>{d.question||''}</Md></div><Reveal label={k==='exam'?tl("Show a model answer"):tl("Show the answer")}><Md>{d.answer||''}</Md>{d.tip&&<p className="known">{tl("Examiners look for")}: {d.tip}</p>}</Reveal></>}</div>}
-function TopicSteps({id}){
-  const [g,setG]=useState(null),[err,setErr]=useState(''),[trail,setTrail]=useState([]),[busy,setBusy]=useState('')
-  useEffect(()=>{setG(null);setErr('');setTrail([]);api(`/topics/${id}/ai/gist`).then(r=>setG(r.data)).catch(e=>setErr(e.message))},[id])
-  const step=async k=>{setBusy(k);setErr('');try{const r=await api(`/topics/${id}/ai/${k}`);setTrail(x=>[...x,{k,d:r.data}])}catch(e){setErr(e.message)}setBusy('')}
+// after a quick check's answer: the student's own private "I had it" / "Not quite"; not quite offers the idea again, more simply
+function SelfMark({id,onSimpler}){
+  const [got,setGot]=useState('')
+  const mark=async o=>{setGot(o);try{await api(`/topics/${id}/check-result`,{method:'POST',body:{outcome:o}})}catch{/* only a hint for next time */}}
+  if(got==='knew')return <p className="known selfm">{tl("Nice. The next ones will stretch you a little more.")}</p>
+  if(got==='not_yet')return <p className="known selfm">{tl("That's fine, it takes a few goes.")}{onSimpler&&<>{" "}<button className="link inl" onClick={onSimpler}>{tl("Explain it more simply")}</button></>}</p>
+  return <div className="selfm" role="group" aria-label={tl("How did it go? Only you see this")}><button className="stepchip" onClick={()=>mark('knew')}>{tl("I had it")}</button><button className="stepchip" onClick={()=>mark('not_yet')}>{tl("Not quite")}</button><small className="known">{tl("Only you see this")}</small></div>}
+function StepCard({id,k,d,student,onSimpler}){
+  return <div className={'stepcard '+k}><small className="steplab">{STEP_LABEL(k)}</small>
+    {k==='why'||k==='example'||k==='simpler'?<><Md>{d.text||''}</Md>{d.hook&&<p className="hookq">{d.hook}</p>}</>
+      :<><div className="stepq"><Md>{d.question||''}</Md></div><Reveal label={k==='exam'?tl("Show a model answer"):tl("Show the answer")}><Md>{d.answer||''}</Md>{d.tip&&<p className="known">{tl("Examiners look for")}: {d.tip}</p>}{k==='check'&&student&&<SelfMark id={id} onSimpler={onSimpler}/>}</Reveal></>}</div>}
+// the top of a topic page: the gist and one curious question, then short steps the reader picks. It adapts to each student, privately:
+// the steps they use most come first, quick checks get easier or harder from their own "I had it" / "Not quite", and after a few topics
+// in a unit the question comes first with the gist one tap away. Every reply is a few lines and saved for everyone; the notes stay the reference
+function TopicSteps({id,student}){
+  const [g,setG]=useState(null),[you,setYou]=useState(null),[err,setErr]=useState(''),[trail,setTrail]=useState([]),[busy,setBusy]=useState(''),[open,setOpen]=useState(false)
+  useEffect(()=>{setG(null);setYou(null);setOpen(false);setErr('');setTrail([]);api(`/topics/${id}/ai/gist`).then(r=>{setG(r.data);setYou(r.you||null)}).catch(e=>setErr(e.message))},[id])
+  const step=async k=>{setBusy(k);setErr('');try{const r=await api(`/topics/${id}/ai/${k}`);setTrail(x=>[...x.filter(y=>y.k!==k),{k,d:r.data}])}catch(e){setErr(e.message)}setBusy('')}
   if(err&&!g)return null  // without AI the page is the notes, as before
-  const left=STEP_KINDS.filter(([k])=>!trail.some(x=>x.k===k))
+  const order=you?.order||STEP_KINDS.map(x=>x[0]),left=order.filter(k=>!trail.some(x=>x.k===k)).map(k=>[k,STEP_LABEL(k)])
+  const qFirst=you?.question_first&&!open&&g?.hook
   return <section className="gist" aria-label={tl("The gist")} aria-busy={!g}>
-    {!g?<Skeleton rows={2}/>:<><h3>{tl("The gist")}<small>{tl("about 30 seconds")}</small></h3>
-      <ul>{(g.points||[]).map((x,i)=><li key={i}><Md>{x}</Md></li>)}</ul>
-      {g.hook&&<Hook q={g.hook} a={g.hook_answer}/>}
-      {trail.map(x=><StepCard key={x.k} k={x.k} d={x.d}/>)}
+    {!g?<Skeleton rows={2}/>:qFirst?<><h3>{tl("A question first")}<small>{tl("then the gist")}</small></h3><Hook q={g.hook} a={g.hook_answer}/>
+        <button className="link" style={{marginTop:10}} onClick={()=>setOpen(true)}>{tl("Show the gist")}</button></>
+      :<><h3>{tl("The gist")}<small>{tl("about 30 seconds")}</small></h3>
+        <ul>{(g.points||[]).map((x,i)=><li key={i}><Md>{x}</Md></li>)}</ul>
+        {g.hook&&!open&&<Hook q={g.hook} a={g.hook_answer}/>}</>}
+    {g&&<>{trail.map(x=><StepCard key={x.k} id={id} k={x.k} d={x.d} student={student} onSimpler={trail.some(y=>y.k==='simpler')?null:()=>step('simpler')}/>)}
       {err&&<p className="known" role="alert">{err}</p>}
-      {left.length>0&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}</div>}</>}
+      {left.length>0&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}</div>}
+      {busy==='simpler'&&<p className="known">{tl("Thinking…")}</p>}</>}
   </section>}
 // the skeleton of a full-marks answer, shown before the full sample answer
 function Outline({id}){

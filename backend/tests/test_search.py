@@ -77,7 +77,7 @@ def test_admin_edits_prompts_and_they_are_used(env, monkeypatch):
     i = seed(env); monkeypatch.setattr(main.httpx, "AsyncClient", Spy); Spy.sent = []; Spy.mode = "ok"
     with Session_() as s: s.merge(Setting(k="deepseek_key", v="sk-test-1234")); s.commit()
     items = {x["kind"]: x for x in env.c.get("/api/admin/prompts", headers=env.admin).json()["items"]}
-    assert set(items) == {"explain", "answer", "search", "gist", "why", "example", "exam", "check", "outline"} and items["search"]["custom"] is False and items["explain"]["text"] == items["explain"]["default"]
+    assert set(items) == {"explain", "answer", "search", "gist", "why", "example", "exam", "check", "outline", "simpler"} and items["search"]["custom"] is False and items["explain"]["text"] == items["explain"]["default"]
     for h in (env.fac, env.stu): assert env.c.get("/api/admin/prompts", headers=h).status_code == 403 and env.c.put("/api/admin/prompts/explain", headers=h, json={"text": "x" * 50}).status_code == 403
     t = i["topic"]["Water hardness"]; env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu); assert Spy.sent[-1][0]["content"] == main.PROMPTS["explain"]
     assert env.c.get("/api/admin/prompts", headers=env.admin).json()["items"][0]["saved_answers"] == 1
