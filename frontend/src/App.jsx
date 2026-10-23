@@ -664,10 +664,10 @@ function StudyWizard({id,toast,back,done}){
   const confirm=useConfirm()
   const [c,setC]=useState(null),[step,setStep]=useState(null),[text,setText]=useState(''),[busy,setBusy]=useState(''),[notes,setNotes]=useState(''),[plan,setPlan]=useState(null),[dirty,setDirty]=useState(false),[peek,setPeek]=useState(null),fileRef=useRef()
   const load=async(go)=>{try{const d=await api('/study/courses/'+id);setC(d);setNotes(d.notes);setPlan(d.plan);setDirty(false);setStep(go??(d.plan?3:d.sources.length?2:1));return d}catch(e){toast(e.message);back()}}
-  useEffect(()=>{load()},[id])
+  useEffect(()=>{load()},[id]);usePoll(!!c?.reading,()=>api('/study/courses/'+id).then(d=>setC(d)).catch(()=>{}))  // only the file list refreshes; the step and outline stay
   if(!c||step==null)return <><Bar title="Set up your course" back={back}/><div className="main"><Skeleton/></div></>
   const files=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs){setBusy('Reading '+f.name+'…')
-      try{const r=await fetch(`/api/study/courses/${id}/files?name=${encodeURIComponent(f.name)}`,{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');toast(`${f.name}: ${pl(j.words,'word')} read`)}catch(x){toast(f.name+': '+x.message)}}
+      try{const r=await fetch(`/api/study/courses/${id}/files?name=${encodeURIComponent(f.name)}`,{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');toast(j.status==='reading'?`${f.name} is scanned pages. Reading them now…`:`${f.name}: ${pl(j.words,'word')} read`)}catch(x){toast(f.name+': '+x.message)}}
     setBusy('');load(1)}
   const paste=async()=>{setBusy('Adding…');try{const r=await api(`/study/courses/${id}/text`,{method:'POST',body:{text}});setText('');toast(pl(r.words,'word')+' added')}catch(e){toast(e.message)}setBusy('');load(1)}
   const dropSrc=async i=>{if(!await confirm({title:'Remove this material?',body:'Its text is taken out of the course. Any outline already made is cleared.',ok:'Remove',danger:true}))return;try{await api(`/study/courses/${id}/sources/${i}`,{method:'DELETE'});load(1)}catch(e){toast(e.message)}}
@@ -691,13 +691,13 @@ function StudyWizard({id,toast,back,done}){
     <Steps at={step}/>
     {busy&&<div className="qbox" role="status" style={{marginTop:0}}><b>{busy}</b></div>}
     {step===1&&<>
-      <h3 className="sec first">Add your material</h3><p className="known" style={{marginTop:0}}>PDF (with selectable text), Word (.docx), or .txt and .md files. Add several and they are joined in the order you add them. You can also paste text.</p>
+      <h3 className="sec first">Add your material</h3><p className="known" style={{marginTop:0}}>PDF, Word (.docx), or .txt and .md files. Add several and they are joined in the order you add them. You can also paste text.{c.ocr_available?' Scanned PDFs are read with text recognition, a few seconds a page.':' Scanned PDFs can\'t be read on this server yet.'}</p>
       <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={files}/>
       <button className="btn" disabled={!!busy} onClick={()=>fileRef.current.click()}><Upload size={16}/> Choose files</button>
       <label htmlFor="pst">Or paste text</label><textarea id="pst" value={text} onChange={e=>setText(e.target.value)} placeholder="Paste notes here. Leave an empty line between paragraphs; lines starting with # become headings."/>
       <button className="btn ghost" disabled={!!busy||!text.trim()} onClick={paste}>Add this text</button>
-      {c.sources.length>0&&<><h3 className="sec">Your material · {pl(words,'word')}</h3>{c.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small>{x.kind.toUpperCase()} · {pl(x.words,'word')} · {pl(x.paras,'paragraph')}</small></div><div className="acts"><button className="ic sm" aria-label={'Remove '+x.name} onClick={()=>dropSrc(i)}><Trash2 size={16}/></button></div></div>)}
-        <button className="btn" onClick={()=>setStep(2)}>Next: slice it into topics</button></>}</>}
+      {c.sources.length>0&&<><h3 className="sec">Your material · {pl(words,'word')}</h3>{c.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small role={x.status==='reading'?'status':undefined}>{x.status?srcLine(x):<>{x.kind.toUpperCase()} · {pl(x.words,'word')} · {pl(x.paras,'paragraph')}</>}</small></div><div className="acts"><button className="ic sm" aria-label={'Remove '+x.name} onClick={()=>dropSrc(i)}><Trash2 size={16}/></button></div></div>)}
+        <button className="btn" disabled={!!c.reading} onClick={()=>setStep(2)}>{c.reading?'Reading scanned pages…':'Next: slice it into topics'}</button></>}</>}
     {step===2&&<>
       <h3 className="sec first">How should it be sliced?</h3><p className="known" style={{marginTop:0}}>The AI groups your {pl(c.paragraphs,'paragraph')} into units and the smallest topics that make sense on their own. It keeps your own words; it only decides where each topic starts and ends and what to call it.</p>
       <label htmlFor="nts">Notes for the AI</label><textarea id="nts" value={notes} onChange={e=>setNotes(e.target.value)} placeholder={NOTES_HINT}/>
@@ -979,12 +979,15 @@ function UnitSheet({un,cid,courses,close,done,toast}){  // courses is given to a
 const unmarked=(tree,id)=>tree.map(p=>({...p,semesters:p.semesters.map(s=>({...s,courses:s.courses.map(c=>({...c,units:c.units.map(u=>({...u,topics:u.topics.map(x=>x.id===id?{...x,bookmarked:false}:x)}))}))}))}))
 const tabTo=e=>e.currentTarget.scrollIntoView?.({inline:'center',block:'nearest'})
 
+const srcLine=x=>x.status==='reading'?(x.done?`Reading scanned pages… ${x.done} of ${x.pages}`:`Waiting to read ${x.pages} scanned pages…`)
+  :x.status==='failed'?x.error:`${x.kind==='scan'?'Scanned, read with text recognition · ':''}${x.words.toLocaleString()} words${x.note?' · '+x.note:''}`
+const usePoll=(on,fn,ms=3000)=>useEffect(()=>{if(!on)return;const h=setInterval(fn,ms);return()=>clearInterval(h)},[on])  // while scanned pages are being read
 function MyMaterial({cid,name,back,toast}){  // a student's own material, filed under the course's syllabus topics (private to them)
   const [v,setV]=useState(null),[busy,setBusy]=useState(''),[paste,setPaste]=useState(null),[open,setOpen]=useState({}),fileRef=useRef()
   const base=`/courses/${cid}/my-material`,load=()=>api(base).then(setV).catch(e=>{toast(e.message);back()})
-  useEffect(()=>{load()},[cid])
+  useEffect(()=>{load()},[cid]);usePoll(!!v?.reading,()=>api(base).then(setV).catch(()=>{}))
   const run=async(label,fn,msg)=>{setBusy(label);try{const r=await fn();if(r&&r.syllabus)setV(r);else await load();msg&&toast(msg)}catch(e){toast(e.message)}setBusy('')}
-  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed')},'Added '+f.name)}
+  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.detail||'Upload failed');if(j.status==='reading')toast(f.name+' is scanned pages. Reading them now; you can stay or come back later.')},f.name.toLowerCase().endsWith('.pdf')?'':'Added '+f.name)}
   const match=m=>run(m,()=>api(base+'/match',{method:'POST',body:{method:m}}),'Matched to the syllabus. Check it below, then save.')
   const file=(i,tid)=>run('sec',()=>api(base+'/sections',{method:'PUT',body:{sections:v.sections.map((x,k)=>({from:x.from,to:x.to,topic_id:k===i?(tid?+tid:null):x.topic_id}))}}))
   const read=async x=>{const k=x.from;if(open[k]!==undefined)return setOpen({...open,[k]:undefined});try{const r=await api(`${base}/preview?start=${x.from}&end=${x.to}`);setOpen({...open,[k]:r.content})}catch(e){toast(e.message)}}
@@ -993,12 +996,13 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
   return <><Bar title="Your material" sub={name} back={back}/><div className="main">
     <p className="known" style={{marginTop:0}}>Your college sets the course, units and topics. Bring your own notes or book chapters and they are filed under the right topics, so you study the syllabus in your own words. Only you see them.</p>
     <h3>1. Your files</h3>
-    {v.sources.length?v.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small>{x.words.toLocaleString()} words</small></div><button className="ic sm" aria-label={'Remove '+x.name} disabled={!!busy} onClick={()=>run('drop',()=>api(base+'/sources/'+i,{method:'DELETE'}))}><X size={16}/></button></div>):<p className="known">No files yet. PDFs with selectable text, Word (.docx) and text files work.</p>}
+    {v.sources.length?v.sources.map((x,i)=><div className="row" key={i}><div>{x.name}<small role={x.status==='reading'?'status':undefined}>{srcLine(x)}</small></div><button className="ic sm" aria-label={'Remove '+x.name} disabled={!!busy} onClick={()=>run('drop',()=>api(base+'/sources/'+i,{method:'DELETE'}))}><X size={16}/></button></div>):<p className="known">No files yet. PDFs, Word (.docx) and text files work.{v.ocr_available?' Scanned PDFs are read too; that takes a few seconds a page.':' Scanned PDFs can\'t be read on this server yet.'}</p>}
     <div className="two"><button className="btn ghost" disabled={!!busy} onClick={()=>fileRef.current.click()}><Upload size={16}/> {busy==='file'?'Reading…':'Add a file'}</button><button className="btn ghost" disabled={!!busy} onClick={()=>setPaste({text:''})}>Paste text</button></div>
     <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md" onChange={upload}/>
     {v.sources.length>0&&<><h3>2. File it under the syllabus</h3>
-      <button className={'btn'+(noAi?' ghost':'')} disabled={!!busy||noAi} onClick={()=>match('ai')}><Sparkles size={16}/> {busy==='ai'?'Matching…':'Match with AI'}</button>
-      <button className={'btn'+(noAi?'':' ghost')} disabled={!!busy} onClick={()=>match('headings')}>{busy==='headings'?'Matching…':'Match by headings (no AI)'}</button>
+      {v.reading&&<p className="known" role="status">Your scanned pages are still being read. Matching starts once they are done.</p>}
+      <button className={'btn'+(noAi?' ghost':'')} disabled={!!busy||noAi||v.reading} onClick={()=>match('ai')}><Sparkles size={16}/> {busy==='ai'?'Matching…':'Match with AI'}</button>
+      <button className={'btn'+(noAi?'':' ghost')} disabled={!!busy||v.reading} onClick={()=>match('headings')}>{busy==='headings'?'Matching…':'Match by headings (no AI)'}</button>
       {noAi&&<p className="known">{v.ai_available?'No AI requests are left today.':'AI is not available.'} Matching by headings works best when your notes use the topic names as headings.</p>}</>}
     {v.sections.length>0&&<><h3>3. Check where each part goes</h3>
       <p className="known">Your notes cover {v.covered} of {v.topics} topics.{missing.length>0&&' Not covered yet: '+missing.slice(0,6).join(', ')+(missing.length>6?' and '+(missing.length-6)+' more':'')+'.'}</p>

@@ -24,6 +24,7 @@ echo "==> Python dependencies"
 echo "==> Frontend build"
 (cd frontend && { npm ci --no-audit --no-fund || npm install --no-audit --no-fund; } && npm run build)
 
+command -v tesseract >/dev/null || echo "!! Tesseract is not installed, so scanned PDFs can't be read. Install it: sudo apt install tesseract-ocr (add tesseract-ocr-tam, -hin ... for other languages and set OCR_LANGS in .env)"
 "$VENV/bin/python" backend/manage.py check || echo "!! No admin account yet. Create one: ./manage.sh admin --email you@example.com"
 
 echo "==> pm2"

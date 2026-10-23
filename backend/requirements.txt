@@ -8,3 +8,6 @@ httpx
 python-dotenv
 nh3
 pypdf
+pypdfium2
+pytesseract
+Pillow

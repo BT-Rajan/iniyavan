@@ -1,5 +1,5 @@
 from collections import defaultdict
-import base64, csv, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, datetime as dt, httpx, jwt, nh3
+import base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, datetime as dt, httpx, jwt, nh3
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -2674,13 +2674,20 @@ def merge_lists(paras):  # consecutive list items become one paragraph
         if p.startswith("- ") and out and out[-1].startswith("- "): out[-1] += "\n" + p
         else: out.append(p)
     return out
-def pdf_paras(b):
+def pdf_texts(b):  # the text of each page; scanned pages have none
     from pypdf import PdfReader
-    try: pages = [pg.extract_text() or "" for pg in PdfReader(io.BytesIO(b)).pages]
+    try: return [pg.extract_text() or "" for pg in PdfReader(io.BytesIO(b)).pages]
     except Exception: raise HTTPException(400, "That PDF could not be read. If it is password-protected, remove the password and try again.")
+def needs_ocr(pages):  # mostly scanned: no text at all, or at least 30% of the pages without text (a few blank or picture pages don't count)
+    bare = sum(len(x.strip()) < 20 for x in pages)
+    return len("".join(pages).strip()) < 40 or (bare and bare >= max(1, 0.3 * len(pages)))
+def pdf_paras(b):
+    pages = pdf_texts(b)
     if len("".join(pages).strip()) < 40: raise HTTPException(400, "This PDF has no text to read: it is probably scanned pages. Upload a PDF with selectable text, or a Word file.")
+    return lines_paras("\n".join(pages))
+def lines_paras(text):  # a PDF's (or text recognition's) lines -> paragraphs, with likely headings marked
     out, cur = [], ""
-    for line in "\n".join(pages).split("\n"):
+    for line in text.split("\n"):
         ln = line.strip()
         if not ln:
             if cur: out.append(cur); cur = ""
@@ -2694,6 +2701,81 @@ def pdf_paras(b):
     if cur: out.append(cur)
     return [re.sub(r"^[•*]\s*", "- ", p) for p in out]
 def text_paras(t): return [p.strip() for p in re.split(r"\n\s*\n", (t or "").replace("\r\n", "\n").lstrip("\ufeff")) if p.strip()]
+# -- scanned PDFs: text recognition (Tesseract) in the background --
+OCR_LANGS = (os.getenv("OCR_LANGS") or "eng").strip()  # Tesseract languages, e.g. eng+tam+hin (their packs must be installed)
+OCR_MAX_PAGES = int(os.getenv("OCR_MAX_PAGES") or 300)
+OCR_GATE = threading.BoundedSemaphore(max(1, int(os.getenv("OCR_WORKERS") or 1)))  # pages are read one file at a time by default: it is heavy on the CPU
+OCR_JOBS = set()  # ids of files being read (or waiting) in this process; one that is "reading" but not here was cut off by a restart
+@functools.lru_cache(maxsize=1)
+def ocr_ready():  # Tesseract with the languages asked for, and the page renderer, are installed
+    try:
+        import pypdfium2, pytesseract  # noqa: F401
+        have = set(pytesseract.get_languages(config=""))
+        return all(x in have for x in OCR_LANGS.split("+"))
+    except Exception: return False
+def ocr_page(page): import pytesseract; return pytesseract.image_to_string(page.render(scale=300 / 72).to_pil().convert("L"), lang=OCR_LANGS, timeout=180)
+def spawn(fn, *args): threading.Thread(target=fn, args=args, daemon=True).start()
+def read_material(name, b):  # (kind, paragraphs, None), or for a scanned PDF ("scan", None, page texts) to be read in the background
+    if b[:4] == b"%PDF" or name.lower().endswith(".pdf"):
+        pages = pdf_texts(b)
+        if needs_ocr(pages) and not pdf_has_images(b): raise HTTPException(400, "This PDF has no text to read and no scanned pages either. Upload a PDF with selectable text, or a Word file.")
+        if needs_ocr(pages):
+            if not ocr_ready(): raise HTTPException(400, "This PDF is scanned pages, and text recognition isn't set up on this server yet. Ask your admin, or upload a PDF with selectable text or a Word file.")
+            if not pages: raise HTTPException(400, "This PDF has no pages")
+            return "scan", None, pages
+        return "pdf", lines_paras("\n".join(pages)), None
+    kind, paras = material_paras(name, b); return kind, paras, None
+def pdf_has_images(b):  # scanned pages are pictures; a PDF with no text and no pictures has nothing to read
+    from pypdf import PdfReader
+    try: return any(len(pg.images) for pg in PdfReader(io.BytesIO(b)).pages)
+    except Exception: return True  # unusual image encodings: let text recognition try
+def add_scan(row, name, pages):  # the file is listed at once, without text, while its pages are read
+    sources = json.loads(row.sources or "[]"); sid = secrets.token_hex(8)
+    sources.append({"name": name[:200], "kind": "scan", "paras": 0, "words": 0, "status": "reading", "pages": len(pages), "done": 0, "sid": sid})
+    row.sources = json.dumps(sources, ensure_ascii=False); clear_split(row); OCR_JOBS.add(sid)
+    return sources[-1]
+def clear_split(row):  # new material means the outline (student courses) or the filing (course material) is made again
+    if isinstance(row, StudyCourse): row.plan = None; touch(row)
+    else: row.sections = None; row.updated_at = dt.datetime.utcnow()
+def on_source(model, rid, sid, fn):  # change one listed file under a row lock; False when the row or the file is gone
+    with Session_() as s:
+        row = s.query(model).filter_by(id=rid).with_for_update().first()
+        srcs = json.loads(row.sources or "[]") if row else []
+        k = next((i for i, x in enumerate(srcs) if x.get("sid") == sid), None)
+        if k is None: return False
+        fn(row, srcs, k); row.sources = json.dumps(srcs, ensure_ascii=False); s.commit(); return True
+def run_ocr(model, rid, sid, data, pages):
+    try:
+        with OCR_GATE:
+            import pypdfium2
+            doc, n, got = pypdfium2.PdfDocument(data), min(len(pages), OCR_MAX_PAGES), []
+            for i in range(n):  # pages that have real text keep it; only the others are read from the image
+                got.append(pages[i] if len(pages[i].strip()) >= 20 else ocr_page(doc[i]))
+                if not on_source(model, rid, sid, lambda row, srcs, k: srcs[k].update(done=i + 1)): return  # removed while reading: stop
+        paras = [p for p in lines_paras("\n".join(got)) if p.strip()]
+        def finish(row, srcs, k):
+            have = json.loads(row.paras or "[]")
+            if not paras: srcs[k].update(status="failed", error="No text could be read from these pages."); return
+            if sum(len(x) for x in have) + sum(len(x) for x in paras) > MAX_PARAS_CHARS: srcs[k].update(status="failed", error="That is more material than one course can hold."); return
+            at = sum(x.get("paras", 0) for x in srcs[:k])  # its text goes where the file sits in the list
+            row.paras = json.dumps(have[:at] + paras + have[at:], ensure_ascii=False)
+            srcs[k].update(status="done", paras=len(paras), words=sum(len(x.split()) for x in paras), **({"note": f"Only the first {n} of {len(pages)} pages were read."} if n < len(pages) else {}))
+            clear_split(row)
+        on_source(model, rid, sid, finish)
+    except Exception as e:
+        log.warning("text recognition failed: %s", type(e).__name__)
+        on_source(model, rid, sid, lambda row, srcs, k: srcs[k].update(status="failed", error="The pages could not be read. Try a clearer scan."))
+    finally: OCR_JOBS.discard(sid)
+def scan_state(row, s):  # mark files cut off by a restart; True while any file is still being read
+    srcs = json.loads(row.sources or "[]") if row else []; busy, changed = False, False
+    for x in srcs:
+        if x.get("status") == "reading":
+            if x.get("sid") in OCR_JOBS: busy = True
+            else: x.update(status="failed", error="Reading stopped when the server restarted. Remove this file and add it again."); changed = True
+    if changed: row.sources = json.dumps(srcs, ensure_ascii=False); s.commit()
+    return busy
+def not_while_reading(row, s):
+    if scan_state(row, s): raise HTTPException(409, "Wait until your scanned pages have been read")
 def material_paras(name, b):
     ext = (name.rsplit(".", 1)[-1] if "." in name else "").lower()
     if b[:4] == b"%PDF" or ext == "pdf": return "pdf", pdf_paras(b)
@@ -2798,7 +2880,7 @@ def study_list(u: User = Depends(me), s: Session = Depends(db)):
 def study_get(cid: int, u: User = Depends(me), s: Session = Depends(db)):
     c = study_course_or_404(cid, u, s); mine = c.owner_id == u.id or u.role == "admin"
     out = {**study_row(c, s, u), "can_edit": mine, "notes": (c.notes or "") if mine else "", "sliced_by": c.sliced_by or "", **study_ai_status(u, s)}
-    if mine: out.update(sources=json.loads(c.sources or "[]"), paragraphs=len(json.loads(c.paras or "[]")), plan=plan_view(c))
+    if mine: out.update(reading=scan_state(c, s), ocr_available=ocr_ready(), sources=json.loads(c.sources or "[]"), paragraphs=len(json.loads(c.paras or "[]")), plan=plan_view(c))
     if c.status == "ready":
         prog = {p.topic_id: p for p in s.query(StudyProgress).filter(StudyProgress.user_id == u.id, StudyProgress.topic_id.in_(s.query(StudyTopic.id).filter_by(course_id=c.id)))}
         best = study_best(s, u.id, c.id); now = dt.datetime.utcnow()
@@ -2849,7 +2931,8 @@ async def study_file(cid: int, request: Request, name: str = "", u: User = Depen
     if int(request.headers.get("content-length") or 0) > MAX_SOURCE_BYTES: raise HTTPException(413, "The file is too large. Keep it under 20 MB.")
     b = await request.body()
     if len(b) > MAX_SOURCE_BYTES: raise HTTPException(413, "The file is too large. Keep it under 20 MB.")
-    kind, paras = await run_in_threadpool(material_paras, name or "file", b)
+    kind, paras, pages = await run_in_threadpool(read_material, name or "file", b)
+    if kind == "scan": src = add_scan(c, name or "file", pages); s.commit(); spawn(run_ocr, StudyCourse, c.id, src["sid"], b, pages); return src
     src = add_material(c, name or "file", kind, paras); s.commit(); return src
 class StudyTextIn(BaseModel): text: str; name: str = ""
 @app.post("/api/study/courses/{cid}/text")
@@ -2872,7 +2955,7 @@ class SliceIn(BaseModel): notes: str = ""; method: str = "ai"
 @app.post("/api/study/courses/{cid}/slice")
 async def study_slice(cid: int, b: SliceIn, u: User = Depends(me), s: Session = Depends(db)):
     c = study_course_or_404(cid, u, s, edit=True)
-    paras = json.loads(c.paras or "[]")
+    not_while_reading(c, s); paras = json.loads(c.paras or "[]")
     if not paras: raise HTTPException(400, "Add your material first")
     c.notes = b.notes.strip()[:4000]
     if b.method == "headings": plan, by = headings_plan(paras), "headings"
@@ -3141,14 +3224,14 @@ def normalise_sections(raw, n, refs):  # any AI answer -> sections covering para
         else: out.append({"from": f, "to": to, "topic_id": tid})
     return out
 def material_view(m, s, cid, u):
-    syl = syllabus(s, cid); paras = json.loads(m.paras or "[]") if m else []; secs = json.loads(m.sections) if m and m.sections else []
+    reading = scan_state(m, s); syl = syllabus(s, cid); paras = json.loads(m.paras or "[]") if m else []; secs = json.loads(m.sections) if m and m.sections else []
     title = {x.id: x.title for _, ts in syl for x in ts}; covered = {x["topic_id"] for x in secs if x["topic_id"] in title}
     notes = {r.topic_id for r in s.query(TopicNote.topic_id).filter(TopicNote.user_id == m.user_id, TopicNote.topic_id.in_(list(title) or [0]))} if m else set()
     return {"sources": json.loads(m.sources or "[]") if m else [], "matched_by": m.matched_by if m else "", "saved_at": utc_iso(m.saved_at) if m else None,
             "syllabus": [{"id": un.id, "name": un.name, "topics": [{"id": x.id, "title": x.title, "has_notes": x.id in notes} for x in ts]} for un, ts in syl],
             "sections": [{**x, "words": sum(len(p.split()) for p in paras[x["from"] - 1:x["to"]]), "heading": paras[x["from"] - 1].lstrip("#").strip()[:120] if paras[x["from"] - 1].startswith("#") else "",
                           "excerpt": plain_excerpt(paras[x["from"] - 1:x["to"]])} for x in secs],
-            "topics": sum(len(ts) for _, ts in syl), "covered": len(covered), "with_notes": len(notes), **study_ai_status(u, s)}
+            "topics": sum(len(ts) for _, ts in syl), "covered": len(covered), "with_notes": len(notes), "reading": reading, "ocr_available": ocr_ready(), **study_ai_status(u, s)}
 @app.get("/api/courses/{cid}/my-material")
 def material_get(cid: int, u: User = Depends(me), s: Session = Depends(db)): return material_view(my_material(cid, u, s), s, cid, u)
 @app.post("/api/courses/{cid}/my-material/files")
@@ -3157,7 +3240,8 @@ async def material_file(cid: int, request: Request, name: str = "", u: User = De
     if int(request.headers.get("content-length") or 0) > MAX_SOURCE_BYTES: raise HTTPException(413, "The file is too large. Keep it under 20 MB.")
     b = await request.body()
     if len(b) > MAX_SOURCE_BYTES: raise HTTPException(413, "The file is too large. Keep it under 20 MB.")
-    kind, paras = await run_in_threadpool(material_paras, name or "file", b)
+    kind, paras, pages = await run_in_threadpool(read_material, name or "file", b)
+    if kind == "scan": src = add_scan(m, name or "file", pages); s.commit(); spawn(run_ocr, CourseMaterial, m.id, src["sid"], b, pages); return src
     src = add_material(m, name or "file", kind, paras); m.sections = None; s.commit(); return src
 @app.post("/api/courses/{cid}/my-material/text")
 def material_text(cid: int, b: StudyTextIn, u: User = Depends(me), s: Session = Depends(db)):
@@ -3175,6 +3259,7 @@ class MatchIn(BaseModel): method: str = "ai"
 @app.post("/api/courses/{cid}/my-material/match")
 async def material_match(cid: int, b: MatchIn, u: User = Depends(me), s: Session = Depends(db)):
     m = my_material(cid, u, s); paras = json.loads(m.paras or "[]") if m else []
+    if m: not_while_reading(m, s)
     if not paras: raise HTTPException(400, "Add your material first")
     syl = syllabus(s, cid); topics = [x for _, ts in syl for x in ts]
     if not topics: raise HTTPException(400, "This course has no syllabus topics yet. Ask your teacher.")
