@@ -776,6 +776,21 @@ def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
     s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=fit_sem(s, b.program_id, to_sem(b.semester)), must_change=b.role != "admin")); s.commit(); return {"ok": True}
+@app.delete("/api/admin/users/{uid}")
+def delete_user(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
+    """Removes an account for good with the person's own records (progress, test attempts, bookmarks, their study courses and so on).
+    Programs, courses and topics they created stay; they just no longer name a creator. The activity log keeps its rows."""
+    u = s.get(User, uid)
+    if not u: raise HTTPException(404, "No such user")
+    if u.id == a.id: raise HTTPException(400, "You can't delete your own account")
+    for t in reversed(Base.metadata.sorted_tables):  # rows that point at this user, children before parents
+        for fk in t.foreign_keys:
+            if fk.column.table.name != "users": continue
+            col = fk.parent
+            if fk.ondelete == "SET NULL" or (fk.ondelete is None and col.name == "owner_id"): s.execute(t.update().where(col == uid).values({col.name: None}))
+            else: s.execute(t.delete().where(col == uid))
+    s.query(PasswordReset).filter_by(user_id=uid).delete()
+    s.delete(u); s.commit(); return {"ok": True}
 @app.patch("/api/admin/users/{uid}")
 def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -918,6 +933,28 @@ def admin_programs(q: str = "", order: str = "name", status: str = "active", lim
     rows = qs.order_by(*PSORT.get(order, PSORT["name"])(stu), Program.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     c = counts(s, [p.id for p in rows])
     return {"total": qs.count(), "items": [{"id": p.id, "name": p.name, "pattern": p.pattern or "semester", "term": term_label(p), "archived": bool(p.archived_at), **c[p.id]} for p in rows]}
+@app.get("/api/admin/courses")
+def admin_courses(q: str = "", program_id: int | None = None, order: str = "name", status: str = "active", limit: int = 25, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
+    """Every course in one list for admins: search (course, program, semester or owner), a program filter, sorting and paging."""
+    units = s.query(func.count(Unit.id)).filter(Unit.course_id == Course.id, Unit.archived_at.is_(None)).correlate(Course).scalar_subquery()
+    topics = s.query(func.count(Topic.id)).filter(Topic.course_id == Course.id, Topic.archived_at.is_(None)).correlate(Course).scalar_subquery()
+    qs = s.query(Course, Program, Semester, User, units, topics).outerjoin(Program, Program.id == Course.program_id) \
+        .outerjoin(Semester, Semester.id == Course.semester_id).outerjoin(User, User.id == Course.faculty_owner_id)
+    live = and_(Course.archived_at.is_(None), Semester.archived_at.is_(None), Program.archived_at.is_(None))  # a course is archived with its semester or program
+    if status == "archived": qs = qs.filter(~live)
+    elif status != "all": qs = qs.filter(live)
+    if program_id is not None: qs = qs.filter(Course.program_id == program_id)
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        qs = qs.filter(or_(*[func.lower(func.coalesce(c, "")).like(like) for c in (Course.name, Program.name, Semester.name, User.name)]))
+    name = [func.lower(Course.name)]
+    by = {"program": [func.lower(Program.name), func.coalesce(Semester.semester_no, 99), *name], "topics": [topics.desc(), *name], "newest": [Course.id.desc()], "name_desc": [func.lower(Course.name).desc()]}
+    total = qs.count()
+    rows = qs.order_by(*by.get(order, name), Course.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    return {"total": total, "items": [{"id": c.id, "name": c.name, "program_id": c.program_id, "program": p.name if p else None, "semester_id": c.semester_id,
+                                       "semester": sm.name if sm else None, "term": term_label(p) if p else "Semester", "owner_id": c.faculty_owner_id, "owner": ow.name if ow else None,
+                                       "owner_problem": owner_problem(ow), "units": un, "topics": tp,
+                                       "archived": bool(c.archived_at or (sm and sm.archived_at) or (p and p.archived_at))} for c, p, sm, ow, un, tp in rows]}
 @app.get("/api/admin/programs/{pid}")
 def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     p = s.get(Program, pid)
