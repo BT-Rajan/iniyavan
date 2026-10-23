@@ -9,6 +9,13 @@ Multi-user engineering study app: FastAPI + MariaDB/MySQL + React PWA. DeepSeek 
 
 The PWA installs only over HTTPS (or localhost), so put the app behind a TLS reverse proxy.
 
+## Topic content: Markdown, HTML, or HTML with JavaScript
+In the topic editor, **Fill from files** takes the content as a Markdown `.md` file (a plain file is the content; one with the config sections fills the other boxes too) or an HTML file, with any images it uses. The content format has three choices:
+- **Markdown** and **HTML**: HTML is cleaned when it is saved (no scripts or styles), so it takes the app's look.
+- **HTML + JavaScript**: choose this before picking the file to keep the page whole, scripts and styles included. It runs only in a sandboxed frame (`GET /api/topics/{id}/frame`, served with `Content-Security-Policy: sandbox allow-scripts` and no same-origin), so its scripts work but can't read the app's sign-in, call the API as the reader or change the app's page. The frame is reached with a pass that is good for that one topic for 8 hours and is never accepted as a sign-in. A sandboxed page also can't keep data in the browser (localStorage) between visits. Search and the AI read only its words, never its scripts.
+
+Students open a topic straight into a **full-screen reader** (with a button for the browser's own full screen). Anyone can select text and press **Highlight** to save it; tapping a highlight offers **Remove highlight**. Highlights are saved per person (`/api/topics/{id}/highlights`, `DELETE /api/me/highlights/{id}`), listed in the reader's side panel and under the topic's notes, and come back each time the topic is opened. A highlight is stored as its text plus the words just before it, so it is found again even if the topic is edited elsewhere.
+
 ## Name, logo and colours
 The app is called Zigora (formerly Eng Tutor). The name comes from `APP_NAME` in `.env`; an older `.env` may still say `APP_NAME="Eng Tutor"`, so change it there and run `./run.sh`. An admin can also set another name and logo under Settings, which wins over `.env`. Without a custom logo the app shows the Zigora mark (`frontend/public/favicon.svg`; the PNG icons beside it are drawn from the same shape). The colours are plum `#722f99`, stone `#c5c1c1`, cream `#fee7c8` and coral `#ff9292`, set as variables at the top of `frontend/src/styles.css`. The pm2 process and the database keep the name `engtutor`, so existing servers carry on unchanged.
 

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Date, func, or_, and_, inspect, text
@@ -173,6 +173,11 @@ class Progress(Base):  # one row per student and topic, made when they first ope
     reads = Column(Integer, default=1); last_read = Column(DateTime, default=dt.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)  # set when the student marks the topic completed (UTC); cleared only if they undo it
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class Highlight(Base):  # a passage someone marked in a topic's content; found again by its text and the words just before it
+    __tablename__ = "highlights"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
+    text = Column(Text); prefix = Column(String(200), default=""); created = Column(DateTime, default=dt.datetime.utcnow)
 class Bookmark(Base):  # topics a user has saved to their own list
     __tablename__ = "bookmarks"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
@@ -206,6 +211,7 @@ def db():
 def me(request: Request, authorization: str = Header(""), s: Session = Depends(db)):
     try: claims = jwt.decode(authorization[7:], SECRET, algorithms=["HS256"]); uid = claims["uid"]
     except Exception: raise HTTPException(401, "Please sign in again")
+    if claims.get("use"): raise HTTPException(401, "Please sign in again")  # a pass for one topic's frame is not a sign-in
     u = s.get(User, uid)
     if not u or not u.active: raise HTTPException(401, "Account disabled. Ask your admin.")
     if claims.get("k") != fp(u): raise HTTPException(401, "Your password changed. Please sign in again.")
@@ -241,6 +247,7 @@ if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_meth
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # the app bundle is ~850 KB; compressed it is about a quarter of that
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+FRAME_PATH = re.compile(r"^/api/(topics/\d+/frame|frame-preview/[\w-]+)$")
 SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/")  # student reading activity is already tracked as progress
 def audit_write(uid, method, path, status):
     with Session_() as s: s.add(AuditLog(user_id=uid, method=method, path=path[:200], status=status)); s.commit()
@@ -256,6 +263,7 @@ async def audit(request: Request, call_next):
 @app.middleware("http")
 async def secure_headers(request: Request, call_next):
     r = await call_next(request)
+    if FRAME_PATH.match(request.url.path): r.headers["X-Content-Type-Options"] = "nosniff"; return r  # an interactive topic sets its own sandbox headers
     r.headers.update({"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin", "Content-Security-Policy": CSP,
                       "Permissions-Policy": "camera=(), microphone=(), geolocation=()"})
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https": r.headers["Strict-Transport-Security"] = "max-age=31536000"
@@ -1350,8 +1358,8 @@ def record_version(s, t, before, user_id, note=""):
     old = [i for (i,) in s.query(TopicVersion.id).filter_by(topic_id=t.id).order_by(TopicVersion.id.desc()).offset(VERSIONS_KEPT)]
     if old: s.query(TopicVersion).filter(TopicVersion.id.in_(old)).delete(synchronize_session=False)
     return True
-FORMATS = ("markdown", "html")
-def fmt_of(t): return "html" if getattr(t, "content_format", None) == "html" else "markdown"
+FORMATS = ("markdown", "html", "interactive")  # interactive: an HTML page with its own scripts, kept as uploaded and run only in a sandboxed frame
+def fmt_of(t): f = getattr(t, "content_format", None); return f if f in ("html", "interactive") else "markdown"
 HTML_TAGS = {"p", "br", "hr", "div", "span", "section", "article", "header", "footer", "aside", "main", "figure", "figcaption", "blockquote", "pre", "code", "kbd", "samp",
              "h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em", "i", "u", "s", "del", "ins", "mark", "small", "sub", "sup", "abbr", "cite", "q", "dfn", "time", "bdi", "bdo",
              "ul", "ol", "li", "dl", "dt", "dd", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col", "a", "img", "details", "summary", "ruby", "rt", "rp", "input"}
@@ -1365,7 +1373,11 @@ def clean_html(raw):
                     set_tag_attribute_values={"input": {"disabled": "disabled"}})
     return re.sub(r"<input(?![^>]*type=\"checkbox\")[^>]*>", "", out).strip()  # only task-list checkboxes, never a real form field
 def html_text(h): return re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", " ", re.sub(r"<(br|/p|/li|/tr|/h\d|/div)[^>]*>", "\n", h or "")))).strip()
-def shown_content(t): return clean_html(t.content) if fmt_of(t) == "html" else t.content  # cleaned again on the way out, whatever path saved it
+def shown_content(t): return clean_html(t.content) if fmt_of(t) == "html" else t.content  # cleaned again on the way out, whatever path saved it; interactive pages are only ever run in the sandboxed frame
+def words_of(text, fmt):  # the words of a topic's content, for search and the AI: no tags, and none of an interactive page's scripts or styles
+    if fmt == "markdown": return text or ""
+    return html_text(re.sub(r"<(script|style|noscript|template)\b.*?</\1\s*>", " ", text or "", flags=re.S | re.I))
+INTERACTIVE_MAX = 2_000_000
 def topic_fields(b, s, keep_fmt=None):
     un = s.get(Unit, b.unit_id)
     if not un: raise HTTPException(400, "Choose a unit for this topic")
@@ -1378,6 +1390,7 @@ def topic_fields(b, s, keep_fmt=None):
         if fmt not in FORMATS: raise HTTPException(400, "Content format must be markdown or html")
         f["content_format"] = fmt
         if fmt == "html" and "content" in f: f["content"] = clean_html(f["content"])
+        if fmt == "interactive" and len(f.get("content") or "") > INTERACTIVE_MAX: raise HTTPException(413, "The page is over 2 MB. Split it into smaller topics.")
     return f
 def update(row, vals, s):
     if not row: raise HTTPException(404, "Not found")
@@ -2186,7 +2199,7 @@ def restore_topic_version(vid: int, u: User = Depends(staff), s: Session = Depen
     record_version(s, t, before, u.id, f"Restored the version of {v.saved_at.strftime('%d %b %Y %H:%M') if v.saved_at else 'earlier'} UTC"); s.commit()
     return {"ok": True}
 # ---- a topic from files: an HTML file for the content and a config .md file for the rest; the editor fills in from it, nothing is saved here ----
-class TopicFilesIn(BaseModel): unit_id: int; html: str = ""; config: str = ""; images: dict[str, str] = {}  # images: file name -> url from POST /api/uploads
+class TopicFilesIn(BaseModel): unit_id: int; html: str = ""; config: str = ""; images: dict[str, str] = {}; scripts: bool = False  # scripts: keep the page whole as HTML + JavaScript. images: file name -> url from POST /api/uploads
 CONFIG_SECTIONS = {"title": ("topic title", "title"), "content": ("topic content", "content", "notes"), "question_pattern": ("question pattern", "question patterns"),
                    "sample_content": ("sample content", "sample answer", "sample question and answer", "sample"),
                    "guideline": ("how an answer should be", "answer guideline", "guideline", "how to answer")}
@@ -2216,7 +2229,8 @@ def parse_topic_config(text):
         if m and m.group(1) == "#" and cur is None and "title" not in out: out["title"] = m.group(2).strip(); continue
         (buf[cur] if cur else loose).append(ln)
     for k, L in buf.items(): out[k] = "\n".join(L).strip()
-    if any(x.strip() for x in loose): warnings.append("Config: text before the first section heading was left out")
+    if not buf and any(x.strip() for x in loose): out["content"] = "\n".join(loose).strip()  # a plain Markdown file, with none of the config sections, is the content itself
+    elif any(x.strip() for x in loose): warnings.append("Config: text before the first section heading was left out")
     if "published" in out:
         v = out["published"].lower()
         if v in ("yes", "true", "published", "1", "y"): out["published"] = True
@@ -2270,10 +2284,15 @@ def topic_from_files(b: TopicFilesIn, u: User = Depends(staff), s: Session = Dep
     images = 0
     if b.html.strip():
         raw, images, missing = html_images(b.html, b.images)
-        body = clean_html(raw)
-        if len(body) > 2_000_000: raise HTTPException(413, "The HTML content is over 2 MB after cleaning. Split it into smaller topics.")
-        if not html_text(body) and "<img" not in body: warnings.append("The HTML file has no text to show")
-        out.update(content=body, content_format="html")
+        if b.scripts:  # HTML + JavaScript: the page is kept whole and runs only in a sandboxed frame
+            if len(raw) > INTERACTIVE_MAX: raise HTTPException(413, "The HTML file is over 2 MB. Split it into smaller topics.")
+            out.update(content=raw, content_format="interactive")
+        else:
+            if re.search(r"<script\b", raw, re.I): warnings.append("The page's JavaScript was removed. To keep it, choose HTML + JavaScript as the content format, then choose the file again.")
+            body = clean_html(raw)
+            if len(body) > 2_000_000: raise HTTPException(413, "The HTML content is over 2 MB after cleaning. Split it into smaller topics.")
+            if not html_text(body) and "<img" not in body: warnings.append("The HTML file has no text to show")
+            out.update(content=body, content_format="html")
         if missing: warnings.append("Images not found, so they were left out: " + ", ".join(dict.fromkeys(missing)) + ". Choose the image files together with the HTML file.")
         if "content" in cfg and cfg["content"]: warnings.append("The config's Topic content section was ignored because the HTML file is the content")
         if "title" not in out:
@@ -2295,7 +2314,76 @@ def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     check_topic_access(u, t, s)
     p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
     edit = can_edit(u, topic_course_id(t, s), s)
-    return {**full(t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "my_notes": my_notes(s, u.id, tid), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+    frame = {"frame_url": f"/api/topics/{tid}/frame?t={frame_pass(u, tid)}"} if fmt_of(t) == "interactive" else {}
+    return {**full(t, s), **frame, **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "my_notes": my_notes(s, u.id, tid), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+# ---- interactive topics run in a sandboxed frame; highlights are saved per person ----
+# The page gets an opaque origin (CSP sandbox without allow-same-origin), so its scripts can't read the app's sign-in, call the API as the reader or
+# touch the app's page. It talks to the app only through postMessage, and the app accepts just the highlight messages below.
+FRAME_CSP = ("sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads; "
+             "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'self'")
+def frame_pass(u, tid): return jwt.encode({"uid": u.id, "tid": tid, "use": "frame", "k": fp(u), "exp": dt.datetime.utcnow() + dt.timedelta(hours=8)}, SECRET)
+@functools.lru_cache(maxsize=1)
+def highlighter_js():  # the same highlighter the app bundles (frontend/src/highlighter.js), run inside the frame
+    try: return open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend", "src", "highlighter.js"), encoding="utf-8").read()
+    except OSError: return ""
+FRAME_BOOT = """(function(){var P=parent,n=0,wait={},h=null;function ask(m){return new Promise(function(ok,no){var k=++n;wait[k]=[ok,no];P.postMessage(Object.assign({zg:1,k:k},m),'*')})}
+addEventListener('message',function(e){if(e.source!==P)return;var d=e.data||{};if(!d.zg)return
+if(d.k&&wait[d.k]){wait[d.k][d.error?1:0](d);delete wait[d.k];return}
+if(d.type==='init'&&!h&&window.zgHighlighter)h=zgHighlighter.attach(document.body,{list:d.list||[],save:function(x){return ask({type:'save',text:x.text,prefix:x.prefix})},remove:function(id){return ask({type:'remove',id:id})},changed:function(l){P.postMessage({zg:1,type:'changed',list:l},'*')}})
+if(d.type==='scroll'&&h)h.scrollTo(d.id);if(d.type==='unpaint'&&h)h.remove(d.id)});P.postMessage({zg:1,type:'ready'},'*')})()"""
+def frame_page(raw):
+    tail = f"<style>mark.zg-hl{{background:rgba(255,146,146,.45);color:inherit;border-radius:2px;cursor:pointer}}.zg-hl-btn{{position:fixed;z-index:2147483647;padding:8px 14px;border:0;border-radius:8px;background:#722f99;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer}}</style><script>{highlighter_js()}</script><script>{FRAME_BOOT}</script>"
+    raw = raw or ""
+    i = raw.lower().rfind("</body>")
+    page = raw[:i] + tail + raw[i:] if i >= 0 else raw + tail
+    return HTMLResponse(page, headers={"Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+@app.get("/api/topics/{tid}/frame")
+def topic_frame(tid: int, t: str = "", s: Session = Depends(db)):
+    try: c = jwt.decode(t, SECRET, algorithms=["HS256"])
+    except Exception: raise HTTPException(401, "This link has expired. Open the topic again.")
+    if c.get("use") != "frame" or c.get("tid") != tid: raise HTTPException(401, "This link has expired. Open the topic again.")
+    u, tp = s.get(User, c.get("uid")), s.get(Topic, tid)
+    if not u or not u.active or c.get("k") != fp(u): raise HTTPException(401, "Please sign in again")
+    if not tp or fmt_of(tp) != "interactive": raise HTTPException(404, "Topic not found")
+    check_topic_access(u, tp, s)
+    return frame_page(tp.content)
+PREVIEWS = {}  # id -> (expires, html): an unsaved interactive page the editor is previewing, kept a few minutes in memory
+class PreviewIn(BaseModel): html: str
+@app.post("/api/topics/frame-preview")
+def frame_preview(b: PreviewIn, _: User = Depends(staff)):
+    if len(b.html) > INTERACTIVE_MAX: raise HTTPException(413, "The page is over 2 MB")
+    now = time_now(); [PREVIEWS.pop(k) for k, v in list(PREVIEWS.items()) if v[0] < now]
+    while len(PREVIEWS) >= 50: PREVIEWS.pop(next(iter(PREVIEWS)))
+    pid = secrets.token_urlsafe(18); PREVIEWS[pid] = (now + 600, b.html); return {"url": f"/api/frame-preview/{pid}"}
+@app.get("/api/frame-preview/{pid}")
+def frame_preview_page(pid: str):
+    v = PREVIEWS.get(pid)
+    if not v or v[0] < time_now(): raise HTTPException(404, "This preview has expired. Preview again.")
+    return frame_page(v[1])
+def time_now(): return dt.datetime.utcnow().timestamp()
+class HighlightIn(BaseModel): text: str; prefix: str = ""
+def hl_row(h): return {"id": h.id, "text": h.text, "prefix": h.prefix or "", "created": h.created.isoformat() + "Z" if h.created else None}
+@app.get("/api/topics/{tid}/highlights")
+def my_highlights(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
+    return {"items": [hl_row(h) for h in s.query(Highlight).filter_by(user_id=u.id, topic_id=tid).order_by(Highlight.id)]}
+@app.post("/api/topics/{tid}/highlights")
+def add_highlight(tid: int, b: HighlightIn, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
+    text = b.text.strip()
+    if not text: raise HTTPException(400, "Select some text to highlight")
+    if len(text) > 5000: raise HTTPException(400, "That selection is too long to highlight. Pick a shorter passage.")
+    if s.query(Highlight).filter_by(user_id=u.id, topic_id=tid).count() >= 500: raise HTTPException(400, "This topic already has 500 highlights. Remove some first.")
+    h = Highlight(user_id=u.id, topic_id=tid, text=text, prefix=(b.prefix or "")[-200:]); s.add(h); s.commit(); return hl_row(h)
+@app.delete("/api/me/highlights/{hid}")
+def remove_highlight(hid: int, u: User = Depends(me), s: Session = Depends(db)):
+    h = s.get(Highlight, hid)
+    if not h or h.user_id != u.id: raise HTTPException(404, "Highlight not found")
+    s.delete(h); s.commit(); return {"ok": True}
 @app.put("/api/topics/{tid}/bookmark")
 def add_bookmark(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     if u.role == "admin": raise HTTPException(403, "Bookmarks are for students and faculty")  # admins manage content; they have no study list
@@ -2471,7 +2559,7 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     f = full(t, s); prompt = prompt_for(s, kind)
     mine = my_notes(s, u.id, tid) if u.role == "student" else None
     if mine:  # the student's own notes are private: the answer is written for them alone, never saved for others, and counts toward their daily AI requests
-        body = html_text(f["content"]) if f["content_format"] == "html" else (f["content"] or "")
+        body = words_of(f["content"], f["content_format"])
         msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\nThe student's own notes on this topic:\n{mine}\n\n" + (
             "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
         return {"text": await study_ask(u, s, "topic_" + kind, prompt, msg, max_tokens=None), "cached": False, "own_notes": True}
@@ -2479,7 +2567,7 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     key = key_or_fail(u, s)
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
-    body = html_text(f["content"]) if f["content_format"] == "html" else f["content"]  # the AI gets the words of an HTML topic, not its tags
+    body = words_of(f["content"], f["content_format"])  # the AI gets the words of an HTML topic, not its tags or scripts
     msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\n" + (
         "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
     text, tokens = await ask_ai(u, s, key, prompt, msg)
@@ -2517,7 +2605,7 @@ def search(q: str = "", limit: int = 10, u: User = Depends(me), s: Session = Dep
     need = max(1, (len(terms) + 1) // 2); scored = []
     for t, un, co in rows:
         if not allowed(co) or (t.published is False and not can_edit(u, co.id, s)) or (topic_off(s, t) and not can_edit(u, co.id, s)): continue  # archived topics and units are not searchable by students
-        title, unit, course, body = (t.title or "").lower(), (un.name or "").lower(), (co.name or "").lower(), plain(html_text(t.content) if fmt_of(t) == "html" else t.content)
+        title, unit, course, body = (t.title or "").lower(), (un.name or "").lower(), (co.name or "").lower(), plain(words_of(t.content, fmt_of(t)))
         hit = [tm for tm in terms if tm in title or tm in unit or tm in course or tm in body.lower()]
         if len(hit) < need: continue
         score = sum(5 if tm in title else 2 if (tm in unit or tm in course) else 1 for tm in hit) + (5 if len(terms) > 1 and " ".join(terms) in title else 0)
@@ -3150,7 +3238,7 @@ async def staff_topic_practice(tid: int, b: NewQuizIn, u: User = Depends(me), s:
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
-    body = html_text(t.content) if fmt_of(t) == "html" else (t.content or "")
+    body = words_of(t.content, fmt_of(t))
     mine = my_notes(s, u.id, tid)
     if mine: body = (body + "\n\nThe student's own notes:\n" + mine).strip()
     qs = await write_questions(u, s, b.kind, t.title, body, s.query(StudyQuiz.questions).filter_by(src_topic_id=tid, user_id=u.id).order_by(StudyQuiz.id.desc()).limit(3).all())
