@@ -47,8 +47,17 @@ def test_the_session_is_fixed_for_the_day_and_completes(env):
 
 def test_missed_days_do_not_pile_up(env):
     i = setup(env); routine(env, minutes=30)
-    with Session_() as s: s.add(ActivityDay(user_id=uid("stu@x.com"), day=today() - dt.timedelta(days=5), reads=1)); s.commit()
+    with Session_() as s:
+        s.add(ActivityDay(user_id=uid("stu@x.com"), day=today() - dt.timedelta(days=5), reads=1))
+        s.query(Routine).update({"started_at": dt.datetime.utcnow() - dt.timedelta(days=10)}); s.commit()
     v = session(env); assert v["missed"] == 4 and len(v["session"]["items"]) == 1  # four study days missed, still one topic today
+
+def test_days_before_the_routine_are_not_missed(env):
+    setup(env); assert routine(env).json()["missed"] == 0  # a new routine: no "welcome back"
+    with Session_() as s: s.query(Routine).update({"started_at": dt.datetime.utcnow() - dt.timedelta(days=3)}); s.commit()
+    assert session(env)["missed"] == 2  # only the two study days after the day it was set up
+    with Session_() as s: s.query(Routine).update({"started_at": None, "updated_at": dt.datetime.utcnow()}); s.commit()
+    assert session(env)["missed"] == 0  # a routine from before the start date was kept falls back to when it was last changed
 
 def test_rest_days_and_an_extra_session(env):
     setup(env); v = routine(env, days=without_today()).json()
