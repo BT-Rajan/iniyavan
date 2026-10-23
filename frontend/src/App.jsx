@@ -1,4 +1,5 @@
-import {useState,useEffect,useCallback,useRef,createContext,useContext} from 'react'
+import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,Fragment,isValidElement} from 'react'
+import {createPortal} from 'react-dom'
 import Markdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
@@ -82,6 +83,7 @@ export default function App(){
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
     <TopBar user={user} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find}/>}
+    <div id="pageslot"/>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
@@ -1125,13 +1127,18 @@ function Bookmarks({toast,role}){
 
 const sheets=[]  // open sheets, topmost last, so Escape closes only the one on top
 // a pop-up for short questions; with page set, a form that takes over the content area like a page of its own, with a way back
+let pages=0  // forms open as pages right now; while any is open the page under it is hidden
+const flat=ch=>Children.toArray(ch).flatMap(c=>isValidElement(c)&&c.type===Fragment?flat(c.props.children):[c])
 function Sheet({close,children,page}){
   const box=useRef(null),cb=useRef(close);cb.current=close
   useEffect(()=>{const me={},was=document.activeElement;sheets.push(me)
     const k=e=>{if(e.key==='Escape'&&sheets[sheets.length-1]===me)cb.current()}
     addEventListener('keydown',k);if(box.current&&!box.current.contains(document.activeElement))box.current.focus()
     return()=>{sheets.splice(sheets.indexOf(me),1);removeEventListener('keydown',k);if(was&&was.isConnected)was.focus?.()}},[])
-  if(page)return <div className="scrim full"><div className="sheet page" ref={box} tabIndex={-1} role="dialog" aria-modal="true"><button className="link" onClick={()=>cb.current()}><ChevronLeft size={16}/> Back</button>{children}</div></div>
+  useEffect(()=>{if(!page)return;pages++;document.body.classList.add('has-page');scrollTo({top:0});return()=>{if(!--pages)document.body.classList.remove('has-page')}},[page])
+  const slot=page&&document.getElementById('pageslot')
+  if(slot){const all=flat(children),i=all.findIndex(c=>isValidElement(c)&&c.type==='h3'),title=i<0?'':all[i].props.children  // the form's heading becomes the page title
+    return createPortal(<><Bar title={title} back={()=>cb.current()}/><div className="main" ref={box} tabIndex={-1} role="region" aria-label={typeof title==='string'?title:undefined}>{all.filter((_,j)=>j!==i)}</div></>,slot)}
   return <div className="scrim" onClick={()=>cb.current()}><div className="sheet" ref={box} tabIndex={-1} role="dialog" aria-modal="true" onClick={e=>e.stopPropagation()}>{children}</div></div>}
 const Confirm=({o,answer})=><Sheet close={()=>answer(false)}><h3>{o.title}</h3>{o.body&&<p className="known">{o.body}</p>}
   <button className={'btn'+(o.danger?' danger':'')} onClick={()=>answer(true)}>{o.ok||'Confirm'}</button><button className="btn ghost" onClick={()=>answer(false)}>Cancel</button></Sheet>
