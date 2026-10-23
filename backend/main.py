@@ -2674,12 +2674,28 @@ def course_progress(cid: int, u: User = Depends(staff), s: Session = Depends(db)
     now = dt.datetime.utcnow()
     return {"students": len(aud), "topics": {x.id: {"completed": done[x.id], "overdue": len(aud) - done[x.id] if x.learning_due_at and x.learning_due_at < now else 0} for x in topics}}
 
+# the short steps on a topic page: each reply is small, ends in something to wonder about, and comes back as JSON the page lays out
+STEP_RULES = ("You help a busy engineering student learn one topic in small steps. Use only what fits the topic's notes and stay accurate. "
+              "Plain short sentences: no greeting, no filler, no headings. Write formulas in plain text or $...$ math. "
+              "Reply with only a JSON object with exactly these keys (the keys stay in English): ")
+STEPS = {"gist": 350, "why": 300, "example": 300, "exam": 400, "check": 250, "outline": 400}  # the kinds that answer in JSON, and their token limits
+EXAM_KINDS = ("answer", "exam", "outline")  # the kinds that also get the question pattern, answer guideline and sample content
 PROMPTS = {  # the built-in prompts; an admin can replace any of them under Settings (stored as prompt_<kind>)
- "explain": ("You are a warm, sharp engineering tutor for a teenage student. Explain the topic clearly with a hook, an everyday analogy, "
-             "the core idea step by step, one worked example, and 3 quick recap bullets. Use Markdown, be concise, stay accurate. "
-             "Show comparisons, classifications and families of related items as a Markdown table: a header row, a separator row, and every row on its own line."),
+ "explain": ("You are a warm, sharp engineering tutor for a busy student with little time. Explain the topic in at most 150 words: one line on why it matters, "
+             "the core idea in 2 to 4 short steps, and one tiny example. Use Markdown, plain short sentences, no greeting and no recap. Stay accurate. "
+             "Use a small Markdown table only when a comparison is clearer that way: a header row, a separator row, and every row on its own line."),
  "answer": ("You are an engineering exam coach. Write a model answer that follows the given answer guideline and question pattern exactly "
             "(structure, length, marks split, diagrams to sketch, keywords). Use Markdown (tables, when you use them, with every row on its own line). Mirror the style of the sample content."),
+ "gist": STEP_RULES + ('{"points": [three strings of at most 18 words each: what it is, the key idea or contrast, why it matters], '
+                       '"hook": "one short question (at most 15 words) about the core idea that makes a student curious, answerable from the notes", '
+                       '"hook_answer": "the answer to the hook in at most 25 words"}'),
+ "why": STEP_RULES + '{"text": "at most 80 words: the reason or mechanism behind the core idea, as cause and effect", "hook": "one short question that goes one step deeper"}',
+ "example": STEP_RULES + '{"text": "at most 80 words: one concrete everyday or industrial example of the idea at work, with numbers when natural", "hook": "one short question the example raises"}',
+ "exam": STEP_RULES + ('{"question": "one typical short exam question on this topic with its marks in brackets, following the question pattern when one is given", '
+                       '"answer": "a model answer in at most 60 words, in points when that is how it is marked, following the answer guideline", "tip": "what examiners look for, at most 15 words"}'),
+ "check": STEP_RULES + '{"question": "one question that tests understanding rather than memory of the wording", "answer": "the answer in at most 30 words, with a one-line reason"}',
+ "outline": STEP_RULES + ('{"points": [four to seven short lines: the skeleton of a full-marks answer in order, with the headings, key terms, and the diagram or equation to include], '
+                          '"marks": "how the marks usually split, at most 15 words, or an empty string"}'),
  "search": ("You are the search helper inside a study app for college students. The student typed a search about something they are studying and the app has no good match in its own notes, "
             "or they asked for a second opinion. Answer it as a clear, accurate tutor: start with a one-line definition, then explain the core idea simply, give one example, and end with 3 recap bullets. "
             "Use Markdown; show comparisons and families of related items as a table with every row on its own line. Fit the answer to the student's program and level when it is given. "
@@ -2687,6 +2703,12 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
 }
 PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on a topic. The topic's notes are sent with it."),
                "answer": ("Sample answer tab", "Used for the model answer. The question pattern, answer guideline and sample content are sent with it."),
+               "gist": ("Topic gist", "The three points and the curious question at the top of every topic page."),
+               "why": ("Topic step: Why?", "A short reason behind the topic's core idea."),
+               "example": ("Topic step: Example", "A short real example of the topic."),
+               "exam": ("Topic step: Exam angle", "One exam-style question with a short model answer."),
+               "check": ("Topic step: Quick check", "One question whose answer the student reveals; nothing is scored."),
+               "outline": ("Sample answer outline", "The skeleton of a full-marks answer, shown before the full sample answer."),
                "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
 MAX_PROMPT = 4000
 def prompt_for(s, kind): return setting(s, "prompt_" + kind).strip() or PROMPTS[kind]
@@ -2705,29 +2727,52 @@ async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60):
         log.warning("DeepSeek call failed: %s", type(e).__name__)
         if u.self_registered: raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
         raise ai_down(u, "DeepSeek did not answer.")
+def topic_msg(f, kind, mine=None):  # what the AI is told about a topic
+    body = words_of(f["content"], f["content_format"])  # the AI gets the words of an HTML topic, not its tags or scripts
+    return (f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\n"
+            + (f"The student's own notes on this topic:\n{mine}\n\n" if mine else "")
+            + (f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n" if kind in EXAM_KINDS else ""))
+def topic_hash(t, kind, prompt): return hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or "", prompt]).encode()).hexdigest()
+def step_reply(kind, text):  # a step's JSON, or None when the AI did not keep to it
+    try: d = ai_json(text)
+    except HTTPException: return None
+    return d if isinstance(d, dict) else None
 @app.get("/api/topics/{tid}/ai/{kind}")
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
-    if not t or kind not in PROMPTS: raise HTTPException(404, "Not found")
+    if not t or kind not in PROMPTS or kind == "search": raise HTTPException(404, "Not found")
     check_topic_access(u, t, s)
     f = full(t, s); prompt = in_lang(u, prompt_for(s, kind))
-    mine = my_notes(s, u.id, tid) if u.role == "student" else None
+    mine = my_notes(s, u.id, tid) if u.role == "student" and kind in ("explain", "answer") else None
     if mine:  # the student's own notes are private: the answer is written for them alone, never saved for others, and counts toward their daily AI requests
-        body = words_of(f["content"], f["content_format"])
-        msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\nThe student's own notes on this topic:\n{mine}\n\n" + (
-            "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
-        return {"text": await study_ask(u, s, "topic_" + kind, prompt, msg, max_tokens=None), "cached": False, "own_notes": True}
-    ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or "", prompt]).encode()).hexdigest()
+        return {"text": await study_ask(u, s, "topic_" + kind, prompt, topic_msg(f, kind, mine), max_tokens=None), "cached": False, "own_notes": True}
+    ch = topic_hash(t, kind, prompt)
     key = key_or_fail(u, s)
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
-    if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
-    body = words_of(f["content"], f["content_format"])  # the AI gets the words of an HTML topic, not its tags or scripts
-    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\n" + (
-        "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
-    text, tokens = await ask_ai(u, s, key, prompt, msg)
+    if hit:
+        hit.hits += 1; s.commit()
+        return {"text": hit.text, "cached": True, **({"data": step_reply(kind, hit.text)} if kind in STEPS else {})}
+    text, tokens = await ask_ai(u, s, key, prompt, topic_msg(f, kind), max_tokens=STEPS.get(kind, 700 if kind == "explain" else None))
+    data = step_reply(kind, text) if kind in STEPS else None
+    if kind in STEPS and data is None: raise HTTPException(502, "The AI's answer could not be read. Try again.")  # not saved, so the next try asks again
     try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
     except Exception: s.rollback()
-    return {"text": text, "cached": False}
+    return {"text": text, "cached": False, **({"data": data} if kind in STEPS else {})}
+@app.get("/api/me/recall")
+def recall(u: User = Depends(me), s: Session = Depends(db)):
+    """'Remember this?': one curious question from a topic the student opened a few days ago, from its saved gist (never a new AI call). Changes daily."""
+    now = dt.datetime.utcnow(); prompt = in_lang(u, prompt_for(s, "gist")); found = []
+    rows = s.query(Topic, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == u.id, Progress.last_read <= now - dt.timedelta(days=2),
+                                                                                                Progress.last_read >= now - dt.timedelta(days=60)).order_by(Progress.last_read).limit(40).all()
+    for t, _ in rows:
+        hit = s.query(AICache).filter_by(topic_id=t.id, kind="gist", chash=topic_hash(t, "gist", prompt)).first()
+        d = step_reply("gist", hit.text) if hit else None
+        if not d or not d.get("hook") or not d.get("hook_answer"): continue
+        try: check_topic_access(u, t, s)
+        except HTTPException: continue
+        found.append({"topic_id": t.id, "title": t.title, "question": d["hook"], "answer": d["hook_answer"]})
+    if not found: return {"item": None}
+    return {"item": found[(now.date().toordinal() + u.id) % len(found)]}
 
 # ---- search: the app's own topics first, then the AI ----
 STOP = set("a an the of in on at to for and or is are was were be been what whats how why when which who does do did define explain meaning about between difference differences vs versus with from by as it its this that these those me my tell give short note notes write full form please can you i we".split())
@@ -3843,7 +3888,7 @@ def set_routine(b: RoutineIn, u: User = Depends(me), s: Session = Depends(db)):
 def stop_routine(u: User = Depends(me), s: Session = Depends(db)):  # back to studying without a routine; progress is untouched
     s.query(DaySession).filter_by(user_id=u.id).delete(); s.query(Routine).filter_by(user_id=u.id).delete(); s.commit(); return {"routine": None}
 # ---- notifications: worked out from what needs doing now, with each person's seen ones remembered, and an optional daily email ----
-STUDENT_NOTES = ("overdue", "due_soon", "quiz_new", "quiz_retake")
+STUDENT_NOTES = ("due_soon", "quiz_new")  # a teacher's date coming up and a new test; no reminders about being late or scoring low
 def notes_for(u, s):  # [{key, text, sub}]: staff get what needs attention, students their deadlines and tests. The key changes when the item does
     if u.role == "student":
         return [{"key": f"{i['kind']}:{i.get('quiz_id') or i.get('id')}"[:120], "text": i.get("title") or "", "sub": i.get("reason") or ""}

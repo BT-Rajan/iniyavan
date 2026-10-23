@@ -210,6 +210,14 @@ Students find the test on the course page under **MCQ tests**, and on Today when
 
 A student's final score in a test is their best attempt. Strengths and the question analysis use each student's latest attempt, so a retake replaces the earlier result. Unit quizzes take images, areas and the answer setting too, and their **Add from a CSV** uses the same format. API: `POST /api/quizzes/parse-csv`, `POST /api/quizzes` with `course_id`, `GET /api/quizzes/{id}/results`, `GET /api/quizzes/{id}/attempts`, `GET /api/attempts/{id}`, `GET /api/courses/{id}/gradebook`, `GET /api/me/scores`. Migration 0018 adds the columns.
 
+## How students learn a topic: short, curious, their choice
+The notes are the reference; the learning happens in small steps the student picks, and the app never assigns work.
+- **The gist** heads every topic page: three short points and one curious question (the answer is one tap away). Then four steps, each a few lines that end in a question worth wondering about: **Why?**, **Example**, **Exam angle** (an exam-style question with a short model answer and what examiners look for) and **Quick check** (one question, answer on tap, nothing scored or reported). The full notes, Explain and the sample answer stay below.
+- **Short by design:** the gist is about 50 words and each step at most about 80, with token limits on every reply. Explain is now at most 150 words. The Sample answer tab opens with the outline of a full-marks answer; the full answer is one tap away.
+- **Remember this?** On Home, one question from a topic the student opened 2 to 60 days ago, taken from that topic's saved gist (no AI call). It changes daily and can be dismissed for the day.
+- **No pressure:** Home shows where the student left off, Remember this? and their courses. There are no streaks, stat tiles, "today's focus" or late labels. A study routine appears only if the student sets one under My routine. A teacher's date shows as a plain date, and "I've learned this" is the student's own mark. Students are notified only of a teacher's date coming up and of new tests.
+- Every reply is saved per topic and language, so each costs AI tokens once. Admins can change any of these prompts under Settings → AI prompts.
+
 ## Lists: ten rows a page
 Every list in the app shows at most ten rows; a longer one gets numbered pages under it (Previous, page numbers, Next, and "1–10 of 41"). Long lists from the server (users, courses, programs, the activity log, the Reports lists, the question bank) are fetched a page at a time; shorter ones the screen already holds use the `Paged` component in `frontend/src/App.jsx`. New screens follow the same rule: wrap a list in `<Paged rows={…} render={…}/>`, or use `usePaged` with `<Pager>` when the server pages it.
 
