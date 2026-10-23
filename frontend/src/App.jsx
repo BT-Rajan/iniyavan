@@ -38,7 +38,7 @@ const COL=['#3d63c9','#2b8a7e','#a86a2a','#7655b3','#3b7ea6']
 const when=iso=>new Date(iso).toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'})  // shown in the viewer's own time zone
 const localInput=iso=>{if(!iso)return '';const d=new Date(iso),z=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`}
 const STATUS={not_started:'Not started',in_progress:'In progress',completed:'Completed'}
-const doneOf=ts=>`${ts.filter(x=>x.status==='completed').length} / ${ts.length}`  // worked out from each topic's state, never stored
+const doneOf=ts=>`${ts.filter(x=>x.status==='completed').length} of ${ts.length}`  // worked out from each topic's state, never stored
 const Mark=({s})=>s==='completed'?<Check className="done" aria-label="Completed"/>:<span className="st" aria-label={STATUS[s]}>{s==='in_progress'?'●':'—'}</span>
 const ownerLine=c=>c.mine?'Your course':c.owner_problem||(c.owner?'Owner: '+c.owner:'Owner not assigned')
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
@@ -350,7 +350,7 @@ function StaffHome({user,toast,open}){
 const FOCUS={overdue:[AlertTriangle,'Overdue','Open it'],due_soon:[Clock,'Due soon','Open it'],weak:[Target,'Needs review','Review'],resume:[Play,'Continue','Continue'],quiz_retake:[RotateCcw,'Retake the quiz','Retake'],quiz_new:[ClipboardList,'Quiz','Take the quiz'],next:[ArrowRight,'Next up','Start']}
 function Dashboard({user,toast,onOpen,onSearch,onStudy,onRoutine}){
   const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
-  const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[planErr,setPlanErr]=useState(''),[topic,setTopic]=useState(null)
+  const [tree,setTree]=useState(null),[ins,setIns]=useState(null),[today,setToday]=useState(null),[planErr,setPlanErr]=useState(''),[topic,setTopic]=useState(null),[sess,setSess]=useState(null)
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/insights').then(setIns).catch(()=>{});api('/me/today').then(r=>{setToday(r);setPlanErr('')}).catch(e=>setPlanErr(e.message))},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
@@ -358,15 +358,16 @@ function Dashboard({user,toast,onOpen,onSearch,onStudy,onRoutine}){
   for(const p of tree||[])for(const s of p.semesters)for(const c of s.courses){const at=seen.get(c.id),item={p,s,c,topics:c.units.flatMap(un=>un.topics.map(t=>({...t,unit:un})))}
     if(at===undefined){seen.set(c.id,courses.length);courses.push(item)}else if(courses[at].c.archived&&!c.archived)courses[at]=item}  // a course shown twice counts once, and a live place wins over an archived one
   const all=courses.flatMap(x=>x.topics.map(t=>({...t,x})))
-  const due=all.filter(t=>t.learning_due_at&&t.status!=='completed').sort((a,b)=>a.learning_due_at.localeCompare(b.learning_due_at)).slice(0,5)
-  const need=ins?.needs_study.slice(0,3)||[],focus=today?.focus||[],top=focus[0]
+  const routine=!!sess?.routine,inSession=new Set((sess?.session?.items||[]).filter(x=>x.kind!=='review'&&x.src!=='study').map(x=>x.id))  // today's session already lists these
+  const due=all.filter(t=>t.learning_due_at&&t.status!=='completed'&&!inSession.has(t.id)).sort((a,b)=>a.learning_due_at.localeCompare(b.learning_due_at)).slice(0,5)
+  const need=ins?.needs_study.slice(0,3)||[],focus=(today?.focus||[]).filter(f=>!inSession.has(f.topic_id)),top=routine?null:focus[0]
   const act=f=>f.topic_id?setTopic(f.topic_id):onOpen(f.nav)
   const sub=!today?'Here is where you are today':today.streak>1?`${today.streak}-day study streak. Keep it going`:today.active_today?'You have studied today. Nice start':focus.length?'Here is what to do next':'Here is where you are today'
   return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={sub}/><div className="main">
-    <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic}/>
+    <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic} onLoad={setSess}/>
     <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
     {sme&&sme.courses>0&&<><h3 className="sec first">Your own courses</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}
-    {sme&&!sme.courses&&<button className="row rowbtn" onClick={()=>onStudy(null)}><span className="dot" style={{background:'var(--acc)'}}><Upload size={18}/></span><div>Build a course from your own notes<small>Upload a PDF or Word file and study it with quick checks, quizzes and reviews</small></div><ChevronRight size={18}/></button>}
+    {sme&&!sme.courses&&tree&&!courses.length&&<button className="row rowbtn" onClick={()=>onStudy(null)}><span className="dot" style={{background:'var(--acc)'}}><Upload size={18}/></span><div>Build a course from your own notes<small>Upload a PDF or Word file and study it with quick checks, quizzes and reviews</small></div><ChevronRight size={18}/></button>}
     {!tree&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {tree&&!courses.length&&<p className="known">{user.self_registered&&!user.placed?'Your account is ready. An admin will place you in your program and semester or year, and your courses will appear here.':'You are not enrolled in a course yet. Ask your admin to add you to one.'}</p>}
     {planErr&&courses.length>0&&<p className="known" role="alert">Today's plan could not load ({planErr}). Your courses are below. If this keeps happening, tell your admin.</p>}
@@ -378,24 +379,24 @@ function Dashboard({user,toast,onOpen,onSearch,onStudy,onRoutine}){
       <div className="week" role="img" aria-label={`Studied on ${today.week.filter(d=>d.active).length} of the last 7 days`}>{today.week.map(d=><span key={d.date} className={'wd'+(d.active?' on':'')+(d.today?' now':'')}><i>{d.active&&<Check size={13}/>}</i><small>{d.label}</small></span>)}</div></>}
     {top&&<><h3 className="sec first">Today's focus</h3>
       <div className="hero"><small>{top.kind==='overdue'||top.kind==='due_soon'?top.reason:FOCUS[top.kind][1]+' · '+top.reason}</small><h2 style={{fontSize:24}}>{top.title}</h2><p>{top.course} · {top.unit}</p>
-        <button className="btn inv" style={{marginTop:14}} onClick={()=>act(top)}>{FOCUS[top.kind][2]}</button></div>
-      {focus.slice(1).map((f,i)=>{const [I,,go]=FOCUS[f.kind];return <button key={i} className="frow" onClick={()=>act(f)}><span className={'fic '+f.kind}><I size={18}/></span><span className="ftx"><b>{f.title}</b><small>{f.reason} · {f.course}</small></span><span className="fgo">{go}</span></button>})}</>}
-    {today&&courses.length>0&&!focus.length&&<div className="qbox" style={{marginTop:6}}><b>You are all caught up</b><p className="known" style={{margin:'6px 0 0'}}>Nothing is overdue or waiting. Search a topic you want to revisit, or try a quiz to test yourself.</p></div>}
+        <button className="btn inv" style={{marginTop:14}} onClick={()=>act(top)}>{FOCUS[top.kind][2]}</button></div></>}
+    {routine&&focus.length>0&&<h3 className="sec first">Also worth doing</h3>}{focus.slice(top?1:0).map((f,i)=>{const [I,,go]=FOCUS[f.kind];return <button key={i} className="frow" onClick={()=>act(f)}><span className={'fic '+f.kind}><I size={18}/></span><span className="ftx"><b>{f.title}</b><small>{f.reason} · {f.course}</small></span><span className="fgo">{go}</span></button>})}
+    {today&&courses.length>0&&!focus.length&&!routine&&<div className="qbox" style={{marginTop:6}}><b>You are all caught up</b><p className="known" style={{margin:'6px 0 0'}}>Nothing is overdue or waiting. Search a topic you want to revisit, or try a quiz to test yourself.</p></div>}
     {courses.length>0&&<><h3 className="sec">My courses</h3>{courses.map(({p,s,c,topics},i)=>{const done=topics.filter(t=>t.status==='completed').length,pc=topics.length?Math.round(100*done/topics.length):0,late=topics.filter(t=>t.overdue).length,next=topics.find(t=>t.status==='in_progress')||topics.find(t=>t.status==='not_started')
       if(c.archived)return <div key={c.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast('This course is unavailable right now')} aria-label={c.name+', unavailable right now'}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{c.name}</b><span>Unavailable right now</span></div></button></div>
       return <div key={c.id} className="card" style={{display:'block'}}><button className="hit" style={{width:'100%'}} onClick={()=>onOpen([p.id,s.id,c.id])}><span className="dot" style={{background:COL[i%5]}}>{c.name[0]}</span><div style={{flex:1}}><b>{c.name}{late>0&&<span className="pill off sm">{late} overdue</span>}</b><span>{done} of {topics.length} topics completed · {pc}%</span><Bar2 v={pc}/>{next&&<span className="nexts">{next.status==='in_progress'?'Continue':'Next'}: {next.title}</span>}</div></button></div>})}</>}
-    {due.length>0&&<><h3 className="sec">Coming up</h3>{due.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {when(t.learning_due_at)}</small></div>{t.overdue&&<span className="pill off sm">Overdue</span>}<ChevronRight size={18}/></button>)}</>}
+    {due.length>0&&<><h3 className="sec">Coming up</h3>{due.map(t=><button key={t.id} className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}<small>{t.x.c.name} · due {new Date(t.learning_due_at).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'})}</small></div>{t.overdue&&<span className="pill off sm">Overdue</span>}<ChevronRight size={18}/></button>)}</>}
     {need.length>0&&<><h3 className="sec">Worth another round of study</h3><AreaList areas={need} onStudy={setTopic}/></>}
   </div></>}
 const WD=['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 const nextStudyDay=days=>{for(let k=1;k<=7;k++){const d=new Date(Date.now()+k*864e5);if(days[(d.getDay()+6)%7]==='1')return k===1?'tomorrow':WD[(d.getDay()+6)%7]}return ''}
-function SessionCard({toast,onRoutine,openTopic,onStudy,refresh}){  // today's one session, from the student's own routine
+function SessionCard({toast,onRoutine,openTopic,onStudy,refresh,onLoad}){  // today's one session, from the student's own routine
   const [v,setV]=useState(null),[busy,setBusy]=useState(false)
-  useEffect(()=>{api('/me/session').then(setV).catch(()=>{})},[refresh])
+  useEffect(()=>{api('/me/session').then(x=>{setV(x);onLoad?.(x)}).catch(()=>{})},[refresh])
   if(!v)return null
   if(!v.routine)return <button className="row rowbtn" onClick={onRoutine}><span className="dot" style={{background:'var(--acc)'}}><Clock size={18}/></span><div>Set your study routine<small>Pick your study days and minutes. Each day you get one small session, at your own pace.</small></div><ChevronRight size={18}/></button>
   const open=x=>x.kind==='review'?onStudy({review:x.course_id}):x.src==='study'?onStudy({id:x.course_id,topic:x.id}):openTopic(x.id)
-  const extra=async()=>{setBusy(true);try{setV(await api('/me/session',{method:'POST'}))}catch(e){toast(e.message)}setBusy(false)}
+  const extra=async()=>{setBusy(true);try{const x=await api('/me/session',{method:'POST'});setV(x);onLoad?.(x)}catch(e){toast(e.message)}setBusy(false)}
   const r=v.routine,ss=v.session,left=ss?.items.filter(x=>!x.done)||[]
   return <div className="hero session"><small>Today's session · {r.minutes} min{r.at?' · '+r.at:''}{v.streak>0?` · ${v.streak}-day streak`:''}</small>
     {v.missed>=2&&!v.studied_today&&<p style={{margin:'6px 0 0'}}>Welcome back. Today is just one session, the same as always. No catching up needed.</p>}
@@ -407,11 +408,12 @@ function SessionCard({toast,onRoutine,openTopic,onStudy,refresh}){  // today's o
       {ss.done&&<p>See you {nextStudyDay(r.days)}.</p>}</>}
     <p className="splan">{v.plan.left?`${v.plan.left} topics left · at this pace, done by ${new Date(v.plan.finish+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short'})}`:'Nothing left in your courses'}{v.plan.late>0?` · ${v.plan.late} would miss their deadline. ${v.plan.advice||''}`:''} <button className="link" onClick={onRoutine}>Change routine</button></p></div>}
 function RoutinePage({toast,done}){
+  const confirm=useConfirm()
   const [v,setV]=useState(null),[f,setF]=useState({days:'1111110',minutes:30,at:''}),[busy,setBusy]=useState(false)
   useEffect(()=>{api('/me/session').then(x=>{setV(x);if(x.routine)setF({days:x.routine.days,minutes:x.routine.minutes,at:x.routine.at||''})}).catch(e=>toast(e.message))},[])
   const flip=k=>setF({...f,days:f.days.slice(0,k)+(f.days[k]==='1'?'0':'1')+f.days.slice(k+1)})
   const save=async()=>{setBusy(true);try{setV(await api('/me/routine',{method:'PUT',body:{...f,at:f.at||null}}));toast('Routine saved');done()}catch(e){toast(e.message)}setBusy(false)}
-  const stop=async()=>{if(!confirm('Stop your routine? Your progress stays; Home goes back to showing what to do next.'))return;try{await api('/me/routine/stop',{method:'POST'});toast('Routine stopped');done()}catch(e){toast(e.message)}}
+  const stop=async()=>{if(!await confirm({title:'Stop your routine?',body:'Your progress stays. Home goes back to showing what to do next.',ok:'Stop the routine'}))return;try{await api('/me/routine/stop',{method:'POST'});toast('Routine stopped');done()}catch(e){toast(e.message)}}
   const per={15:1,30:1,45:2,60:3}[f.minutes]
   return <><Bar title="My routine" sub="Study at your own pace, a little every day"/><div className="main">
     <p className="known" style={{marginTop:0}}>Pick the days you study and how long. Each study day you get one session: {per===1?'one new topic':per+' new topics'} and any reviews that are due. Miss a day and nothing piles up: the next session is the same size, and your streak only counts the days you picked.</p>
@@ -903,13 +905,14 @@ function HistorySheet({tid,close,done,toast}){
 function Topic({id:first,back,toast,role}){
   const [practice,setPractice]=useState(null),[checking,setChecking]=useState('')
   const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
-  const opened=useRef(false),jump=nid=>{opened.current=false;setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
+  const [mat,setMat]=useState(false),opened=useRef(false),jump=nid=>{opened.current=false;setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>{toast(e.message);if(/unavailable right now/.test(e.message))setGone(e.message)})},[id,v])  // opening starts it, after the page has loaded
   const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?'Marked as completed':'Marked as not completed')}catch(e){toast(e.message)}}
   useEffect(()=>{api('/ai/status').then(r=>{setAiOk(r.available);setOwnKey(!!r.own_key)}).catch(()=>{})},[id])
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
   async function practise(kind){setChecking(kind);try{setPractice(await api(`/topics/${id}/practice`,{method:'POST',body:{kind}}))}catch(e){toast(e.message)}setChecking('')}
+  if(mat&&t)return <MyMaterial cid={t.course_id} name={t.course} back={()=>{setMat(false);setV(v+1)}} toast={toast}/>
   if(practice)return <StudyQuizPlay quiz={practice} toast={toast} back={()=>setPractice(null)} again={k=>practise(k)}/>
   if(editing)return <TopicEditor role={role} toast={toast} edit={{id}} done={()=>{setEditing(false);setV(v+1)}} cancel={()=>setEditing(false)}/>
   if(gone)return <><Bar title="Unavailable" back={back}/><div className="main"><div className="hero"><h2>{gone}</h2><p>It has been archived. Check back later or ask your teacher.</p></div></div></>
@@ -932,7 +935,7 @@ function Topic({id:first,back,toast,role}){
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>Draft · students cannot see it</p>}
     <Tabs label="Topic sections" items={[['notes','Notes'],['explain','Explain'],['answer','Sample answer']]} value={tab} onChange={setTab}/>
     {known.length>0&&tab==='explain'&&<p className="known">You’ve already covered: {known.join(', ')}</p>}
-    {tab==='notes'&&<div className="prose">{t.content?<Body text={t.content} format={t.content_format}/>:!t.my_notes&&<Md>No notes yet.</Md>}{t.my_notes&&<>{t.content&&<h3>Your notes</h3>}{!t.content&&<span className="chip">Your notes</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}</div>}
+    {tab==='notes'&&<div className="prose">{t.content?<Body text={t.content} format={t.content_format}/>:!t.my_notes&&<Md>No notes yet.</Md>}{t.my_notes&&<>{t.content&&<h3>Your notes</h3>}{!t.content&&<span className="chip">Your notes</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>Question pattern</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>Answer guideline</h3><Md>{t.guideline}</Md></>}{role==='student'&&<button className="tool" onClick={()=>setMat(true)}><FileText size={14}/> {t.my_notes?'Update your notes for this course':'Add your own notes for this topic'}</button>}</div>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&view('answer')}
     {role==='student'&&aiOk!==false&&<><h3 className="sec">Check yourself</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?'Writing questions…':'Quick check · 5'}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?'Writing the quiz…':'Full quiz · 10'}</button></div>
       <p className="known" style={{marginTop:4}}>The AI writes new questions from this topic's notes each time. Quick check: the answer right after each question. Full quiz: scored at the end.</p></>}
@@ -1019,6 +1022,7 @@ const srcLine=x=>x.status==='reading'?(x.done?`Reading scanned pages… ${x.done
   :x.status==='failed'?x.error:`${x.kind==='scan'?'Scanned, read with text recognition · ':''}${x.words.toLocaleString()} words${x.note?' · '+x.note:''}`
 const usePoll=(on,fn,ms=3000)=>useEffect(()=>{if(!on)return;const h=setInterval(fn,ms);return()=>clearInterval(h)},[on])  // while scanned pages are being read
 function MyMaterial({cid,name,back,toast}){  // a student's own material, filed under the course's syllabus topics (private to them)
+  const confirm=useConfirm()
   const [v,setV]=useState(null),[busy,setBusy]=useState(''),[paste,setPaste]=useState(null),[open,setOpen]=useState({}),fileRef=useRef()
   const base=`/courses/${cid}/my-material`,load=()=>api(base).then(setV).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[cid]);usePoll(!!v?.reading,()=>api(base).then(setV).catch(()=>{}))
@@ -1037,17 +1041,17 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
     <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md" onChange={upload}/>
     {v.sources.length>0&&<><h3>2. File it under the syllabus</h3>
       {v.reading&&<p className="known" role="status">Your scanned pages are still being read. Matching starts once they are done.</p>}
-      <button className={'btn'+(noAi?' ghost':'')} disabled={!!busy||noAi||v.reading} onClick={()=>match('ai')}><Sparkles size={16}/> {busy==='ai'?'Matching…':'Match with AI'}</button>
-      <button className={'btn'+(noAi?'':' ghost')} disabled={!!busy||v.reading} onClick={()=>match('headings')}>{busy==='headings'?'Matching…':'Match by headings (no AI)'}</button>
-      {noAi&&<p className="known">{v.ai_available?'No AI requests are left today.':'AI is not available.'} Matching by headings works best when your notes use the topic names as headings.</p>}</>}
+      {v.ai_available&&<button className={'btn'+(noAi?' ghost':'')} disabled={!!busy||noAi||v.reading} onClick={()=>match('ai')}><Sparkles size={16}/> {busy==='ai'?'Matching…':'Match with AI'}</button>}
+      <button className={'btn'+(noAi?'':' ghost')} disabled={!!busy||v.reading} onClick={()=>match('headings')}>{busy==='headings'?'Matching…':v.ai_available?'Match by headings (no AI)':'Match by headings'}</button>
+      {noAi&&<p className="known">{v.ai_available?'No AI requests are left today. ':''}Matching by headings works best when your notes use the topic names as headings.</p>}</>}
     {v.sections.length>0&&<><h3>3. Check where each part goes</h3>
       <p className="known">Your notes cover {v.covered} of {v.topics} topics.{missing.length>0&&' Not covered yet: '+missing.slice(0,6).join(', ')+(missing.length>6?' and '+(missing.length-6)+' more':'')+'.'}</p>
-      {v.sections.map((x,i)=><div className="qbox" key={x.from}><b>{x.heading||x.excerpt.slice(0,80)+(x.excerpt.length>80?'…':'')}</b><small className="known" style={{display:'block'}}>{x.words} words</small>
+      {v.sections.map((x,i)=><div className="qbox" key={x.from}>{x.heading?<b>{x.heading}</b>:<span style={{display:'block'}}>“{x.excerpt.slice(0,80)+(x.excerpt.length>80?'…':'')}”</span>}<small className="known" style={{display:'block'}}>Part {i+1} · {x.words} words</small>
         <select aria-label={'Topic for part '+(i+1)} value={x.topic_id||''} disabled={!!busy} onChange={e=>file(i,e.target.value)}><option value="">Not in the syllabus (left out)</option>{v.syllabus.map(u=><optgroup key={u.id} label={u.name}>{u.topics.map(tp=><option key={tp.id} value={tp.id}>{tp.title}</option>)}</optgroup>)}</select>
         <button className="tool" onClick={()=>read(x)}>{open[x.from]!==undefined?'Hide':'Read it'}</button>{open[x.from]!==undefined&&<div className="prose"><Md>{open[x.from]}</Md></div>}</div>)}
       <button className="btn" disabled={!!busy||!filed.size} onClick={()=>run('save',()=>api(base+'/save',{method:'POST'}),'Saved. Open a topic to study your notes.')}>{v.saved_at?'Save again to my topics':'Save to my topics'}</button>
       {v.saved_at&&<p className="known">Last saved {when(v.saved_at)}. Saving again rebuilds your notes from this material; your progress and quiz results stay.</p>}</>}
-    {v.sources.length>0&&<button className="btn danger" disabled={!!busy} onClick={()=>confirm('Remove your material and the notes it made in this course? Your progress stays.')&&run('del',()=>api(base,{method:'DELETE'}),'Your material was removed')}>Remove my material</button>}</div>
+    {v.sources.length>0&&<p style={{marginTop:28}}><button className="link" style={{color:"var(--bad)"}} disabled={!!busy} onClick={async()=>{if(await confirm({title:'Remove your material?',body:'The notes it made in this course are removed too. Your progress and quiz results stay.',ok:'Remove',danger:true}))run('del',()=>api(base,{method:'DELETE'}),'Your material was removed')}}>Remove my material from this course</button></p>}</div>
     {paste&&<Sheet close={()=>setPaste(null)}><h3>Paste text</h3><textarea aria-label="Text to add" value={paste.text} onChange={e=>setPaste({text:e.target.value})} placeholder="Paste your notes. Lines starting with # are headings."/>
       <button className="btn" disabled={!paste.text.trim()||!!busy} onClick={async()=>{await run('paste',()=>api(base+'/text',{method:'POST',body:{text:paste.text}}),'Added');setPaste(null)}}>Add</button></Sheet>}</>}
 
