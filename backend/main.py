@@ -728,12 +728,13 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
     rows = qs.order_by(*USORT.get(order, USORT["role"]), User.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     return {"total": qs.count(), "items": [urow(u, pn) for u, pn in rows]}
 @app.get("/api/admin/users/{uid}")
-def user_detail(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
+def user_detail(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
     prog = s.get(Program, u.program_id) if u.program_id else None
-    n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid).one()
-    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid).order_by(Progress.last_read.desc()).limit(10).all()
+    live = live_topic_ids(s, [c.id for c in live_courses(a, s)])  # same rule as the Reports screens
+    n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid, Progress.topic_id.in_(live)).one()
+    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid, Topic.id.in_(live)).order_by(Progress.last_read.desc()).limit(10).all()
     return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
             "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
             "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)]}  # the courses they own
@@ -993,17 +994,21 @@ def test_mail(a: User = Depends(admin)):
     try: send_mail(a.email, f"{APP_NAME} test email", "This is a test. Password reset emails can be sent from this server.")
     except Exception as e: return {"ok": False, "message": "Could not send: " + type(e).__name__ + ": " + str(e)[:150]}
     return {"ok": True, "message": "Test email sent to " + a.email}
+def live_topic_ids(s, cids):  # the one rule for "a topic students can read": published, not archived, not in an archived unit, in one of these courses
+    off_units = s.query(Unit.id).filter(Unit.archived_at.isnot(None))
+    return s.query(Topic.id).filter(Topic.course_id.in_(cids or [0]), Topic.published.isnot(False), Topic.archived_at.is_(None), or_(Topic.unit_id.is_(None), Topic.unit_id.notin_(off_units)))
 @app.get("/api/admin/stats")
-def stats(_: User = Depends(admin), s: Session = Depends(db)):
+def stats(a: User = Depends(admin), s: Session = Depends(db)):
     saved = s.query(func.coalesce(func.sum(AICache.hits * AICache.tokens), 0)).scalar()
-    return {"students": s.query(User).filter_by(role="student").count(), "topics": s.query(Topic).count(),
+    return {"students": s.query(User).filter_by(role="student").count(), "topics": live_topic_ids(s, [c.id for c in live_courses(a, s)]).count(),
             "cached": s.query(AICache).count(), "tokens_saved": int(saved)}
 
 @app.get("/api/admin/reports")
-def reports(_: User = Depends(admin), s: Session = Depends(db)):
-    top = s.query(Topic.title, func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0)).join(Progress, Progress.topic_id == Topic.id) \
+def reports(a: User = Depends(admin), s: Session = Depends(db)):
+    live = live_topic_ids(s, [c.id for c in live_courses(a, s)])  # same topics the course report counts, so the two screens agree
+    top = s.query(Topic.title, func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0)).join(Progress, Progress.topic_id == Topic.id).filter(Topic.id.in_(live)) \
         .group_by(Topic.id, Topic.title).order_by(func.sum(Progress.reads).desc()).limit(10).all()
-    studs = s.query(User.name, User.email, User.active, func.count(Progress.id), func.max(Progress.last_read)).outerjoin(Progress, Progress.user_id == User.id) \
+    studs = s.query(User.name, User.email, User.active, func.count(Progress.id), func.max(Progress.last_read)).outerjoin(Progress, and_(Progress.user_id == User.id, Progress.topic_id.in_(live))) \
         .filter(User.role == "student").group_by(User.id, User.name, User.email, User.active).order_by(func.max(Progress.last_read).desc()).all()
     ai = s.query(Topic.title, AICache.kind, AICache.hits, AICache.tokens).join(AICache, AICache.topic_id == Topic.id) \
         .order_by((AICache.hits * AICache.tokens).desc()).limit(10).all()
@@ -1024,7 +1029,7 @@ def course_audience(c, students, sems, links):  # students who can see this cour
         return any(x.program_id == u.program_id and (u.semester is None or x.semester_no is None or x.semester_no <= u.semester) for x in places)
     return [u for u in students if sees(u)]
 def course_stats(c, aud, s):
-    ids = {u.id for u in aud}; off_units = s.query(Unit.id).filter(Unit.archived_at.isnot(None)); tids = [t.id for t in s.query(Topic.id).filter(Topic.course_id == c.id, Topic.published.isnot(False), Topic.archived_at.is_(None), or_(Topic.unit_id.is_(None), Topic.unit_id.notin_(off_units)))]
+    ids = {u.id for u in aud}; off_units = s.query(Unit.id).filter(Unit.archived_at.isnot(None)); tids = [t.id for t in live_topic_ids(s, [c.id])]
     reads, done, last = defaultdict(int), defaultdict(int), {}  # topics opened, topics marked completed
     if tids and ids:
         for uid, n, d, l in s.query(Progress.user_id, func.count(Progress.id), func.count(Progress.completed_at), func.max(Progress.last_read)).filter(Progress.topic_id.in_(tids), Progress.user_id.in_(ids)).group_by(Progress.user_id).all(): reads[uid], done[uid], last[uid] = n, d, l
@@ -1115,7 +1120,7 @@ def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, o
     else:  # topics, drafts
         cids = [c.id for c in mine]; cn = {c.id: c for c in mine}; un = {x.id: x for x in s.query(Unit).filter(Unit.course_id.in_(cids or [0]), Unit.archived_at.is_(None))}
         tq = s.query(Topic).filter(Topic.unit_id.in_(list(un) or [0]), Topic.archived_at.is_(None))
-        if kind == "drafts": tq = tq.filter(Topic.published == False)  # noqa: E712
+        tq = tq.filter(Topic.published == False) if kind == "drafts" else tq.filter(Topic.published.isnot(False))  # noqa: E712  (the Topics card counts published topics only; drafts are their own card)
         for t in tq:
             un_ = un.get(t.unit_id); c = cn.get(un_.course_id) if un_ else None
             items.append({"id": t.id, "title": t.title, "sub": " › ".join(x for x in [c.name if c else "", un_.name if un_ else ""] if x), "detail": "Published" if t.published else "Draft",
@@ -1137,7 +1142,7 @@ def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs 
     units = live_units(s, cids)
     topics = s.query(Topic).filter(Topic.unit_id.in_(units), Topic.archived_at.is_(None))
     drafts = topics.filter(Topic.published == False).count()  # noqa: E712
-    out = {"role": u.role, "courses": len(cids), "topics": topics.count(), "drafts": drafts, "attention": []}
+    out = {"role": u.role, "courses": len(cids), "topics": topics.filter(Topic.published.isnot(False)).count(), "drafts": drafts, "attention": []}  # topics are the published ones, as in the course rows; drafts have their own count
     add = lambda kind, n, text: n and out["attention"].append({"kind": kind, "count": n, "text": text})
     add("drafts", drafts, f"{drafts} draft topic{'s' if drafts != 1 else ''} not yet visible to students")
     empty = [c for c in mine if not live_units(s, [c.id]).first()]
@@ -2662,8 +2667,20 @@ def ai_json(text):  # the first JSON object in an AI reply, even when it is wrap
     raise HTTPException(502, "The AI's answer could not be read. Try again.")
 async def study_ask(u, s, kind, system, msg, max_tokens=8000):
     key = study_ai_key(u, s)
-    s.add(StudyAICall(user_id=u.id, kind=kind)); s.commit()
-    text, _ = await ask_ai(u, s, key, system, msg, max_tokens=max_tokens, timeout=120)
+    call = StudyAICall(user_id=u.id, kind=kind)
+    s.add(call); s.commit()
+    call_id = call.id  # kept so the request can be given back if the AI call fails
+    try:
+        text, _ = await ask_ai(u, s, key, system, msg, max_tokens=max_tokens, timeout=120)
+    except BaseException:
+        # a failed or timed-out AI call must not use up one of the student's daily requests
+        try:
+            s.rollback()
+            s.query(StudyAICall).filter(StudyAICall.id == call_id).delete(synchronize_session=False)
+            s.commit()
+        except Exception:
+            s.rollback()
+        raise
     return text
 
 # -- reading uploaded material into paragraphs --
