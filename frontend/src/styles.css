@@ -322,3 +322,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid color-mix(in srgb,var(
 }
 #root>.main{width:100%}  /* the column layout would otherwise shrink the page to its content */
 .search input:focus{outline:none;border-color:transparent}
+/* the logo and app name are the Home button */
+.homebtn{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:6px;margin:-6px;border-radius:var(--r-box);background:none;color:inherit;text-align:left}
+.homebtn span{min-width:0}.homebtn:hover,.homebtn.on{background:var(--s2)}
+button.topname{background:none;padding:6px 8px;border-radius:var(--r-ctl)}button.topname:hover{background:var(--s2)}
