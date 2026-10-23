@@ -1,5 +1,5 @@
 from collections import defaultdict
-import base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, datetime as dt, httpx, jwt, nh3
+import base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, time, datetime as dt, httpx, jwt, nh3
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -41,6 +41,7 @@ class User(Base):
     institution = Column(String(150), nullable=True); id_number = Column(String(60), nullable=True); phone = Column(String(30), nullable=True)  # given at self-registration
     self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email; they use their own AI key, never the shared one
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
+    digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)  # a daily email of new notifications, if they asked for it; when it last went
 class PendingRegistration(Base):  # someone who has asked for an account but has not yet entered the emailed code; becomes a User only when they do
     __tablename__ = "pending_registrations"
     id = Column(Integer, primary_key=True); email = Column(String(190), unique=True, index=True)
@@ -178,6 +179,16 @@ class Highlight(Base):  # a passage someone marked in a topic's content; found a
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
     text = Column(Text); prefix = Column(String(200), default=""); created = Column(DateTime, default=dt.datetime.utcnow)
+    color = Column(String(10), nullable=True); note = Column(Text, nullable=True)  # one of HL_COLORS (null = coral); the reader's own note on it
+class TopicStore(Base):  # what an interactive page keeps in localStorage for one person; the sandbox has no storage, so the page's writes come here
+    __tablename__ = "topic_stores"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); data = Column(Text); updated = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class NoteSeen(Base):  # a notification someone has already seen, by its key, so the bell counts only new ones
+    __tablename__ = "notes_seen"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); key = Column(String(120)); at = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "key"),)
 class Bookmark(Base):  # topics a user has saved to their own list
     __tablename__ = "bookmarks"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id"), index=True)
@@ -535,7 +546,9 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0017_archive_columns", lambda c: [_addcol(t, "archived_at", "DATETIME NULL")(c) for t in ("courses", "semesters", "subjects", "units", "topics")]),
               ("0018_mcq_tests", mcq_columns), ("0019_topic_content_format", content_format_columns),
               ("0020_practice_on_staff_topics", lambda c: _addcol("study_quizzes", "src_topic_id", "INT NULL")(c) if "study_quizzes" in inspect(c).get_table_names() else None),
-              ("0021_routine_started_at", _addcol("routines", "started_at", "DATETIME NULL"))]
+              ("0021_routine_started_at", _addcol("routines", "started_at", "DATETIME NULL")),
+              ("0022_highlight_colors_and_digest", lambda c: [_addcol(*x)(c) for x in (("highlights", "color", "VARCHAR(10) NULL"), ("highlights", "note", "TEXT NULL"),
+                                                                                     ("users", "digest", "TINYINT(1) NOT NULL DEFAULT 0"), ("users", "digest_at", "DATETIME NULL"))])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -549,6 +562,7 @@ def applied_migrations():
 def boot():
     require_secret()
     upgrade_schema()
+    if mail_on(): spawn(digest_loop)  # daily summaries by email, for those who ask
     with Session_() as s: s.query(PasswordReset).filter(PasswordReset.created_at < dt.datetime.utcnow() - dt.timedelta(days=2)).delete(); s.commit()
     with Session_() as s: s.query(PendingRegistration).filter(PendingRegistration.created_at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
     with Session_() as s: s.query(AuditLog).filter(AuditLog.at < dt.datetime.utcnow() - dt.timedelta(days=400)).delete(); s.commit()
@@ -2301,6 +2315,55 @@ def topic_from_files(b: TopicFilesIn, u: User = Depends(staff), s: Session = Dep
     elif cfg.get("content"): out.update(content=cfg["content"], content_format="markdown")
     if out.get("title"): out["title"] = out["title"][:200]
     return {**out, "images_saved": images, "warnings": warnings}
+class BulkFile(BaseModel): name: str; text: str
+class BulkTopicsIn(BaseModel): files: list[BulkFile]; images: dict[str, str] = {}; scripts: bool = False; published: bool = False; dry_run: bool = True
+def natural(name): return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", re.split(r"[\\/]", name)[-1])]  # "2 Intro" before "10 Summary"
+@app.post("/api/units/{uid}/topics/bulk")
+def bulk_topics(uid: int, b: BulkTopicsIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """Many topic files at once: one topic per .html/.htm or .md file, added to the unit in file-name order. A dry run shows what would be
+    made. HTML is cleaned unless scripts is set (then each page is kept whole as HTML + JavaScript); a .md file is the content, or a config
+    file with sections (title, question pattern, sample, guideline, published, deadline). Images are matched by file name, as for one topic."""
+    un = s.get(Unit, uid)
+    if not un: raise HTTPException(404, "Unit not found")
+    need_edit(u, un.course_id, s)
+    if not b.files: raise HTTPException(400, "Choose some .html or .md files")
+    if len(b.files) > 200: raise HTTPException(400, "Choose up to 200 files at a time")
+    rows, made = [], 0
+    for f in sorted(b.files, key=lambda f: natural(f.name)):
+        base = re.split(r"[\\/]", f.name)[-1]; ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""; stem = base.rsplit(".", 1)[0] if "." in base else base
+        row = {"file": f.name[:200], "warnings": [], "ok": True}; fields = {}
+        if ext in ("html", "htm"):
+            m = re.search(r"<title[^>]*>(.*?)</title>", f.text, re.S | re.I) or re.search(r"<h1[^>]*>(.*?)</h1>", f.text, re.S | re.I)
+            fields["title"] = html_text(m.group(1)) if m and html_text(m.group(1)) else stem
+            raw = f.text
+            if not b.dry_run: raw, _, missing = html_images(raw, b.images)
+            else: missing = [x for x in re.findall(r"""<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""", raw, re.I)
+                             if not re.match(r"(https?:|data:|/api/uploads/)", x, re.I) and re.split(r"[\\/]", x.split("?")[0])[-1].strip().lower() not in {k.strip().lower() for k in b.images}]
+            if missing: row["warnings"].append("Images not found, so they are left out: " + ", ".join(dict.fromkeys(re.split(r"[\\/]", x)[-1][:60] for x in missing)))
+            if b.scripts: fields.update(content=raw, content_format="interactive"); limit = INTERACTIVE_MAX
+            else:
+                fields.update(content=clean_html(raw), content_format="html"); limit = 2_000_000
+                if re.search(r"<script\b", raw, re.I): row["warnings"].append("Its JavaScript is removed (tick Keep JavaScript to keep it)")
+            if len(fields["content"]) > limit: row.update(ok=False); row["warnings"].append("Over 2 MB. Split it into smaller files.")
+        elif ext in ("md", "markdown", "txt"):
+            cfg, warns = parse_topic_config(f.text); row["warnings"] += warns
+            fields = {k: cfg[k] for k in ("question_pattern", "sample_content", "guideline") if cfg.get(k)}
+            fields.update(title=cfg.get("title") or stem, content=cfg.get("content", ""), content_format="markdown")
+            if "published" in cfg: fields["published"] = cfg["published"]
+            if cfg.get("deadline"):
+                try: fields["learning_due_at"] = dt.datetime.fromisoformat(cfg["deadline"]) - dt.timedelta(minutes=DAY_OFFSET)  # the deadline is local time
+                except ValueError: row["warnings"].append("The deadline was not understood, so none is set")
+        else:
+            row.update(ok=False, title=stem, format=""); row["warnings"].append("Not an .html or .md file, so it is skipped"); rows.append(row); continue
+        fields["title"] = (fields["title"] or stem).strip()[:200] or "Untitled"
+        if not (fields.get("content") or "").strip(): row["warnings"].append("No content in this file")
+        row.update(title=fields["title"], format=fields["content_format"], published=fields.get("published", b.published))
+        if row["ok"] and not b.dry_run:
+            t = Topic(unit_id=un.id, course_id=un.course_id, position=next_pos(s, Topic, unit_id=un.id), **{**fields, "published": fields.get("published", b.published)})
+            t.created_by = u.id; s.add(t); s.flush(); record_version(s, t, None, u.id, "Created from " + base[:80]); made += 1
+        rows.append(row)
+    if not b.dry_run: s.commit()
+    return {"dry_run": b.dry_run, "topics": rows, "ready": sum(r["ok"] for r in rows), "created": made}
 def topic_neighbours(t, edit, s):  # the topics before and after this one in its unit, in the order the course shows them; drafts only for those who can edit
     sibs = [x for x in s.query(Topic).filter(Topic.unit_id == t.unit_id).order_by(*ORDER.get(Topic, (Topic.id,))) if edit or x.published is not False] if t.unit_id else []
     i = next((k for k, x in enumerate(sibs) if x.id == t.id), None)
@@ -2329,11 +2392,23 @@ def highlighter_js():  # the same highlighter the app bundles (frontend/src/high
 FRAME_BOOT = """(function(){var P=parent,n=0,wait={},h=null;function ask(m){return new Promise(function(ok,no){var k=++n;wait[k]=[ok,no];P.postMessage(Object.assign({zg:1,k:k},m),'*')})}
 addEventListener('message',function(e){if(e.source!==P)return;var d=e.data||{};if(!d.zg)return
 if(d.k&&wait[d.k]){wait[d.k][d.error?1:0](d);delete wait[d.k];return}
-if(d.type==='init'&&!h&&window.zgHighlighter)h=zgHighlighter.attach(document.body,{list:d.list||[],save:function(x){return ask({type:'save',text:x.text,prefix:x.prefix})},remove:function(id){return ask({type:'remove',id:id})},changed:function(l){P.postMessage({zg:1,type:'changed',list:l},'*')}})
+if(d.type==='init'&&!h&&window.zgHighlighter)h=zgHighlighter.attach(document.body,{list:d.list||[],save:function(x){return ask({type:'save',text:x.text,prefix:x.prefix,color:x.color})},remove:function(id){return ask({type:'remove',id:id})},update:function(id,c){return ask({type:'update',id:id,color:c.color})},note:function(id){P.postMessage({zg:1,type:'note',id:id},'*')},changed:function(l){P.postMessage({zg:1,type:'changed',list:l},'*')}})
 if(d.type==='scroll'&&h)h.scrollTo(d.id);if(d.type==='unpaint'&&h)h.remove(d.id)});P.postMessage({zg:1,type:'ready'},'*')})()"""
-def frame_page(raw):
-    tail = f"<style>mark.zg-hl{{background:rgba(255,146,146,.45);color:inherit;border-radius:2px;cursor:pointer}}.zg-hl-btn{{position:fixed;z-index:2147483647;padding:8px 14px;border:0;border-radius:8px;background:#722f99;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer}}</style><script>{highlighter_js()}</script><script>{FRAME_BOOT}</script>"
+# localStorage and sessionStorage for the page: the sandbox has none (reading them throws), so these stand in. localStorage starts with what this
+# person saved last time and sends each change to the app (which saves it); sessionStorage lives as long as the page is open.
+STORE_SHIM = """(function(){var P=parent,t=null;function mk(m,keep){var o={getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},
+setItem:function(k,v){m[String(k)]=String(v);sync()},removeItem:function(k){delete m[String(k)];sync()},clear:function(){Object.keys(m).forEach(function(k){delete m[k]});sync()},
+key:function(i){return Object.keys(m)[i]||null}};Object.defineProperty(o,'length',{get:function(){return Object.keys(m).length}})
+function sync(){if(!keep)return;clearTimeout(t);t=setTimeout(function(){P.postMessage({zg:1,type:'store',data:m},'*')},400)}return o}
+var ls=mk(__DATA__,__KEEP__),ss=mk({},false);try{Object.defineProperty(window,'localStorage',{value:ls,configurable:true})}catch(e){}
+try{Object.defineProperty(window,'sessionStorage',{value:ss,configurable:true})}catch(e){}window.zigora={storage:ls}})()"""
+STORE_MAX = 100_000
+def frame_page(raw, store=None, keep=False):
+    shim = "<script>" + STORE_SHIM.replace("__DATA__", json.dumps(store or {}).replace("<", "\\u003c")).replace("__KEEP__", "true" if keep else "false") + "</script>"
+    tail = f"<script>{highlighter_js()}</script><script>{FRAME_BOOT}</script>"
     raw = raw or ""
+    m = re.search(r"<head\b[^>]*>", raw, re.I) or re.search(r"<html\b[^>]*>", raw, re.I) or re.match(r"\s*<!doctype[^>]*>", raw, re.I)
+    raw = raw[:m.end()] + shim + raw[m.end():] if m else shim + raw  # first, so the page's own scripts find it
     i = raw.lower().rfind("</body>")
     page = raw[:i] + tail + raw[i:] if i >= 0 else raw + tail
     return HTMLResponse(page, headers={"Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
@@ -2346,7 +2421,10 @@ def topic_frame(tid: int, t: str = "", s: Session = Depends(db)):
     if not u or not u.active or c.get("k") != fp(u): raise HTTPException(401, "Please sign in again")
     if not tp or fmt_of(tp) != "interactive": raise HTTPException(404, "Topic not found")
     check_topic_access(u, tp, s)
-    return frame_page(tp.content)
+    row = s.query(TopicStore).filter_by(user_id=u.id, topic_id=tid).first()
+    try: data = json.loads(row.data) if row and row.data else {}
+    except ValueError: data = {}
+    return frame_page(tp.content, data if isinstance(data, dict) else {}, keep=True)
 PREVIEWS = {}  # id -> (expires, html): an unsaved interactive page the editor is previewing, kept a few minutes in memory
 class PreviewIn(BaseModel): html: str
 @app.post("/api/topics/frame-preview")
@@ -2361,8 +2439,23 @@ def frame_preview_page(pid: str):
     if not v or v[0] < time_now(): raise HTTPException(404, "This preview has expired. Preview again.")
     return frame_page(v[1])
 def time_now(): return dt.datetime.utcnow().timestamp()
-class HighlightIn(BaseModel): text: str; prefix: str = ""
-def hl_row(h): return {"id": h.id, "text": h.text, "prefix": h.prefix or "", "created": h.created.isoformat() + "Z" if h.created else None}
+class StoreIn(BaseModel): data: dict[str, str]
+@app.put("/api/topics/{tid}/store")
+def save_store(tid: int, b: StoreIn, u: User = Depends(me), s: Session = Depends(db)):  # an interactive page's localStorage, for this person
+    t = s.get(Topic, tid)
+    if not t or fmt_of(t) != "interactive": raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
+    text = json.dumps(b.data)
+    if len(text) > STORE_MAX: raise HTTPException(413, "This page is trying to save more than 100 KB")
+    row = s.query(TopicStore).filter_by(user_id=u.id, topic_id=tid).first() or TopicStore(user_id=u.id, topic_id=tid)
+    row.data, row.updated = text, dt.datetime.utcnow(); s.add(row); s.commit(); return {"ok": True}
+HL_COLORS = ("coral", "yellow", "green", "blue")
+class HighlightIn(BaseModel): text: str; prefix: str = ""; color: str = "coral"
+class HighlightEdit(BaseModel): color: str | None = None; note: str | None = None
+def hl_color(c):
+    if c not in HL_COLORS: raise HTTPException(400, "Choose coral, yellow, green or blue")
+    return c
+def hl_row(h): return {"id": h.id, "text": h.text, "prefix": h.prefix or "", "color": h.color or "coral", "note": h.note or "", "created": h.created.isoformat() + "Z" if h.created else None}
 @app.get("/api/topics/{tid}/highlights")
 def my_highlights(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
@@ -2378,7 +2471,27 @@ def add_highlight(tid: int, b: HighlightIn, u: User = Depends(me), s: Session = 
     if not text: raise HTTPException(400, "Select some text to highlight")
     if len(text) > 5000: raise HTTPException(400, "That selection is too long to highlight. Pick a shorter passage.")
     if s.query(Highlight).filter_by(user_id=u.id, topic_id=tid).count() >= 500: raise HTTPException(400, "This topic already has 500 highlights. Remove some first.")
-    h = Highlight(user_id=u.id, topic_id=tid, text=text, prefix=(b.prefix or "")[-200:]); s.add(h); s.commit(); return hl_row(h)
+    h = Highlight(user_id=u.id, topic_id=tid, text=text, prefix=(b.prefix or "")[-200:], color=hl_color(b.color)); s.add(h); s.commit(); return hl_row(h)
+@app.patch("/api/me/highlights/{hid}")
+def edit_highlight(hid: int, b: HighlightEdit, u: User = Depends(me), s: Session = Depends(db)):  # its colour, or the reader's note on it
+    h = s.get(Highlight, hid)
+    if not h or h.user_id != u.id: raise HTTPException(404, "Highlight not found")
+    if b.color is not None: h.color = hl_color(b.color)
+    if b.note is not None:
+        if len(b.note) > 2000: raise HTTPException(400, "Keep the note under 2000 characters")
+        h.note = b.note.strip() or None
+    s.commit(); return hl_row(h)
+@app.get("/api/me/highlights")
+def all_my_highlights(q: str = "", color: str = "", limit: int = 25, offset: int = 0, u: User = Depends(me), s: Session = Depends(db)):
+    """Every highlight this person has made, newest first, with the topic it is in: search (passage, note or topic) and a colour filter."""
+    qs = s.query(Highlight, Topic, Unit, Course).join(Topic, Topic.id == Highlight.topic_id).outerjoin(Unit, Unit.id == Topic.unit_id) \
+        .outerjoin(Course, Course.id == Topic.course_id).filter(Highlight.user_id == u.id)
+    if color: qs = qs.filter(func.coalesce(Highlight.color, "coral") == hl_color(color))
+    if q.strip():
+        like = f"%{q.strip().lower()}%"; qs = qs.filter(or_(*[func.lower(func.coalesce(c, "")).like(like) for c in (Highlight.text, Highlight.note, Topic.title, Course.name)]))
+    total = qs.count()
+    rows = qs.order_by(Highlight.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    return {"total": total, "items": [{**hl_row(h), "topic_id": t.id, "topic": t.title, "unit": un.name if un else "", "course": co.name if co else ""} for h, t, un, co in rows]}
 @app.delete("/api/me/highlights/{hid}")
 def remove_highlight(hid: int, u: User = Depends(me), s: Session = Depends(db)):
     h = s.get(Highlight, hid)
@@ -3687,6 +3800,52 @@ def set_routine(b: RoutineIn, u: User = Depends(me), s: Session = Depends(db)):
 @app.post("/api/me/routine/stop")  # (not DELETE /api/me/routine: the older DELETE /api/{kind}/{id} route would take it)
 def stop_routine(u: User = Depends(me), s: Session = Depends(db)):  # back to studying without a routine; progress is untouched
     s.query(DaySession).filter_by(user_id=u.id).delete(); s.query(Routine).filter_by(user_id=u.id).delete(); s.commit(); return {"routine": None}
+# ---- notifications: worked out from what needs doing now, with each person's seen ones remembered, and an optional daily email ----
+STUDENT_NOTES = ("overdue", "due_soon", "quiz_new", "quiz_retake")
+def notes_for(u, s):  # [{key, text, sub}]: staff get what needs attention, students their deadlines and tests. The key changes when the item does
+    if u.role == "student":
+        return [{"key": f"{i['kind']}:{i.get('quiz_id') or i.get('id')}"[:120], "text": i.get("title") or "", "sub": i.get("reason") or ""}
+                for i in my_today(u=u, s=s)["focus"] if i.get("kind") in STUDENT_NOTES]
+    return [{"key": f"{a['kind']}:{a['count']}"[:120], "text": a["text"], "sub": ""} for a in overview(u=u, s=s)["attention"]]
+@app.get("/api/me/notifications")
+def my_notifications(u: User = Depends(me), s: Session = Depends(db)):
+    items = notes_for(u, s); seen = {k for (k,) in s.query(NoteSeen.key).filter(NoteSeen.user_id == u.id, NoteSeen.key.in_([i["key"] for i in items] or [""]))}
+    return {"items": [{**i, "unread": i["key"] not in seen} for i in items], "digest": bool(u.digest), "mail": mail_on()}
+class SeenIn(BaseModel): keys: list[str]
+@app.post("/api/me/notifications/seen")
+def notes_seen(b: SeenIn, u: User = Depends(me), s: Session = Depends(db)):
+    have = {k for (k,) in s.query(NoteSeen.key).filter(NoteSeen.user_id == u.id)}
+    for k in dict.fromkeys(x[:120] for x in b.keys[:100]):
+        if k not in have: s.add(NoteSeen(user_id=u.id, key=k))
+    s.query(NoteSeen).filter(NoteSeen.user_id == u.id, NoteSeen.at < dt.datetime.utcnow() - dt.timedelta(days=120)).delete()  # old ones stop mattering
+    s.commit(); return {"ok": True}
+class DigestIn(BaseModel): digest: bool
+@app.put("/api/me/notifications/settings")
+def notes_settings(b: DigestIn, u: User = Depends(me), s: Session = Depends(db)):
+    if b.digest and not mail_on(): raise HTTPException(400, "Email is not set up on this server yet")
+    u.digest = b.digest; s.commit(); return {"digest": u.digest}
+DIGEST_HOUR = int(os.getenv("DIGEST_HOUR") or 7)  # the local hour (see DAY_OFFSET_MINUTES) after which the daily summary goes out
+def send_digests(now=None):  # once a local day, after DIGEST_HOUR: everyone who asked gets their unseen notifications by email (nothing if there are none)
+    now = now or dt.datetime.utcnow(); sent = 0
+    if not mail_on() or (now + dt.timedelta(minutes=DAY_OFFSET)).hour < DIGEST_HOUR: return 0
+    with Session_() as s:
+        for u in s.query(User).filter(User.digest == True, User.active == True):  # noqa: E712
+            if u.digest_at and local_day(u.digest_at) >= local_day(now): continue
+            u.digest_at = now; s.commit()  # marked first, so a failing mail server can't make it send twice
+            try:
+                items = notes_for(u, s); seen = {k for (k,) in s.query(NoteSeen.key).filter(NoteSeen.user_id == u.id)}; new = [i for i in items if i["key"] not in seen]
+                if not new: continue
+                lines = "\n".join(f"- {i['text']}" + (f" ({i['sub']})" if i["sub"] else "") for i in new)
+                send_mail(u.email, f"{APP_NAME}: {len(new)} new {'notification' if len(new) == 1 else 'notifications'}",
+                          f"Hi {u.name},\n\nHere is what is new for you:\n\n{lines}\n\nOpen {APP_NAME}: {os.getenv('APP_URL', '').rstrip('/')}\n\nTo stop these emails, open the bell in the app and untick the daily summary.\n")
+                sent += 1
+            except Exception as e: log.warning("Daily summary to user %s failed: %s", u.id, type(e).__name__)
+    return sent
+def digest_loop():
+    while True:
+        try: send_digests()
+        except Exception as e: log.warning("Daily summaries failed: %s", type(e).__name__)
+        time.sleep(1800)
 def read_head():  # the commit this server's code is at (None when it is not a git checkout)
     try: return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=5).stdout.strip() or None
     except Exception: return None
