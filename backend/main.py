@@ -2422,6 +2422,12 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     if not t or kind not in PROMPTS: raise HTTPException(404, "Not found")
     check_topic_access(u, t, s)
     f = full(t, s); prompt = prompt_for(s, kind)
+    mine = my_notes(s, u.id, tid) if u.role == "student" else None
+    if mine:  # the student's own notes are private: the answer is written for them alone, never saved for others, and counts toward their daily AI requests
+        body = html_text(f["content"]) if f["content_format"] == "html" else (f["content"] or "")
+        msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\nThe student's own notes on this topic:\n{mine}\n\n" + (
+            "" if kind == "explain" else f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n")
+        return {"text": await study_ask(u, s, "topic_" + kind, prompt, msg, max_tokens=None), "cached": False, "own_notes": True}
     ch = hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or "", prompt]).encode()).hexdigest()
     key = key_or_fail(u, s)
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
