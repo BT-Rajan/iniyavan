@@ -23,11 +23,11 @@ def test_the_gist_is_short_json_saved_once_and_steps_are_capped(env, monkeypatch
     t = setup(env, monkeypatch)
     r = env.c.get(f"/api/topics/{t}/ai/gist", headers=env.stu).json()
     assert r["data"]["hook"] == GIST["hook"] and len(r["data"]["points"]) == 3 and r["cached"] is False
-    assert Fake.last["max_tokens"] == main.STEPS["gist"] and "JSON" in Fake.last["messages"][0]["content"]
+    assert Fake.last["max_tokens"] == main.STEPS["gist"] and "JSON" in Fake.last["messages"][1]["content"]
     assert env.c.get(f"/api/topics/{t}/ai/gist", headers=env.admin).json()["cached"] is True and Fake.calls == 1
     Fake.reply = {"question": "Distinguish temporary and permanent hardness (2 marks)", "answer": "Temporary: bicarbonates, removed by boiling.", "tip": "Name the salts."}
     r = env.c.get(f"/api/topics/{t}/ai/exam", headers=env.stu).json(); assert r["data"]["tip"] == "Name the salts."
-    assert "Question pattern" in Fake.last["messages"][1]["content"]  # exam steps see the pattern and guideline
+    assert "Question pattern" in Fake.last["messages"][2]["content"]  # exam steps see the pattern and guideline
     assert env.c.get(f"/api/topics/{t}/ai/search", headers=env.stu).status_code == 404
 
 def test_a_step_the_ai_garbles_is_not_saved(env, monkeypatch):
@@ -60,9 +60,9 @@ def test_the_steps_adapt_to_what_the_student_does(env, monkeypatch):
     assert get("gist")["you"]["order"][0] == "example"  # the step they reach for comes first
     Fake.reply = {"question": "Q?", "answer": "A."}
     for _ in range(3): assert env.c.post(f"/api/topics/{t}/check-result", headers=env.stu, json={"outcome": "not_yet"}).status_code == 200
-    r = get("check"); assert r["level"] == "easy" and "found these questions hard" in Fake.last["messages"][0]["content"]
+    r = get("check"); assert r["level"] == "easy" and "found these questions hard" in Fake.last["messages"][1]["content"]
     for _ in range(8): env.c.post(f"/api/topics/{t}/check-result", headers=env.stu, json={"outcome": "knew"})
-    get("check"); assert "apply the idea" in Fake.last["messages"][0]["content"]
+    get("check"); assert "apply the idea" in Fake.last["messages"][1]["content"]
     assert env.c.post(f"/api/topics/{t}/check-result", headers=env.stu, json={"outcome": "great"}).status_code == 400
     assert env.c.get(f"/api/topics/{t}/ai/gist", headers=env.admin).json().get("you") is None  # staff are not profiled
     me = env.c.get("/api/me/learning", headers=env.stu).json(); assert me["level"] == "hard" and me["taps"]["example"] == 3
