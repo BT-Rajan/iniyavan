@@ -186,6 +186,11 @@ class TopicStore(Base):  # what an interactive page keeps in localStorage for on
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); data = Column(Text); updated = Column(DateTime, default=dt.datetime.utcnow)
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class StepLog(Base):  # what a student does with a topic's short steps (a step opened, or "I had it" / "Not quite" on a quick check); private to them, used only to adapt the steps
+    __tablename__ = "step_log"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); kind = Column(String(10)); outcome = Column(String(8), nullable=True)
+    at = Column(DateTime, default=dt.datetime.utcnow)
 class NoteSeen(Base):  # a notification someone has already seen, by its key, so the bell counts only new ones
     __tablename__ = "notes_seen"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); key = Column(String(120)); at = Column(DateTime, default=dt.datetime.utcnow)
@@ -2678,7 +2683,7 @@ def course_progress(cid: int, u: User = Depends(staff), s: Session = Depends(db)
 STEP_RULES = ("You help a busy engineering student learn one topic in small steps. Use only what fits the topic's notes and stay accurate. "
               "Plain short sentences: no greeting, no filler, no headings. Write formulas in plain text or $...$ math. "
               "Reply with only a JSON object with exactly these keys (the keys stay in English): ")
-STEPS = {"gist": 350, "why": 300, "example": 300, "exam": 400, "check": 250, "outline": 400}  # the kinds that answer in JSON, and their token limits
+STEPS = {"gist": 350, "why": 300, "example": 300, "exam": 400, "check": 250, "outline": 400, "simpler": 250}  # the kinds that answer in JSON, and their token limits
 EXAM_KINDS = ("answer", "exam", "outline")  # the kinds that also get the question pattern, answer guideline and sample content
 PROMPTS = {  # the built-in prompts; an admin can replace any of them under Settings (stored as prompt_<kind>)
  "explain": ("You are a warm, sharp engineering tutor for a busy student with little time. Explain the topic in at most 150 words: one line on why it matters, "
@@ -2694,6 +2699,8 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
  "exam": STEP_RULES + ('{"question": "one typical short exam question on this topic with its marks in brackets, following the question pattern when one is given", '
                        '"answer": "a model answer in at most 60 words, in points when that is how it is marked, following the answer guideline", "tip": "what examiners look for, at most 15 words"}'),
  "check": STEP_RULES + '{"question": "one question that tests understanding rather than memory of the wording", "answer": "the answer in at most 30 words, with a one-line reason"}',
+ "simpler": STEP_RULES + ('{"text": "at most 60 words: the core idea again in the plainest everyday words, with one familiar comparison, for a student who did not get it the first time", '
+                          '"hook": "one easy question to check the idea has landed"}'),
  "outline": STEP_RULES + ('{"points": [four to seven short lines: the skeleton of a full-marks answer in order, with the headings, key terms, and the diagram or equation to include], '
                           '"marks": "how the marks usually split, at most 15 words, or an empty string"}'),
  "search": ("You are the search helper inside a study app for college students. The student typed a search about something they are studying and the app has no good match in its own notes, "
@@ -2708,6 +2715,7 @@ PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on 
                "example": ("Topic step: Example", "A short real example of the topic."),
                "exam": ("Topic step: Exam angle", "One exam-style question with a short model answer."),
                "check": ("Topic step: Quick check", "One question whose answer the student reveals; nothing is scored."),
+               "simpler": ("Topic step: More simply", "Offered after a student says a quick check was not quite right: the idea again in plainer words."),
                "outline": ("Sample answer outline", "The skeleton of a full-marks answer, shown before the full sample answer."),
                "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
 MAX_PROMPT = 4000
@@ -2733,16 +2741,38 @@ def topic_msg(f, kind, mine=None):  # what the AI is told about a topic
             + (f"The student's own notes on this topic:\n{mine}\n\n" if mine else "")
             + (f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n" if kind in EXAM_KINDS else ""))
 def topic_hash(t, kind, prompt): return hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or "", prompt]).encode()).hexdigest()
-def step_reply(kind, text):  # a step's JSON, or None when the AI did not keep to it
+STEP_NEEDS = {"gist": ("points",), "why": ("text",), "example": ("text",), "simpler": ("text",), "exam": ("question", "answer"), "check": ("question", "answer"), "outline": ("points",)}
+def step_reply(kind, text):  # a step's JSON, or None when the AI did not keep to it (not JSON, or a part the page shows is missing)
     try: d = ai_json(text)
     except HTTPException: return None
-    return d if isinstance(d, dict) else None
+    if not isinstance(d, dict) or not all(d.get(k) for k in STEP_NEEDS.get(kind, ())): return None
+    return d
+# ---- adapting the steps to each student, from what they do with them (private: teachers never see it) ----
+PICKS = ("why", "example", "exam", "check")  # the steps a student chooses, in their default order
+CHECK_LEVEL = {"easy": "\n\nThis student has found these questions hard lately: ask about the single most important fact, plainly, and you may put a small hint in the question.",
+               "hard": "\n\nThis student answers these easily: ask them to apply the idea to a new situation or to connect two ideas from the topic."}
+QUESTION_FIRST_AFTER = 3  # topics opened in a unit before its other topics lead with the question and keep the gist one tap away
+def learner(u, s):  # how the steps are arranged for this student
+    rows = s.query(StepLog.kind, StepLog.outcome).filter(StepLog.user_id == u.id).order_by(StepLog.id.desc()).limit(200).all()
+    taps = defaultdict(int)
+    for k, o in rows:
+        if not o and k in PICKS: taps[k] += 1
+    res = [o for k, o in rows if o][:8]; knew = sum(o == "knew" for o in res)
+    level = "normal" if len(res) < 3 else "easy" if knew / len(res) < 0.4 else "hard" if knew / len(res) >= 0.8 else "normal"
+    order = sorted(PICKS, key=lambda k: (-taps[k], PICKS.index(k))) if sum(taps.values()) >= 3 else list(PICKS)
+    return {"order": order, "level": level, "taps": dict(taps), "checks": len(res), "knew": knew}
+def question_first(u, t, s):
+    if u.role != "student" or not t.unit_id: return False
+    return s.query(Progress.id).join(Topic, Topic.id == Progress.topic_id).filter(Progress.user_id == u.id, Topic.unit_id == t.unit_id, Topic.id != t.id).count() >= QUESTION_FIRST_AFTER
 @app.get("/api/topics/{tid}/ai/{kind}")
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t or kind not in PROMPTS or kind == "search": raise HTTPException(404, "Not found")
     check_topic_access(u, t, s)
-    f = full(t, s); prompt = in_lang(u, prompt_for(s, kind))
+    you = learner(u, s) if u.role == "student" else None
+    f = full(t, s); prompt = in_lang(u, prompt_for(s, kind) + (CHECK_LEVEL.get(you["level"], "") if you and kind == "check" else ""))
+    if you and kind in PICKS + ("simpler",): s.add(StepLog(user_id=u.id, topic_id=tid, kind=kind)); s.commit()  # a step the student chose to open
+    extra = {"you": {**you, "question_first": question_first(u, t, s)}} if you and kind == "gist" else {"level": you["level"]} if you and kind == "check" else {}
     mine = my_notes(s, u.id, tid) if u.role == "student" and kind in ("explain", "answer") else None
     if mine:  # the student's own notes are private: the answer is written for them alone, never saved for others, and counts toward their daily AI requests
         return {"text": await study_ask(u, s, "topic_" + kind, prompt, topic_msg(f, kind, mine), max_tokens=None), "cached": False, "own_notes": True}
@@ -2751,13 +2781,26 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit:
         hit.hits += 1; s.commit()
-        return {"text": hit.text, "cached": True, **({"data": step_reply(kind, hit.text)} if kind in STEPS else {})}
+        return {"text": hit.text, "cached": True, **({"data": step_reply(kind, hit.text)} if kind in STEPS else {}), **extra}
     text, tokens = await ask_ai(u, s, key, prompt, topic_msg(f, kind), max_tokens=STEPS.get(kind, 700 if kind == "explain" else None))
     data = step_reply(kind, text) if kind in STEPS else None
     if kind in STEPS and data is None: raise HTTPException(502, "The AI's answer could not be read. Try again.")  # not saved, so the next try asks again
     try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
     except Exception: s.rollback()
-    return {"text": text, "cached": False, **({"data": data} if kind in STEPS else {})}
+    return {"text": text, "cached": False, **({"data": data} if kind in STEPS else {}), **extra}
+class CheckResult(BaseModel): outcome: str
+@app.post("/api/topics/{tid}/check-result")
+def check_result(tid: int, b: CheckResult, u: User = Depends(me), s: Session = Depends(db)):  # "I had it" or "Not quite" after a quick check: private, never a score
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    if b.outcome not in ("knew", "not_yet"): raise HTTPException(400, "Choose knew or not_yet")
+    check_topic_access(u, t, s); s.add(StepLog(user_id=u.id, topic_id=tid, kind="check", outcome=b.outcome)); s.commit()
+    return {"ok": True, "level": learner(u, s)["level"]}
+@app.get("/api/me/learning")
+def my_learning(u: User = Depends(me), s: Session = Depends(db)): return learner(u, s)  # what the app has picked up, shown to the student with a way to start fresh
+@app.delete("/api/me/learning/steps")
+def forget_learning(u: User = Depends(me), s: Session = Depends(db)):
+    n = s.query(StepLog).filter_by(user_id=u.id).delete(); s.commit(); return {"ok": True, "cleared": n}
 @app.get("/api/me/recall")
 def recall(u: User = Depends(me), s: Session = Depends(db)):
     """'Remember this?': one curious question from a topic the student opened a few days ago, from its saved gist (never a new AI call). Changes daily."""
@@ -2772,7 +2815,10 @@ def recall(u: User = Depends(me), s: Session = Depends(db)):
         except HTTPException: continue
         found.append({"topic_id": t.id, "title": t.title, "question": d["hook"], "answer": d["hook_answer"]})
     if not found: return {"item": None}
-    return {"item": found[(now.date().toordinal() + u.id) % len(found)]}
+    last = {tid: (o, at) for tid, o, at in s.query(StepLog.topic_id, StepLog.outcome, StepLog.at).filter(StepLog.user_id == u.id, StepLog.outcome.isnot(None)).order_by(StepLog.id)}
+    shaky = {tid for tid, (o, at) in last.items() if o == "not_yet" and at <= now - dt.timedelta(days=1)}  # their latest quick check here was "not quite", a day or more ago
+    pool = [x for x in found if x["topic_id"] in shaky] or found  # a topic they said was "not quite" comes back first, until they have it
+    return {"item": pool[(now.date().toordinal() + u.id) % len(pool)]}
 
 # ---- search: the app's own topics first, then the AI ----
 STOP = set("a an the of in on at to for and or is are was were be been what whats how why when which who does do did define explain meaning about between difference differences vs versus with from by as it its this that these those me my tell give short note notes write full form please can you i we".split())

@@ -430,3 +430,7 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 .recallh{display:flex;justify-content:space-between;align-items:center}.recallh small{color:var(--acct);font-weight:700;text-transform:uppercase;letter-spacing:.04em;font-size:12px}
 .recallh .ic{background:transparent;width:30px;height:30px}.recallq{margin:4px 0 6px;font-weight:600;font-size:16px}
 .mine{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;color:var(--mut);font-size:14px;margin:18px 0 6px}.mine .link{margin:0;color:var(--acct)}
+.selfm{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.selfm small{font-size:12px}p.selfm{display:block}
+.link.inl{display:inline;margin:0;color:var(--acct)}
+.adapt{margin:0;padding-inline-start:20px;line-height:1.5}.adapt li{margin:3px 0}
+.gist>.link{color:var(--acct)}
