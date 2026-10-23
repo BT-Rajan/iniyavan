@@ -43,7 +43,7 @@ const Mark=({s})=>s==='completed'?<Check className="done" aria-label="Completed"
 const ownerLine=c=>c.mine?'Your course':c.owner_problem||(c.owner?'Owner: '+c.owner:'Owner not assigned')
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
-const firstName=n=>{const w=(n||'').trim().split(/\s+/);return w.length>1&&/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w[0])?w[0]+' '+w[1]:w[0]}  // a title stays with the name it belongs to
+const firstName=n=>{const w=(n||'').trim().split(/\s+/).filter(Boolean);if(!w.length)return '';if(!/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w[0]))return w[0];const rest=w.slice(1).filter(x=>x.replace(/\./g,'').length>1);return rest.length?w[0]+' '+rest[0]:w[0]}  // a title stays with the surname it belongs to ("Dr. A. Kumar" → "Dr. Kumar"), skipping initials
 const MAX_FILE_MB=20,tooBig=f=>f.size>MAX_FILE_MB*1024*1024  // the server's limit for one file of study material
 const pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`
 const matches=n=>`${n} ${n===1?'match':'matches'}`
