@@ -260,7 +260,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)  # the app bundle is ~850 
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 FRAME_PATH = re.compile(r"^/api/(topics/\d+/frame|frame-preview/[\w-]+)$")
-SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/")  # student reading activity is already tracked as progress
+SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/|^/api/me/lang$")  # student reading activity is already tracked as progress; a language choice is only a preference
 def audit_write(uid, method, path, status):
     with Session_() as s: s.add(AuditLog(user_id=uid, method=method, path=path[:200], status=status)); s.commit()
 @app.middleware("http")
@@ -603,12 +603,21 @@ def login(b: Login, request: Request, s: Session = Depends(db)):
     clear_fails(s, email, ip)
     if stale(u.pw) and not u.must_change: u.pw = hp(b.password); s.commit()  # quietly upgrade old hashes
     return {"token": make_token(u), "user": me_json(u)}
+AUDIT_ACTIONS = {"created": ["POST"], "changed": ["PUT", "PATCH"], "deleted": ["DELETE"]}
 @app.get("/api/admin/audit")
-def audit_list(q: str = "", limit: int = 100, offset: int = 0, _: User = Depends(admin), s: Session = Depends(db)):
+def audit_list(q: str = "", action: str = "", result: str = "", days: int = 0, sort: str = "newest", format: str = "json", limit: int = 100, offset: int = 0,
+               _: User = Depends(admin), s: Session = Depends(db)):
     qy = s.query(AuditLog, User).outerjoin(User, User.id == AuditLog.user_id)
     if q.strip():
         k = f"%{q.strip()}%"; qy = qy.filter(or_(User.email.ilike(k), User.name.ilike(k), AuditLog.path.ilike(k)))
-    total = qy.count(); rows = qy.order_by(AuditLog.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 200)).all()
+    if action in AUDIT_ACTIONS: qy = qy.filter(AuditLog.method.in_(AUDIT_ACTIONS[action]))
+    if result == "ok": qy = qy.filter(AuditLog.status < 400)
+    elif result == "failed": qy = qy.filter(AuditLog.status >= 400)
+    if days > 0: qy = qy.filter(AuditLog.at >= dt.datetime.utcnow() - dt.timedelta(days=days))
+    qy = qy.order_by(AuditLog.id.asc() if sort == "oldest" else AuditLog.id.desc())
+    if format == "csv": return csv_response("activity-log.csv", ["When (UTC)", "Person", "Email", "Method", "Path", "Status"],
+                                           [[a.at.isoformat(timespec="seconds"), u.name if u else "Deleted user", u.email if u else "", a.method, a.path, a.status] for a, u in qy.limit(50000).all()])
+    total = qy.count(); rows = qy.offset(max(offset, 0)).limit(min(max(limit, 1), 200)).all()
     return {"total": total, "items": [{"id": a.id, "at": a.at.isoformat() + "Z", "user": u.name if u else "Deleted user", "email": u.email if u else "", "role": u.role if u else "",
                                        "method": a.method, "path": a.path, "status": a.status} for a, u in rows]}
 @app.get("/api/health")
@@ -773,7 +782,7 @@ def user_detail(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     prog = s.get(Program, u.program_id) if u.program_id else None
     live = live_topic_ids(s, [c.id for c in live_courses(a, s)])  # same rule as the Reports screens
     n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid, Progress.topic_id.in_(live)).one()
-    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid, Topic.id.in_(live)).order_by(Progress.last_read.desc()).limit(10).all()
+    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid, Topic.id.in_(live)).order_by(Progress.last_read.desc()).limit(500).all()
     return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
             "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
             "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)]}  # the courses they own
@@ -996,7 +1005,7 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     sems = s.query(Semester).filter_by(program_id=pid).order_by(*SEM_ORDER).all()
     cc = dict(s.query(Course.semester_id, func.count(Course.id)).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     tc = dict(s.query(Course.semester_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id == pid).group_by(Course.semester_id).all())
-    studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(50).all()
+    studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(5000).all()
     cl = defaultdict(list); sem_arch = {x.id: bool(x.archived_at) for x in sems}
     for co, ow in s.query(Course, User).outerjoin(User, User.id == Course.faculty_owner_id).filter(Course.semester_id.in_([x.id for x in sems] or [0])).order_by(Course.id):
         cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow),
@@ -1079,18 +1088,38 @@ def stats(a: User = Depends(admin), s: Session = Depends(db)):
     return {"students": s.query(User).filter_by(role="student").count(), "topics": live_topic_ids(s, [c.id for c in live_courses(a, s)]).count(),
             "cached": s.query(AICache).count(), "tokens_saved": int(saved)}
 
-@app.get("/api/admin/reports")
-def reports(a: User = Depends(admin), s: Session = Depends(db)):
-    live = live_topic_ids(s, [c.id for c in live_courses(a, s)])  # same topics the course report counts, so the two screens agree
-    top = s.query(Topic.title, func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0)).join(Progress, Progress.topic_id == Topic.id).filter(Topic.id.in_(live)) \
-        .group_by(Topic.id, Topic.title).order_by(func.sum(Progress.reads).desc()).limit(10).all()
-    studs = s.query(User.name, User.email, User.active, func.count(Progress.id), func.max(Progress.last_read)).outerjoin(Progress, and_(Progress.user_id == User.id, Progress.topic_id.in_(live))) \
-        .filter(User.role == "student").group_by(User.id, User.name, User.email, User.active).order_by(func.max(Progress.last_read).desc()).all()
-    ai = s.query(Topic.title, AICache.kind, AICache.hits, AICache.tokens).join(AICache, AICache.topic_id == Topic.id) \
-        .order_by((AICache.hits * AICache.tokens).desc()).limit(10).all()
-    return {"top_topics": [{"title": t, "readers": r, "reads": int(n)} for t, r, n in top],
-            "students": [{"name": n, "email": e, "active": a, "topics_read": c, "last_active": (l.isoformat() + "Z") if l else None} for n, e, a, c, l in studs],
-            "ai": [{"title": t, "kind": k, "hits": h or 0, "tokens": tk or 0, "saved": (h or 0) * (tk or 0)} for t, k, h, tk in ai]}
+@app.get("/api/admin/reports/{kind}")
+def report_list(kind: str, q: str = "", show: str = "", sort: str = "", limit: int = 25, offset: int = 0, a: User = Depends(admin), s: Session = Depends(db)):
+    """One page of a Reports list (topics read, students, saved AI answers), searched, filtered and sorted on the server."""
+    live = live_topic_ids(s, [c.id for c in live_courses(a, s)]); k = f"%{q.strip()}%" if q.strip() else None
+    if kind == "topics":
+        readers, reads = func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0)
+        qy = s.query(Topic.id, Topic.title, Course.name, readers, reads).join(Progress, Progress.topic_id == Topic.id).join(Course, Course.id == Topic.course_id) \
+            .filter(Topic.id.in_(live)).group_by(Topic.id, Topic.title, Course.name)
+        if k: qy = qy.filter(or_(Topic.title.ilike(k), Course.name.ilike(k)))
+        qy = qy.order_by(*{"readers": [readers.desc()], "least": [reads.asc()], "title": [Topic.title.asc()]}.get(sort, [reads.desc()]), Topic.id)
+        row = lambda r: {"id": r[0], "title": r[1], "course": r[2], "readers": r[3], "reads": int(r[4])}
+    elif kind == "students":
+        opened, last = func.count(Progress.id), func.max(Progress.last_read)
+        qy = s.query(User.id, User.name, User.email, User.active, opened, last).outerjoin(Progress, and_(Progress.user_id == User.id, Progress.topic_id.in_(live))) \
+            .filter(User.role == "student").group_by(User.id, User.name, User.email, User.active)
+        if k: qy = qy.filter(or_(User.name.ilike(k), User.email.ilike(k)))
+        if show == "active": qy = qy.filter(User.active == True)  # noqa: E712
+        elif show == "disabled": qy = qy.filter(User.active == False)  # noqa: E712
+        elif show == "never": qy = qy.having(opened == 0)
+        elif show == "quiet": qy = qy.having(or_(last.is_(None), last < dt.datetime.utcnow() - dt.timedelta(days=7)))
+        qy = qy.order_by(*{"quiet": [last.is_(None).desc(), last.asc()], "name": [User.name.asc()], "most": [opened.desc()], "least": [opened.asc()]}.get(sort, [last.is_(None).asc(), last.desc()]), User.id)
+        row = lambda r: {"id": r[0], "name": r[1], "email": r[2], "active": bool(r[3]), "topics_read": r[4], "last_active": (r[5].isoformat() + "Z") if r[5] else None}
+    elif kind == "ai":
+        saved = AICache.hits * AICache.tokens
+        qy = s.query(AICache.id, Topic.title, AICache.kind, AICache.hits, AICache.tokens).join(Topic, Topic.id == AICache.topic_id)
+        if k: qy = qy.filter(Topic.title.ilike(k))
+        if show in ("explain", "answer"): qy = qy.filter(AICache.kind == show)
+        qy = qy.order_by(*{"hits": [AICache.hits.desc()], "newest": [AICache.id.desc()], "title": [Topic.title.asc()]}.get(sort, [saved.desc()]), AICache.id)
+        row = lambda r: {"id": r[0], "title": r[1], "kind": r[2], "hits": r[3] or 0, "tokens": r[4] or 0, "saved": (r[3] or 0) * (r[4] or 0)}
+    else: raise HTTPException(404, "Not found")
+    total = qy.count(); rows = qy.offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    return {"total": total, "items": [row(r) for r in rows]}
 
 # ---- course reports (admins see every course; faculty see only their own) ----
 def csv_cell(v): v = "" if v is None else v; return "'" + v if isinstance(v, str) and v[:1] and v[:1] in "=+-@\t\r" else v  # stops spreadsheet formula injection
@@ -3312,7 +3341,7 @@ def study_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     if not p: s.add(StudyProgress(user_id=u.id, topic_id=tid)); s.commit()
     order = [x.id for x in s.query(StudyTopic).join(StudyUnit, StudyUnit.id == StudyTopic.unit_id).filter(StudyTopic.course_id == c.id).order_by(StudyUnit.position, StudyUnit.id, StudyTopic.position, StudyTopic.id)]
     i = order.index(tid); pick = lambda j: {"id": order[j], "title": s.get(StudyTopic, order[j]).title} if 0 <= j < len(order) else None
-    atts = s.query(StudyAttempt, StudyQuiz).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyQuiz.topic_id == tid, StudyAttempt.user_id == u.id).order_by(StudyAttempt.id.desc()).limit(20).all()
+    atts = s.query(StudyAttempt, StudyQuiz).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyQuiz.topic_id == tid, StudyAttempt.user_id == u.id).order_by(StudyAttempt.id.desc()).limit(200).all()
     return {"id": t.id, "title": t.title, "summary": t.summary or "", "content": t.content or "", "course_id": c.id, "course": c.title, "unit": un.title if un else "",
             "completed": bool(p and p.completed_at), "has_explain": bool(t.explain), "stars": study_stars(s, u.id, [tid]).get(tid, 0), "can_edit": c.owner_id == u.id or u.role == "admin", **study_ai_status(u, s), "prev": pick(i - 1), "next": pick(i + 1), "position": i + 1, "total": len(order),
             "attempts": [{"id": a.id, "quiz_id": q.id, "kind": q.kind, "score": a.score, "total": a.total, "percent": a.percent, "at": iso(a.at)} for a, q in atts]}
