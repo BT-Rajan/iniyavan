@@ -782,7 +782,7 @@ def user_detail(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     prog = s.get(Program, u.program_id) if u.program_id else None
     live = live_topic_ids(s, [c.id for c in live_courses(a, s)])  # same rule as the Reports screens
     n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid, Progress.topic_id.in_(live)).one()
-    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid, Topic.id.in_(live)).order_by(Progress.last_read.desc()).limit(10).all()
+    recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid, Topic.id.in_(live)).order_by(Progress.last_read.desc()).limit(500).all()
     return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
             "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
             "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)]}  # the courses they own
@@ -1005,7 +1005,7 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
     sems = s.query(Semester).filter_by(program_id=pid).order_by(*SEM_ORDER).all()
     cc = dict(s.query(Course.semester_id, func.count(Course.id)).filter(Course.program_id == pid).group_by(Course.semester_id).all())
     tc = dict(s.query(Course.semester_id, func.count(Topic.id)).join(Topic, Topic.course_id == Course.id).filter(Course.program_id == pid).group_by(Course.semester_id).all())
-    studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(50).all()
+    studs = s.query(User).filter_by(program_id=pid).order_by(func.coalesce(User.semester, 99), func.lower(User.name)).limit(5000).all()
     cl = defaultdict(list); sem_arch = {x.id: bool(x.archived_at) for x in sems}
     for co, ow in s.query(Course, User).outerjoin(User, User.id == Course.faculty_owner_id).filter(Course.semester_id.in_([x.id for x in sems] or [0])).order_by(Course.id):
         cl[co.semester_id].append({"id": co.id, "name": co.name, "owner_id": co.faculty_owner_id, "owner": ow.name if ow else None, "owner_problem": owner_problem(ow),
@@ -3341,7 +3341,7 @@ def study_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     if not p: s.add(StudyProgress(user_id=u.id, topic_id=tid)); s.commit()
     order = [x.id for x in s.query(StudyTopic).join(StudyUnit, StudyUnit.id == StudyTopic.unit_id).filter(StudyTopic.course_id == c.id).order_by(StudyUnit.position, StudyUnit.id, StudyTopic.position, StudyTopic.id)]
     i = order.index(tid); pick = lambda j: {"id": order[j], "title": s.get(StudyTopic, order[j]).title} if 0 <= j < len(order) else None
-    atts = s.query(StudyAttempt, StudyQuiz).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyQuiz.topic_id == tid, StudyAttempt.user_id == u.id).order_by(StudyAttempt.id.desc()).limit(20).all()
+    atts = s.query(StudyAttempt, StudyQuiz).join(StudyQuiz, StudyQuiz.id == StudyAttempt.quiz_id).filter(StudyQuiz.topic_id == tid, StudyAttempt.user_id == u.id).order_by(StudyAttempt.id.desc()).limit(200).all()
     return {"id": t.id, "title": t.title, "summary": t.summary or "", "content": t.content or "", "course_id": c.id, "course": c.title, "unit": un.title if un else "",
             "completed": bool(p and p.completed_at), "has_explain": bool(t.explain), "stars": study_stars(s, u.id, [tid]).get(tid, 0), "can_edit": c.owner_id == u.id or u.role == "admin", **study_ai_status(u, s), "prev": pick(i - 1), "next": pick(i + 1), "position": i + 1, "total": len(order),
             "attempts": [{"id": a.id, "quiz_id": q.id, "kind": q.kind, "score": a.score, "total": a.total, "percent": a.percent, "at": iso(a.at)} for a, q in atts]}

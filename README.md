@@ -210,6 +210,11 @@ Students find the test on the course page under **MCQ tests**, and on Today when
 
 A student's final score in a test is their best attempt. Strengths and the question analysis use each student's latest attempt, so a retake replaces the earlier result. Unit quizzes take images, areas and the answer setting too, and their **Add from a CSV** uses the same format. API: `POST /api/quizzes/parse-csv`, `POST /api/quizzes` with `course_id`, `GET /api/quizzes/{id}/results`, `GET /api/quizzes/{id}/attempts`, `GET /api/attempts/{id}`, `GET /api/courses/{id}/gradebook`, `GET /api/me/scores`. Migration 0018 adds the columns.
 
+## Lists: ten rows a page
+Every list in the app shows at most ten rows; a longer one gets numbered pages under it (Previous, page numbers, Next, and "1–10 of 41"). Long lists from the server (users, courses, programs, the activity log, the Reports lists, the question bank) are fetched a page at a time; shorter ones the screen already holds use the `Paged` component in `frontend/src/App.jsx`. New screens follow the same rule: wrap a list in `<Paged rows={…} render={…}/>`, or use `usePaged` with `<Pager>` when the server pages it.
+
+The **Activity log** can be searched by person or action and filtered by action (created, changed, deleted), result and time (last 24 hours, 7 or 30 days), newest or oldest first, and downloaded as CSV. On **Reports**, the most read topics, students and saved AI answers each have their own search, filter and sort; a course's student report can be searched and filtered (never opened a topic, under 50% completed, needs another round of study) and sorted by completion or last activity.
+
 ## Reports
 **Reports** now shows, per course, how many students can see it, how many topics it has, the average share of topics read, and quiz averages (each student's best score per quiz). Filter by program and semester, tap a course to see every student's completion, topics read, quiz results and last activity, and download either list as CSV (names starting with `=`, `+`, `-` or `@` are escaped so spreadsheets can't run them). Admins see all courses; faculty get a Reports page limited to their assigned courses. "Read" means the student opened the topic (completion in Reports is still based on opening, not on "Mark as completed"); only published topics count.
 
