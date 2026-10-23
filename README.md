@@ -23,6 +23,14 @@ Students open a topic straight into a **full-screen reader** (with a button for 
 ## Notifications
 The bell shows what needs doing: for staff, the Home page's "Needs attention" items; for students, overdue and due-soon topics and tests not tried or not passed. The badge counts only new ones; opening the list marks them seen, and an item comes back as new when it changes (for example, more drafts). When email is set up (SMTP in `.env`), anyone can tick **Email me a daily summary** in the bell: once a day, after `DIGEST_HOUR` (default 7, local time per `DAY_OFFSET_MINUTES`), they get an email listing their new notifications, and nothing when there are none.
 
+## Languages: English, Arabic and Tamil
+Everyone picks their language with the switch in the header (and on the sign-in page): English, العربية or தமிழ். The choice is saved to their account (`PUT /api/me/lang`) and on the device; a first visit follows the browser's language. Arabic turns the whole app right to left (the side menu moves to the right, arrows for back and next turn round). Arabic and Tamil text use Noto Sans, downloaded only when needed.
+
+- **How text is translated:** the screens are written in English and every piece of text goes through `t()` (`frontend/src/i18n.js`), which looks it up by its English wording in `frontend/src/locales/ar.json` and `ta.json`. Anything not in the dictionary shows in English. `{name}`-style placeholders are filled in at run time and may sit anywhere in a translation. Messages from the server are looked up the same way, so the common ones are translated; rare ones and emails stay English.
+- **Fixing or adding a translation:** edit the JSON file (the key is the exact English text). The translations were made with AI help; have a native Arabic and a native Tamil speaker review them before students use them.
+- **AI answers** (Explain, Sample answer, AI search, explanations and practice questions in student-built courses) come in the person's language. Saved answers are kept per language, so each language costs AI tokens once per topic.
+- What people type (topic content, course and program names, highlights) is never translated.
+
 ## Name, logo and colours
 The app is called Zigora (formerly Eng Tutor). The name comes from `APP_NAME` in `.env`; an older `.env` may still say `APP_NAME="Eng Tutor"`, so change it there and run `./run.sh`. An admin can also set another name and logo under Settings, which wins over `.env`. Without a custom logo the app shows the Zigora mark (`frontend/public/favicon.svg`; the PNG icons beside it are drawn from the same shape). The colours are plum `#722f99`, stone `#c5c1c1`, cream `#fee7c8` and coral `#ff9292`, set as variables at the top of `frontend/src/styles.css`. The pm2 process and the database keep the name `engtutor`, so existing servers carry on unchanged.
 

@@ -41,7 +41,8 @@ class User(Base):
     institution = Column(String(150), nullable=True); id_number = Column(String(60), nullable=True); phone = Column(String(30), nullable=True)  # given at self-registration
     self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email; they use their own AI key, never the shared one
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
-    digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)  # a daily email of new notifications, if they asked for it; when it last went
+    digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)
+    lang = Column(String(5), nullable=True)  # the language of the app's screens and AI answers for them: en, ar or ta (null = English)  # a daily email of new notifications, if they asked for it; when it last went
 class PendingRegistration(Base):  # someone who has asked for an account but has not yet entered the emailed code; becomes a User only when they do
     __tablename__ = "pending_registrations"
     id = Column(Integer, primary_key=True); email = Column(String(190), unique=True, index=True)
@@ -548,7 +549,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0020_practice_on_staff_topics", lambda c: _addcol("study_quizzes", "src_topic_id", "INT NULL")(c) if "study_quizzes" in inspect(c).get_table_names() else None),
               ("0021_routine_started_at", _addcol("routines", "started_at", "DATETIME NULL")),
               ("0022_highlight_colors_and_digest", lambda c: [_addcol(*x)(c) for x in (("highlights", "color", "VARCHAR(10) NULL"), ("highlights", "note", "TEXT NULL"),
-                                                                                     ("users", "digest", "TINYINT(1) NOT NULL DEFAULT 0"), ("users", "digest_at", "DATETIME NULL"))])]
+                                                                                     ("users", "digest", "TINYINT(1) NOT NULL DEFAULT 0"), ("users", "digest_at", "DATETIME NULL"))]),
+              ("0023_users_lang", _addcol("users", "lang", "VARCHAR(5) NULL"))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -589,7 +591,7 @@ def throttle(s, email, ip):  # 5 misses per account from one address, 20 per acc
 def note_fail(s, email, ip):
     s.add(LoginFail(email=email, ip=ip)); s.query(LoginFail).filter(LoginFail.at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
 def clear_fails(s, email, ip): s.query(LoginFail).filter_by(email=email, ip=ip).delete(); s.commit()
-def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": u.role != "student" or bool(u.program_id)}
+def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": u.role != "student" or bool(u.program_id), "lang": u.lang or "en"}
 @app.post("/api/login")
 def login(b: Login, request: Request, s: Session = Depends(db)):
     global DUMMY
@@ -617,6 +619,16 @@ def health():
     return {"ok": True, "db": True}
 @app.get("/api/me")
 def whoami(u: User = Depends(me)): return me_json(u)
+LANGS = {"en": "English", "ar": "Arabic", "ta": "Tamil"}
+class LangIn(BaseModel): lang: str
+@app.put("/api/me/lang")
+def set_lang(b: LangIn, u: User = Depends(me), s: Session = Depends(db)):  # the person's language for the screens and for AI answers
+    if b.lang not in LANGS: raise HTTPException(400, "Choose English, Arabic or Tamil")
+    u.lang = None if b.lang == "en" else b.lang; s.commit(); return me_json(u)
+def in_lang(u, prompt):  # AI answers come in the reader's language; the prompt (and so the saved-answer key) differs per language
+    lang = getattr(u, "lang", None) or "en"
+    if lang == "en": return prompt
+    return prompt + f"\n\nWrite the whole answer in {LANGS[lang]}. Keep formulas, equations, chemical symbols, units, code and the Markdown formatting as they are."
 class PwChange(BaseModel): current: str; new_password: str
 @app.post("/api/me/password")
 def change_password(b: PwChange, request: Request, u: User = Depends(me), s: Session = Depends(db)):
@@ -2669,7 +2681,7 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     t = s.get(Topic, tid)
     if not t or kind not in PROMPTS: raise HTTPException(404, "Not found")
     check_topic_access(u, t, s)
-    f = full(t, s); prompt = prompt_for(s, kind)
+    f = full(t, s); prompt = in_lang(u, prompt_for(s, kind))
     mine = my_notes(s, u.id, tid) if u.role == "student" else None
     if mine:  # the student's own notes are private: the answer is written for them alone, never saved for others, and counts toward their daily AI requests
         body = words_of(f["content"], f["content_format"])
@@ -2735,7 +2747,7 @@ class SearchAIIn(BaseModel): q: str; refresh: bool = False
 async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(db)):
     q = " ".join(b.q.split())
     if not 2 <= len(q) <= 200: raise HTTPException(400, "Type what you want to look up (2 to 200 characters)")
-    key = key_or_fail(u, s); prompt = prompt_for(s, "search"); qh = hashlib.sha256("|".join(["search", q.lower(), prompt]).encode()).hexdigest()
+    key = key_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", q.lower(), prompt]).encode()).hexdigest()
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
         if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
@@ -3312,7 +3324,7 @@ def study_done(tid: int, b: DoneIn, u: User = Depends(me), s: Session = Depends(
     p.completed_at = dt.datetime.utcnow() if b.completed else None; s.add(p); s.commit(); return {"ok": True}
 @app.get("/api/study/topics/{tid}/explain")
 async def study_explain(tid: int, u: User = Depends(me), s: Session = Depends(db)):
-    t = study_topic_or_404(tid, u, s); c = s.get(StudyCourse, t.course_id); prompt = STUDY_PROMPTS["explain"]
+    t = study_topic_or_404(tid, u, s); c = s.get(StudyCourse, t.course_id); prompt = in_lang(u, STUDY_PROMPTS["explain"])
     h = hashlib.sha256("|".join([t.title, t.content or "", prompt]).encode()).hexdigest()
     if t.explain and t.explain_hash == h: return {"text": t.explain, "cached": True}
     text = await study_ask(u, s, "explain", prompt, f"Course: {c.title}\nUnit: {s.get(StudyUnit, t.unit_id).title}\nTopic: {t.title}\n\nTopic content:\n{t.content}", max_tokens=4000)
@@ -3335,7 +3347,8 @@ async def write_questions(u, s, kind, title, material, earlier):
     n = QUIZ_SIZE[kind]; seen = [q for (raw,) in earlier for q in json.loads(raw)]
     msg = (f"Topic: {title}\n\nMaterial:\n{material}\n\nWrite {n} questions" + (", a mix of 4-option questions and a few true/false ones" if kind == "quiz" else "") + "." +
            (("\nAsk about different points than these earlier questions:\n" + "\n".join("- " + q["text"] for q in seen[:15])) if seen else ""))
-    qs = clean_questions(ai_json(await study_ask(u, s, kind, STUDY_PROMPTS["questions"], msg, max_tokens=6000)), n)
+    lang = u.lang or "en"; system = STUDY_PROMPTS["questions"] + ("" if lang == "en" else f"\n\nWrite the questions, options and explanations in {LANGS[lang]}, but keep the JSON keys and structure exactly as asked.")
+    qs = clean_questions(ai_json(await study_ask(u, s, kind, system, msg, max_tokens=6000)), n)
     if len(qs) < max(2, n // 2): raise HTTPException(502, "The AI did not write enough usable questions. Try again.")
     return qs
 @app.post("/api/study/topics/{tid}/quizzes")
