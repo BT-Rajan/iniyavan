@@ -19,7 +19,7 @@ export function fixTables(text){
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
 const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock,FileText,Bell} from 'lucide-react'
+import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -75,9 +75,12 @@ export default function App(){
   if(!user)return <AuthFrame logo={logo} name={name}><Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/></AuthFrame>
   if(user.must_change)return <AuthFrame logo={logo} name={name}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
-  const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
+  // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
+  const links=student?[['learn',GraduationCap,'My courses'],['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course'],['bookmarks',Bookmark,'Bookmarks'],...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['about',Info,'About']]
+    :admin?[['programs',GraduationCap,'Programs'],['learn',BookOpen,'Courses'],['users',UsersIcon,'Users'],['reports',BarChart3,'Reports'],['activity',History,'Activity log'],['ai',Sparkles,'Settings'],['about',Info,'About']]
+    :[['learn',BookOpen,'Courses'],['bookmarks',Bookmark,'Bookmarks'],['reports',BarChart3,'Reports'],...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
-    <TopBar user={user} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
+    <TopBar user={user} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find}/>}
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
@@ -90,7 +93,7 @@ export default function App(){
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label="Main menu">
-        <div className="dhead"><Logo src={logo} size={36}/><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
+        <div className="dhead"><button className={'homebtn'+(page==='home'?' on':'')} aria-label={name+', home'} aria-current={page==='home'?'page':undefined} onClick={()=>go('home')}><Logo src={logo} size={36}/><span><b>{name}</b><small>{user.name}, {user.role}</small></span></button><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
         {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k?' on':'')} onClick={()=>{if(k==='learn')setStart(null);go(k)}}><I size={20}/>{l}</button>)}
       </nav></div>
     <footer className="foot"><span>© {new Date().getFullYear()} {name}. All rights reserved.</span></footer>
@@ -199,9 +202,9 @@ const Bar=({title,sub,back,right})=><div className="bar">{back&&<button classNam
   <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</div>
 // the header on every signed-in page: menu (phone), notifications, theme, the signed-in user (opens Change password) and sign out at the far right
 const initials=n=>(n||'?').trim().split(/\s+/).filter(w=>!/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w)).slice(0,2).map(w=>w[0]).join('').toUpperCase()||'?'
-function TopBar({user,theme,pickTheme,onMenu,onAccount,onOut,onNote,page}){
+function TopBar({user,theme,pickTheme,onMenu,onHome,onAccount,onOut,onNote,page}){
   const {appName}=useContext(Ctx),i=THEMES.findIndex(t=>t[0]===theme),[,ThemeIcon,themeLabel]=THEMES[i<0?0:i],nextTheme=THEMES[(i+1)%THEMES.length]
-  return <header className="top"><button className="ic menu" aria-label="Open menu" onClick={onMenu}><Menu/></button><b className="topname">{appName}</b>
+  return <header className="top"><button className="ic menu" aria-label="Open menu" onClick={onMenu}><Menu/></button><button className="topname" onClick={onHome}>{appName}</button>
     <span className="topgap"/>
     <Notifications user={user} onOpen={onNote} page={page}/>
     <button className="ic" aria-label={`Theme: ${themeLabel}. Switch to ${nextTheme[2]}`} title={`Theme: ${themeLabel}`} onClick={()=>pickTheme(nextTheme[0])}><ThemeIcon size={19}/></button>
