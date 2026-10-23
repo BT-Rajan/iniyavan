@@ -19,7 +19,7 @@ export function fixTables(text){
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
 const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
-import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock,FileText} from 'lucide-react'
+import {Home,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,KeyRound,Link2,Eye,EyeOff,History,TrendingUp,Flame,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,ArrowRight,Archive,ArchiveRestore,Lock,FileText,Bell} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -62,7 +62,7 @@ const AuthFrame=({logo,name,children})=><div className="auth"><aside className="
   <div className="bands"><i style={{background:'#722f99'}}/><i style={{background:'#c5c1c1'}}/><i style={{background:'#fee7c8'}}/><i style={{background:'#ff9292'}}/></div></aside>{children}</div>
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Zigora'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Zigora'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null),[findQ,setFindQ]=useState({q:'',n:0})
   const confirm=useCallback(o=>new Promise(res=>setAsk({o,res})),[])  // in-app replacement for window.confirm: await confirm({title,body,ok,danger})
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
   useEffect(()=>{Promise.allSettled([api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
@@ -74,13 +74,15 @@ export default function App(){
   if(resetTok)return <AuthFrame logo={logo} name={name}><ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast('Password changed. You are signed in.')}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/></AuthFrame>
   if(!user)return <AuthFrame logo={logo} name={name}><Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/></AuthFrame>
   if(user.must_change)return <AuthFrame logo={logo} name={name}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
-  const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)}
+  const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   const links=[['home',Home,'Home'],['learn',GraduationCap,student?'My courses':'Courses'],['search',Search,'Search'],...(user.role==='student'?[['routine',Clock,'My routine'],['progress',TrendingUp,'My progress'],['build',Upload,'Build a course']]:[]),...(admin?[]:[['bookmarks',Bookmark,'Bookmarks']]),...(admin?[['users',UsersIcon,'Users'],['programs',GraduationCap,'Programs'],["ai",Sparkles,"Settings"],['reports',BarChart3,'Reports'],['activity',History,'Activity log']]:user.role==='faculty'?[['reports',BarChart3,'Reports']]:[]),...(user.self_registered?[['aikey',Sparkles,'My AI key']]:[]),['password',KeyRound,'Change password'],['about',Info,'About']]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
+    <TopBar user={user} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
+    {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find}/>}
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onSearch={()=>go('search')} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
     {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
-    {page==='search'&&<SearchPage user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
+    {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}
@@ -90,9 +92,8 @@ export default function App(){
       <nav className="panel" aria-label="Main menu">
         <div className="dhead"><Logo src={logo} size={36}/><div><b>{name}</b><small>{user.name}, {user.role}</small></div><button className="ic" aria-label="Close menu" onClick={()=>setOpen(false)}><X/></button></div>
         {links.map(([k,I,l])=><button key={k} className={'dlink'+(page===k?' on':'')} onClick={()=>{if(k==='learn')setStart(null);go(k)}}><I size={20}/>{l}</button>)}
-        <div role="group" aria-label="Appearance" className="seg" style={{marginTop:"auto"}}>{THEMES.map(([k,I,l])=><button key={k} className={theme===k?"on":""} aria-pressed={theme===k} onClick={()=>pickTheme(k)}><I size={15}/>{l}</button>)}</div>
-        <button className="dlink" onClick={()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}}><LogOut size={20}/>Sign out</button>
       </nav></div>
+    <footer className="foot"><span>© {new Date().getFullYear()} {name}. All rights reserved.</span></footer>
     <Toast msg={msg}/>
     {ask&&<Confirm o={ask.o} answer={ok=>{ask.res(ok);setAsk(null)}}/>}
   </Ctx.Provider>}
@@ -194,9 +195,32 @@ function ChangePassword({forced,appName,logo,toast,msg,done,out}){
   if(forced)return <div className="login"><Lockup logo={logo} name={appName}/><h1>Choose your own password</h1><p>Your admin set a temporary password. Pick a new one to continue.</p>{form}<button className="btn ghost" onClick={out}>Sign out</button><Toast msg={msg}/></div>
   return <><Bar title="Change password"/><div className="main">{form}</div></>}
 
-const Bar=({title,sub,back,right})=>{const {menu}=useContext(Ctx);return <header className="bar">
-  <button className="ic menu" aria-label="Open menu" onClick={menu}><Menu/></button>{back&&<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>}
-  <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</header>}
+const Bar=({title,sub,back,right})=><div className="bar">{back&&<button className="ic" aria-label="Back" onClick={back}><ChevronLeft/></button>}
+  <h1>{title}{sub&&<small>{sub}</small>}</h1>{right}</div>
+// the header on every signed-in page: menu (phone), notifications, theme, the signed-in user (opens Change password) and sign out at the far right
+const initials=n=>(n||'?').trim().split(/\s+/).filter(w=>!/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w)).slice(0,2).map(w=>w[0]).join('').toUpperCase()||'?'
+function TopBar({user,theme,pickTheme,onMenu,onAccount,onOut,onNote,page}){
+  const {appName}=useContext(Ctx),i=THEMES.findIndex(t=>t[0]===theme),[,ThemeIcon,themeLabel]=THEMES[i<0?0:i],nextTheme=THEMES[(i+1)%THEMES.length]
+  return <header className="top"><button className="ic menu" aria-label="Open menu" onClick={onMenu}><Menu/></button><b className="topname">{appName}</b>
+    <span className="topgap"/>
+    <Notifications user={user} onOpen={onNote} page={page}/>
+    <button className="ic" aria-label={`Theme: ${themeLabel}. Switch to ${nextTheme[2]}`} title={`Theme: ${themeLabel}`} onClick={()=>pickTheme(nextTheme[0])}><ThemeIcon size={19}/></button>
+    <button className={'who'+(page==='password'?' on':'')} onClick={onAccount} title="Change password"><span className="av" aria-hidden="true">{initials(user.name)}</span><span className="whotx"><b>{user.name}</b><small>{user.role}</small></span></button>
+    <button className="ic" aria-label="Sign out" title="Sign out" onClick={onOut}><LogOut size={19}/></button></header>}
+// what needs doing: staff get the overview's attention list, students their overdue and due-soon topics and untried or failed tests
+function Notifications({user,onOpen,page}){
+  const [items,setItems]=useState(null),[open,setOpen]=useState(false),box=useRef(null)
+  const load=useCallback(()=>{(user.role==='student'?api('/me/today').then(r=>(r.focus||[]).filter(x=>['overdue','due_soon','quiz_new','quiz_retake'].includes(x.kind)).map(x=>({text:x.title,sub:x.reason}))):api('/overview').then(r=>r.attention.map(x=>({text:x.text})))).then(setItems).catch(()=>setItems([]))},[user.role])
+  useEffect(load,[load,page])
+  useEffect(()=>{if(!open)return;const f=e=>{if(!box.current?.contains(e.target))setOpen(false)},k=e=>e.key==='Escape'&&setOpen(false);addEventListener('pointerdown',f);addEventListener('keydown',k);return()=>{removeEventListener('pointerdown',f);removeEventListener('keydown',k)}},[open])
+  const n=items?.length||0
+  return <div className="notes" ref={box}><button className="ic" aria-label={n?`Notifications, ${n} new`:'Notifications'} aria-expanded={open} onClick={()=>{setOpen(!open);if(!open)load()}}><Bell size={19}/>{n>0&&<em className="badge">{n>9?'9+':n}</em>}</button>
+    {open&&<div className="pop" role="dialog" aria-label="Notifications"><b className="poph">Notifications</b>
+      {items===null?<Skeleton/>:n?items.map((x,j)=><button key={j} className="note" onClick={()=>{setOpen(false);onOpen()}}><span>{x.text}</span>{x.sub&&<small>{x.sub}</small>}</button>):<p className="known">You're all caught up.</p>}</div>}</div>}
+// the search box under the header on every page: Enter opens Search with the query
+function GlobalSearch({onFind}){
+  const [q,setQ]=useState('')
+  return <form className="gsearch" role="search" onSubmit={e=>{e.preventDefault();if(q.trim().length>=2)onFind(q.trim())}}><div className="search"><Search size={18}/><input type="search" aria-label="Search topics" placeholder="Search topics, or ask a question" value={q} maxLength={200} onChange={e=>setQ(e.target.value)}/></div></form>}
 
 const ARCHIVE_WHAT={programs:'every semester or year, course, unit, topic and quiz in it',semesters:'every course, unit, topic and quiz in it',courses:'its units, topics and quizzes',units:'its topics and quizzes',topics:'this topic'}
 const ONE={programs:'program',semesters:'semester or year',courses:'course',units:'unit',topics:'topic'}
@@ -432,14 +456,15 @@ function RoutinePage({toast,done}){
     {v?.plan&&<p className="known">{v.plan.left?`With your current routine you would finish the ${v.plan.left} topics left by ${new Date(v.plan.finish+'T00:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}.`:'Nothing is left to study right now.'}{v.plan.late>0?` ${v.plan.late} topics would miss their deadline. ${v.plan.advice||''}`:''}</p>}
     <button className="btn" disabled={busy||!f.days.includes('1')} onClick={save}>Save routine</button>
     {v?.routine&&<button className="btn ghost" onClick={stop}>Stop the routine</button>}</div></>}
-function SearchPage({user,toast}){
-  const [q,setQ]=useState(''),[live,setLive]=useState(null),[asked,setAsked]=useState(''),[ai,setAi]=useState(null),[aiBusy,setAiBusy]=useState(false),[aiErr,setAiErr]=useState(''),[topic,setTopic]=useState(null),[pend,setPend]=useState(false)
+function SearchPage({user,toast,initial}){
+  const [q,setQ]=useState(initial||''),[live,setLive]=useState(null),[asked,setAsked]=useState(''),[ai,setAi]=useState(null),[aiBusy,setAiBusy]=useState(false),[aiErr,setAiErr]=useState(''),[topic,setTopic]=useState(null),[pend,setPend]=useState(false)
   const typed=q.trim()
   useEffect(()=>{if(typed.length<2){setLive(null);return}const t=setTimeout(()=>api('/search?q='+encodeURIComponent(typed)).then(r=>setLive({...r,for:typed})).catch(()=>{}),300);return()=>clearTimeout(t)},[typed])
   const askAi=async(query,refresh)=>{setAiBusy(true);setAiErr('');try{setAi({...await api('/search/ai',{method:'POST',body:{q:query,refresh}}),for:query,fresh:refresh})}catch(e){setAiErr(e.message)}setAiBusy(false)}
   const submit=async()=>{if(typed.length<2)return;setPend(true);setAi(null);setAiErr('')
     try{const r=await api('/search?q='+encodeURIComponent(typed));setLive({...r,for:typed});setAsked(typed);setPend(false)
       if(!r.results.length||!r.confident)await askAi(typed,false)}catch(e){toast(e.message);setPend(false)}}  // nothing good in the app's own notes, so the AI answers
+  useEffect(()=>{if(initial)submit()},[])  // once, for a search started from the header
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const res=asked&&live?.for===asked?live:null,aiNote=ai&&res&&res.results.length>0&&!res.confident
   return <><Bar title="Search" sub="Find a topic, or ask the AI"/><div className="main">
