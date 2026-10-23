@@ -79,16 +79,16 @@ def test_admin_edits_prompts_and_they_are_used(env, monkeypatch):
     items = {x["kind"]: x for x in env.c.get("/api/admin/prompts", headers=env.admin).json()["items"]}
     assert set(items) == {"explain", "answer", "search", "gist", "why", "example", "exam", "check", "outline", "simpler"} and items["search"]["custom"] is False and items["explain"]["text"] == items["explain"]["default"]
     for h in (env.fac, env.stu): assert env.c.get("/api/admin/prompts", headers=h).status_code == 403 and env.c.put("/api/admin/prompts/explain", headers=h, json={"text": "x" * 50}).status_code == 403
-    t = i["topic"]["Water hardness"]; env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu); assert Spy.sent[-1][0]["content"] == main.PROMPTS["explain"]
+    t = i["topic"]["Water hardness"]; env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu); assert Spy.sent[-1][1]["content"] == main.PROMPTS["explain"]
     assert env.c.get("/api/admin/prompts", headers=env.admin).json()["items"][0]["saved_answers"] == 1
     new = "You are a patient Tamil-medium tutor. Explain in simple English with short sentences and one table."
     r = env.c.put("/api/admin/prompts/explain", headers=env.admin, json={"text": f"  {new}  "}).json(); assert r == {"ok": True, "cleared": 1}
-    got = env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu).json(); assert got["cached"] is False and Spy.sent[-1][0]["content"] == new  # fresh answer from the new prompt
+    got = env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu).json(); assert got["cached"] is False and Spy.sent[-1][1]["content"] == new  # fresh answer from the new prompt
     assert {x["kind"]: x for x in env.c.get("/api/admin/prompts", headers=env.admin).json()["items"]}["explain"]["custom"] is True
     ask(env, "a new question"); env.c.put("/api/admin/prompts/search", headers=env.admin, json={"text": "Answer only in one line, as a quick dictionary entry."}); ask(env, "a new question")
-    assert Spy.sent[-1][0]["content"].startswith("Answer only in one line") and Spy.calls if hasattr(Spy, "calls") else True
+    assert Spy.sent[-1][1]["content"].startswith("Answer only in one line") and Spy.calls if hasattr(Spy, "calls") else True
     assert env.c.delete("/api/admin/prompts/explain", headers=env.admin).json()["cleared"] == 1
-    env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu); assert Spy.sent[-1][0]["content"] == main.PROMPTS["explain"]
+    env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu); assert Spy.sent[-1][1]["content"] == main.PROMPTS["explain"]
     assert env.c.put("/api/admin/prompts/explain", headers=env.admin, json={"text": main.PROMPTS["explain"]}).status_code == 200
     assert {x["kind"]: x for x in env.c.get("/api/admin/prompts", headers=env.admin).json()["items"]}["explain"]["custom"] is False  # same as the built-in
 

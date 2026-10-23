@@ -176,6 +176,8 @@ function PromptEditor({toast}){
   const reset=async x=>{if(!await confirm({title:tl("Go back to the built-in prompt?"),body:x.saved_answers?tl("This also discards {n}.",{n:pl(x.saved_answers,'saved answer')}):null,ok:tl("Reset to built-in")}))return
     setBusy(x.kind);try{await api('/admin/prompts/'+x.kind,{method:'DELETE'});toast(tl("Back to the built-in prompt"));load()}catch(e){toast(e.message)}setBusy('')}
   return <><p className="known">{tl("These are the instructions the AI gets before it answers. Change the tone, depth, language or format to suit your students. Saving a prompt discards the saved answers it wrote, so the new wording applies from the next question (that costs tokens again).")}</p>
+    <div className="qbox"><b>{tl("Built-in safety rules")}</b><p className="known" style={{margin:'4px 0 0'}}>{tl("Every AI request starts with the app's safety rules, ahead of the prompts below. They keep answers to studies and safe for young people, treat notes and uploads as material rather than instructions, and answer a student in crisis with care. They are part of the app's code: they cannot be changed or turned off here, and a prompt below cannot override them.")}</p>
+      <GuardText/></div>
     {items.map(x=>{const v=draft[x.kind]??x.text,dirty=v.trim()!==x.text.trim()
       return <div key={x.kind} className="qbox"><b>{x.label}{x.custom&&<span className="chip" style={{marginLeft:8}}>{tl("Edited")}</span>}</b><p className="known" style={{margin:'4px 0 8px'}}>{x.help}</p>
         <textarea aria-label={tl("{label} prompt",{label:x.label})} rows={9} value={v} maxLength={4000} onChange={e=>setDraft({...draft,[x.kind]:e.target.value})}/>
@@ -1055,6 +1057,10 @@ function TopicSteps({id,student}){
       {left.length>0&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}</div>}
       {busy==='simpler'&&<p className="known">{tl("Thinking…")}</p>}</>}
   </section>}
+// the safety rules every AI request starts with, read-only, for admins who want to see exactly what they say
+function GuardText(){
+  const [t,setT]=useState(null)
+  return t?<pre className="guardtx">{t}</pre>:<button className="link" style={{marginTop:6}} onClick={()=>api('/admin/guardrails').then(r=>setT(r.text)).catch(()=>{})}>{tl("Read the safety rules")}</button>}
 // the skeleton of a full-marks answer, shown before the full sample answer
 function Outline({id}){
   const [d,setD]=useState(null),[err,setErr]=useState('')

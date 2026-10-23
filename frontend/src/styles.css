@@ -437,3 +437,4 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 .fold{margin:18px 0 0;border-top:1px solid var(--line);padding-top:10px}.fold>summary{cursor:pointer;font-weight:600;color:var(--mut);padding:6px 0;list-style-position:inside}
 .fold[open]>summary{color:var(--tx)}
 .foot .footl{display:inline;margin:0;padding:0;font:inherit;color:inherit;text-decoration:underline}
+.guardtx{white-space:pre-wrap;font:13px/1.5 inherit;background:var(--s1);border:1px solid var(--line);border-radius:var(--r-ctl);padding:10px;margin:8px 0 0;max-height:320px;overflow:auto}

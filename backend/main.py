@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from guardrails import GUARDRAILS, GUARD_VERSION, SUPPORT, checked, crisis, fence
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Date, func, or_, and_, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
@@ -1022,12 +1023,15 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
 AI_DOWN = "AI unavailable. Try again later."
 def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
 async def deepseek(key, model, messages, max_tokens=None, timeout=45):
+    """The only way an AI request leaves the server. The built-in safety rules (guardrails.py) always go first, ahead of any task prompt an admin
+    can edit; what people wrote is fenced as material, not instructions; and a reply that leaks the rules is withheld."""
+    sent = [{"role": "system", "content": GUARDRAILS}] + [{"role": m["role"], "content": fence(m["content"]) if m["role"] == "user" else m["content"]} for m in messages]
     async with httpx.AsyncClient(timeout=timeout) as c:
         r = await c.post("https://api.deepseek.com/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                         json={"model": model, "messages": messages, **({"max_tokens": max_tokens} if max_tokens else {})})
+                         json={"model": model, "messages": sent, **({"max_tokens": max_tokens} if max_tokens else {})})
     r.raise_for_status(); j = r.json(); text = j["choices"][0]["message"]["content"]
     if not text: raise ValueError("empty answer")
-    return text, j.get("usage", {}).get("total_tokens", 0)
+    return checked(text), j.get("usage", {}).get("total_tokens", 0)
 def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
     return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
 def key_for(u, s):  # self-registered people use their own key and never the shared one; everyone else uses the admin's
@@ -2867,7 +2871,8 @@ class SearchAIIn(BaseModel): q: str; refresh: bool = False
 async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(db)):
     q = " ".join(b.q.split())
     if not 2 <= len(q) <= 200: raise HTTPException(400, "Type what you want to look up (2 to 200 characters)")
-    key = key_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", q.lower(), prompt]).encode()).hexdigest()
+    if crisis(q): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}  # answered with care at once: no AI, nothing saved or logged
+    key = key_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
         if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
@@ -2886,6 +2891,8 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
 # ---- admin: edit the AI prompts ----
 def saved_count(s, kind): return s.query(func.count(SearchAnswer.id)).scalar() if kind == "search" else s.query(func.count(AICache.id)).filter(AICache.kind == kind).scalar()
 def clear_saved(s, kind): return (s.query(SearchAnswer).delete() if kind == "search" else s.query(AICache).filter(AICache.kind == kind).delete(synchronize_session=False))
+@app.get("/api/admin/guardrails")
+def get_guardrails(_: User = Depends(admin)): return {"text": GUARDRAILS, "version": GUARD_VERSION}  # read-only: the rules live in guardrails.py
 @app.get("/api/admin/prompts")
 def get_prompts(_: User = Depends(admin), s: Session = Depends(db)):
     return {"items": [{"kind": k, "label": PROMPT_INFO[k][0], "help": PROMPT_INFO[k][1], "text": prompt_for(s, k), "default": PROMPTS[k], "custom": bool(setting(s, "prompt_" + k).strip()), "saved_answers": saved_count(s, k)} for k in PROMPTS]}
