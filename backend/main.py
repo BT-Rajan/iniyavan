@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response
@@ -237,6 +238,7 @@ def setting(s, k, d=""):
 app = FastAPI(title=APP_NAME)
 ORIGINS = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if o.strip()]  # the app is same-origin; set this only for a separate front-end
 if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # the app bundle is ~850 KB; compressed it is about a quarter of that
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
        "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/")  # student reading activity is already tracked as progress
@@ -257,6 +259,9 @@ async def secure_headers(request: Request, call_next):
     r.headers.update({"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "same-origin", "Content-Security-Policy": CSP,
                       "Permissions-Policy": "camera=(), microphone=(), geolocation=()"})
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https": r.headers["Strict-Transport-Security"] = "max-age=31536000"
+    p = request.url.path
+    if not p.startswith("/api/") and "cache-control" not in r.headers:  # the screens: built files carry a hash in their name and never change;
+        r.headers["Cache-Control"] = "public, max-age=31536000, immutable" if p.startswith("/assets/") else "no-cache"  # the page, sw.js and icons are checked on every load, so an update shows at once
     return r
 
 @app.get("/api/config")
