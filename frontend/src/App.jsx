@@ -43,6 +43,7 @@ const Mark=({s})=>s==='completed'?<Check className="done" aria-label="Completed"
 const ownerLine=c=>c.mine?'Your course':c.owner_problem||(c.owner?'Owner: '+c.owner:'Owner not assigned')
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
+const firstName=n=>{const w=(n||'').trim().split(/\s+/);return w.length>1&&/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w[0])?w[0]+' '+w[1]:w[0]}  // a title stays with the name it belongs to
 const pl=(n,w)=>`${n} ${w}${n===1?'':'s'}`
 const matches=n=>`${n} ${n===1?'match':'matches'}`
 const Ctx=createContext({})
@@ -233,7 +234,7 @@ function Learn({user,toast,appName,start}){
   const saveShare=async()=>{try{await api(`/courses/${sh.id}/links`,{method:'PUT',body:{semester_ids:sh.sel}});toast('Sharing updated');setSh(null);load()}catch(e){toast(e.message)}}
   const remove=async()=>{try{if(del.unlink)await api(`/courses/${del.unlink.id}/links`,{method:'PUT',body:{semester_ids:del.unlink.keep}});else await api(`/${del.kind}/${del.id}`,{method:'DELETE'});toast('Deleted');setDel(null);load()}catch(e){toast(e.message)}}
   return <><Bar title={cur?.name||appName} sub={nav.length?crumbs:'Hi '+user.name} back={nav.length>0&&(()=>setNav(nav.slice(0,-1)))}/>
-   <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&<div className="hero"><h2>Choose a program</h2></div>}
+   <div className="main">{unit&&mayEdit&&drafts(unit.topics)>0&&<button className="btn" style={{marginTop:0,marginBottom:12}} onClick={()=>setPub(`/units/${unit.id}/publish`,true,'All drafts published')}>Publish all {drafts(unit.topics)} drafts</button>}{!nav.length&&!(user.role==='faculty'&&myCourses.length>0)&&<div className="hero"><h2>Choose a program</h2></div>}
      {staff&&(anyArch||showArch)&&<label className="chk" style={{marginBottom:12}}><input type="checkbox" checked={showArch} onChange={e=>setShowArch(e.target.checked)}/> Show archived{!showArch&&hidden>0?` (${hidden} here)`:''}</label>}
      {isAdmin&&!sem&&<button className="btn ghost lead" onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?'Add '+prog.term.toLowerCase()+' to '+prog.name:'New program'}</button>}
      {isAdmin&&sem&&!co&&<button className="btn ghost lead" onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>Add course to {sem.name}</button>}
@@ -338,7 +339,7 @@ function StaffHome({user,toast,open}){
   if(list)return <ResultSet kind={list} user={user} back={()=>setList(null)} toast={toast} open={open}/>
   const admin=user.role==='admin',hour=new Date().getHours(),hi=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening'
   const stats=o?(admin?[[o.people.students,'Active students','students'],[o.people.active_week,'Studied this week','active_week'],[o.people.faculty,'Faculty','faculty'],[o.courses,'Courses','courses']]:[[o.courses,'Your courses','courses'],[o.topics,'Topics','topics'],[o.drafts,'Drafts','drafts']]):[]
-  return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={admin?'Across the whole college':'Your courses'}/><div className="main">
+  return <><Bar title={`${hi}, ${firstName(user.name)}`} sub={admin?'Across the whole college':'Your courses'}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {o&&<div className="stats">{stats.map(([n,l,k])=><button className="stat" key={l} style={{textAlign:'left',width:'100%'}} onClick={()=>setList(k)} aria-label={`${(n??0).toLocaleString()} ${l}. Show the list`}><b>{(n??0).toLocaleString()}</b>{l}</button>)}</div>}
     {o&&<><h3 className="sec">Needs attention</h3>
@@ -363,7 +364,7 @@ function Dashboard({user,toast,onOpen,onSearch,onStudy,onRoutine}){
   const need=ins?.needs_study.slice(0,3)||[],focus=(today?.focus||[]).filter(f=>!inSession.has(f.topic_id)),top=routine?null:focus[0]
   const act=f=>f.topic_id?setTopic(f.topic_id):onOpen(f.nav)
   const sub=!today?'Here is where you are today':today.streak>1?`${today.streak}-day study streak. Keep it going`:today.active_today?'You have studied today. Nice start':focus.length?'Here is what to do next':'Here is where you are today'
-  return <><Bar title={`${hi}, ${user.name.split(' ')[0]}`} sub={sub}/><div className="main">
+  return <><Bar title={`${hi}, ${firstName(user.name)}`} sub={sub}/><div className="main">
     <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic} onLoad={setSess}/>
     <button className="search fake" onClick={onSearch} aria-label="Search topics"><Search size={18}/><span>Search any topic</span></button>
     {sme&&sme.courses>0&&<><h3 className="sec first">Your own courses</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}
@@ -973,7 +974,7 @@ function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a
   const confirm=useConfirm()
   const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null),filesRef=useRef(null),[busy,setBusy]=useState(false)
   const [tree,setTree]=useState([]),[f,setF]=useState({title:'',unit_id:unitId||'',content:'',content_format:'markdown',sample_content:'',question_pattern:'',guideline:'',published:!fac,due:''}),[cid,setCid]=useState(null)
-  const [fromFiles,setFromFiles]=useState(null),[shown,setShown]=useState('')
+  const [fromFiles,setFromFiles]=useState(null),[shown,setShown]=useState(''),[imp,setImp]=useState(false)
   useEffect(()=>{api('/tree').then(setTree).catch(()=>{});if(edit)api('/topics/'+edit.id).then(t=>{setCid(t.course_id);setF({title:t.title,unit_id:t.unit_id||'',content:t.content||'',content_format:t.content_format||'markdown',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false,due:localInput(t.learning_due_at)})}).catch(e=>toast(e.message))},[])
   const html=f.content_format==='html'
   useEffect(()=>{if(!prev||!html)return;let live=true;api('/topics/clean-html',{method:'POST',body:{html:f.content}}).then(r=>live&&setShown(r.html)).catch(e=>toast(e.message));return()=>{live=false}},[prev,html,f.content])
@@ -996,11 +997,12 @@ function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a
   const save=async()=>{setBusy(true);try{await api(edit?'/topics/'+edit.id:'/topics',{method:edit?'PUT':'POST',body:{...f,due:undefined,unit_id:+f.unit_id,published:f.published!==false,learning_due_at:f.due?new Date(f.due).toISOString():null}});toast(edit?'Changes saved':'Topic added');done()}catch(e){toast(e.message)}setBusy(false)}
   const T=(k,l,ph)=><><label>{l}</label><textarea placeholder={ph} value={f[k]} onChange={set(k)}/></>
   return <><Bar title={edit?'Edit topic':'New topic'} sub={here?.label} back={cancel}/><div className="main">
-    <div className="qbox" style={{marginTop:0}}><b>Fill from files</b><p className="known" style={{margin:'4px 0 8px'}}>{FILES_HELP}</p>
+    {!imp&&!fromFiles&&<button className="tool" style={{marginTop:0}} onClick={()=>setImp(true)}><Upload size={14}/> Fill from files (HTML and config)</button>}
+    {(imp||fromFiles)&&<div className="qbox" style={{marginTop:0}}><b>Fill from files</b><p className="known" style={{margin:'4px 0 8px'}}>{FILES_HELP}</p>
       <input ref={filesRef} type="file" hidden multiple accept=".html,.htm,.md,.markdown,.txt,text/html,text/markdown,image/png,image/jpeg,image/gif,image/webp" onChange={pickFiles}/>
       <div className="two"><button className="btn" style={{margin:0}} disabled={busy} onClick={()=>filesRef.current.click()}><Upload size={16}/> {busy?'Reading…':'Choose files'}</button><button className="btn ghost" style={{margin:0}} onClick={()=>download('topic-config.md',TOPIC_CONFIG_TEMPLATE)}>Config template</button></div>
       {fromFiles&&<div role="status" style={{marginTop:10}}><p className="known" style={{margin:0}}>Filled from {fromFiles.names.join(' and ')}{fromFiles.images?` · ${pl(fromFiles.images,'image')}`:''}.</p>
-        {fromFiles.warnings.map((w,i)=><p key={i} className="known" style={{margin:'4px 0 0',color:'var(--warn)'}}>{w}</p>)}</div>}</div>
+        {fromFiles.warnings.map((w,i)=><p key={i} className="known" style={{margin:'4px 0 0',color:'var(--warn)'}}>{w}</p>)}</div>}</div>}
     {edit&&units.length>1&&<><label>Unit</label><select value={f.unit_id} onChange={set('unit_id')}>{units.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}</select></>}
     <label>Topic title</label><input value={f.title} onChange={set('title')} placeholder="First law of thermodynamics"/>
     <label>Topic content</label><div className="seg" style={{gridTemplateColumns:'1fr 1fr',margin:'0 0 8px'}} role="group" aria-label="Content format">{[['markdown','Markdown'],['html','HTML']].map(([k,l])=><button key={k} type="button" className={f.content_format===k?'on':''} aria-pressed={f.content_format===k} onClick={()=>setF({...f,content_format:k})}>{l}</button>)}</div>
@@ -1364,20 +1366,21 @@ const Bar2=({v})=><div className="meter"><i style={{width:Math.min(100,v||0)+'%'
 function CourseReports({toast,onOpen}){
   const [f,setF]=useState({p:0,s:0}),[rows,setRows]=useState(null),[progs,setProgs]=useState([])
   useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term,max:Math.max(0,...p.semesters.map(x=>x.number||0))||(p.term==='Year'?4:maxOf(p.term))})))).catch(()=>{})},[])
-  const pr=progs.find(x=>x.id===f.p),lab=pr?pr.term:progs.length&&progs.every(x=>x.term==='Semester')?'Semester':progs.length&&progs.every(x=>x.term==='Year')?'Year':progs.length&&progs.every(x=>x.term==='Grade')?'Grade':'Term',top=pr?pr.max:Math.max(8,...progs.map(x=>x.max))
+  const pr=progs.find(x=>x.id===f.p),lab=pr?pr.term:progs.length&&progs.every(x=>x.term==='Semester')?'Semester':progs.length&&progs.every(x=>x.term==='Year')?'Year':progs.length&&progs.every(x=>x.term==='Grade')?'Grade':'Term',top=pr?pr.max:Math.max(1,...progs.map(x=>x.max))
   const qs=`?program_id=${f.p}&semester=${f.s}`
   useEffect(()=>{setRows(null);api('/reports/courses'+qs).then(setRows).catch(e=>toast(e.message))},[f.p,f.s])
-  return <><div className="qopt"><select value={f.p} onChange={e=>{const p=+e.target.value,x=progs.find(y=>y.id===p);setF({p,s:x&&f.s>x.max?0:f.s})}}><option value={0}>All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
-    <select aria-label={'Filter by '+lab.toLowerCase()} value={f.s} onChange={e=>setF({...f,s:+e.target.value})}><option value={0}>{lab==='Term'?'All terms':'All '+lab.toLowerCase()+'s'}</option>{Array.from({length:top},(_,i)=>i+1).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select></div>
+  const few=!f.p&&!f.s&&progs.length<=1&&rows&&rows.length<=5  // a handful of courses needs no filters
+  return <>{!few&&<div className="qopt"><select value={f.p} onChange={e=>{const p=+e.target.value,x=progs.find(y=>y.id===p);setF({p,s:x&&f.s>x.max?0:f.s})}}><option value={0}>All programs</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+    <select aria-label={'Filter by '+lab.toLowerCase()} value={f.s} onChange={e=>setF({...f,s:+e.target.value})}><option value={0}>{lab==='Term'?'All terms':'All '+lab.toLowerCase()+'s'}</option>{Array.from({length:top},(_,i)=>i+1).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select></div>}
     {rows&&!rows.length&&<p className="known">No courses match.</p>}
-    {rows?.map(x=><button className="row rowbtn" key={x.course_id} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program} · {x.semester} · {x.students} students · {x.topics} topics · {x.avg_completion}% read{x.quizzes?' · quiz avg '+(x.avg_quiz_percent??'–')+'%':''}</small><Bar2 v={x.avg_completion}/></div><ChevronRight size={18}/></button>)}
+    {rows?.map(x=><button className="row rowbtn" key={x.course_id} onClick={()=>onOpen(x)}><div>{x.course}<small>{x.program} · {x.semester} · {x.students} students · {x.topics} topics · {x.avg_completion}% completed · {x.avg_opened}% opened{x.quizzes?' · quiz avg '+(x.avg_quiz_percent??'–')+'%':''}</small><Bar2 v={x.avg_completion}/></div><ChevronRight size={18}/></button>)}
     {rows?.length>0&&<button className="btn ghost" onClick={()=>fetchFile('/reports/courses?format=csv&program_id='+f.p+'&semester='+f.s,'courses.csv',toast)}>Download courses CSV</button>}</>}
 function StudentReport({c,back,toast}){
   const [d,setD]=useState(null),[w,setW]=useState(null);useEffect(()=>{api(`/reports/courses/${c.course_id}/students`).then(setD).catch(e=>toast(e.message));api(`/reports/courses/${c.course_id}/weak-areas`).then(setW).catch(()=>{})},[])
   return <><Bar title={c.course} sub={c.program+' · '+c.semester} back={back}/><div className="main">
     {w&&w.areas.length>0&&<><h3 className="sec first">Topics the class finds hard</h3><p className="known" style={{margin:'0 0 8px'}}>From each student's latest quiz results, weakest first.</p>{w.areas.slice(0,8).map(a=><div className="row" key={a.topic_id||'u'+a.unit_id}><div>{a.title}<small>{a.percent}% right overall · {a.needs_study} of {a.students} students need another round of study</small><Bar2 v={a.percent}/></div></div>)}<h3 className="sec">Students</h3></>}
     {d&&!d.students.length&&<p className="known">No students are enrolled for this course yet.</p>}
-    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off sm">Disabled</span>}<small>{x.completion}% · {x.topics_read}/{x.topics} topics{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&'Strong: '+x.strong.join(', ')}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&'Needs another round: '+x.needs_study.join(', ')}</small>}<Bar2 v={x.completion}/></div></div>)}
+    {d?.students.map(x=><div className="row" key={x.email}><div>{x.name}{!x.active&&<span className="pill off sm">Disabled</span>}<small>{x.completion}% completed · {x.topics_completed}/{x.topics} done, {x.topics_read} opened{c.quizzes?' · quizzes '+x.quizzes_taken+'/'+x.quizzes+(x.avg_quiz_percent!=null?', avg '+x.avg_quiz_percent+'%':''):''} · last active {day(x.last_active)}</small>{(x.strong.length>0||x.needs_study.length>0)&&<small>{x.strong.length>0&&'Strong: '+x.strong.join(', ')}{x.strong.length>0&&x.needs_study.length>0&&' · '}{x.needs_study.length>0&&'Needs another round: '+x.needs_study.join(', ')}</small>}<Bar2 v={x.completion}/></div></div>)}
     {d?.students.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/reports/courses/${c.course_id}/students?format=csv`,'students-'+c.course.replace(/\s+/g,'_')+'.csv',toast)}>Download students CSV</button>}</div></>}
 function Reports({role,toast}){
   const [st,setSt]=useState({}),[r,setR]=useState(null),[open,setOpen]=useState(null)

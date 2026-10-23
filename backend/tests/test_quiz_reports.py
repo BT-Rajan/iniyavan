@@ -1,4 +1,4 @@
-import csv, io
+import csv, io, datetime as dt
 from main import Session_, User, Quiz, Attempt, Question, Course, Unit, Topic, Progress
 from tests.test_access import CSV, ids, enrol
 
@@ -51,22 +51,22 @@ def test_deleting_a_unit_or_quiz_removes_its_questions_and_attempts(env):
     assert env.c.delete(f"/api/units/{unit}", headers=env.fac).status_code == 200
     with Session_() as s: assert (s.query(Quiz).count(), s.query(Question).count(), s.query(Attempt).count()) == (0, 0, 0)
 
-def read(email, title):
+def read(email, title, done=False):
     with Session_() as s:
-        s.add(Progress(user_id=s.query(User).filter_by(email=email).first().id, topic_id=s.query(Topic).filter_by(title=title).first().id)); s.commit()
+        s.add(Progress(user_id=s.query(User).filter_by(email=email).first().id, topic_id=s.query(Topic).filter_by(title=title).first().id, completed_at=dt.datetime.utcnow() if done else None)); s.commit()
 
 def test_course_report_completion_quiz_scores_and_faculty_limits(env):
     i, unit = setup(env); env.add_user("stu2@x.com", program=i["prog"]["Mech"], semester=1); env.add_user("civ@x.com", program=i["prog"]["Civil"], semester=1)
-    env.c.post("/api/topics", headers=env.fac, json={"title": "Boilers", "unit_id": unit}); read("stu@x.com", "Water"); read("stu@x.com", "Boilers"); read("stu2@x.com", "Water")
+    env.c.post("/api/topics", headers=env.fac, json={"title": "Boilers", "unit_id": unit}); read("stu@x.com", "Water", done=True); read("stu@x.com", "Boilers"); read("stu2@x.com", "Water")
     q = make_quiz(env, unit); env.c.post(f"/api/quizzes/{q}/attempt", headers=env.stu, json={"answers": [0, 0]})
     rows = {r["course"]: r for r in env.c.get("/api/reports/courses", headers=env.admin).json()}
-    chem = rows["Chem"]; assert (chem["students"], chem["topics"], chem["avg_completion"], chem["quizzes"], chem["quiz_attempts"], chem["avg_quiz_percent"]) == (2, 2, 75, 1, 1, 100)
+    chem = rows["Chem"]; assert (chem["students"], chem["topics"], chem["avg_completion"], chem["avg_opened"], chem["quizzes"], chem["quiz_attempts"], chem["avg_quiz_percent"]) == (2, 2, 25, 75, 1, 1, 100)
     assert rows["Maths"]["students"] == 1 and rows["Workshop"]["students"] == 2
     assert [r["course"] for r in env.c.get("/api/reports/courses", headers=env.fac).json()] == ["Chem"]
     assert [r["course"] for r in env.c.get(f"/api/reports/courses?program_id={i['prog']['Civil']}", headers=env.admin).json()] == ["Maths", "Survey"]
     assert [r["course"] for r in env.c.get("/api/reports/courses?semester=2", headers=env.admin).json()] == ["Survey"]
     st = {r["email"]: r for r in env.c.get(f"/api/reports/courses/{i['course']['Chem']}/students", headers=env.fac).json()["students"]}
-    assert (st["stu@x.com"]["completion"], st["stu@x.com"]["avg_quiz_percent"], st["stu2@x.com"]["completion"], st["stu2@x.com"]["quizzes_taken"]) == (100, 100, 50, 0) and "civ@x.com" not in st
+    assert (st["stu@x.com"]["completion"], st["stu@x.com"]["topics_completed"], st["stu@x.com"]["topics_read"], st["stu@x.com"]["avg_quiz_percent"], st["stu2@x.com"]["completion"], st["stu2@x.com"]["topics_read"], st["stu2@x.com"]["quizzes_taken"]) == (50, 1, 2, 100, 0, 1, 0)  # completion counts topics marked completed, not opened and "civ@x.com" not in st
     assert env.c.get(f"/api/reports/courses/{i['course']['Workshop']}/students", headers=env.fac).status_code == 403
     assert env.c.get("/api/reports/courses", headers=env.stu).status_code == 403
 
