@@ -1025,14 +1025,14 @@ def course_audience(c, students, sems, links):  # students who can see this cour
     return [u for u in students if sees(u)]
 def course_stats(c, aud, s):
     ids = {u.id for u in aud}; off_units = s.query(Unit.id).filter(Unit.archived_at.isnot(None)); tids = [t.id for t in s.query(Topic.id).filter(Topic.course_id == c.id, Topic.published.isnot(False), Topic.archived_at.is_(None), or_(Topic.unit_id.is_(None), Topic.unit_id.notin_(off_units)))]
-    reads, last = defaultdict(int), {}
+    reads, done, last = defaultdict(int), defaultdict(int), {}  # topics opened, topics marked completed
     if tids and ids:
-        for uid, n, l in s.query(Progress.user_id, func.count(Progress.id), func.max(Progress.last_read)).filter(Progress.topic_id.in_(tids), Progress.user_id.in_(ids)).group_by(Progress.user_id).all(): reads[uid], last[uid] = n, l
+        for uid, n, d, l in s.query(Progress.user_id, func.count(Progress.id), func.count(Progress.completed_at), func.max(Progress.last_read)).filter(Progress.topic_id.in_(tids), Progress.user_id.in_(ids)).group_by(Progress.user_id).all(): reads[uid], done[uid], last[uid] = n, d, l
     qids = [q.id for q in s.query(Quiz.id).filter(Quiz.course_id == c.id, Quiz.published == True, or_(Quiz.unit_id.is_(None), Quiz.unit_id.notin_(off_units)))]  # noqa: E712
     bests = defaultdict(dict)
     if qids and ids:
         for qid, uid, b in s.query(Attempt.quiz_id, Attempt.user_id, func.max(Attempt.percent)).filter(Attempt.quiz_id.in_(qids), Attempt.user_id.in_(ids)).group_by(Attempt.quiz_id, Attempt.user_id).all(): bests[uid][qid] = b
-    return tids, reads, last, qids, bests
+    return tids, reads, done, last, qids, bests
 def my_courses(u, s):
     q = s.query(Course)
     if u.role == "faculty": q = q.filter(Course.faculty_owner_id == u.id)
@@ -1049,13 +1049,13 @@ def report_courses(program_id: int = 0, semester: int = 0, format: str = "json",
         sm = sems.get(c.semester_id)
         if program_id and c.program_id != program_id: continue
         if semester and (not sm or sm.semester_no != semester): continue
-        used.add(pt.get(c.program_id, "Semester")); aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
-        comp = [100 * reads[x.id] / len(tids) for x in aud] if tids else []; qb = [b for x in aud for b in bests[x.id].values()]
+        used.add(pt.get(c.program_id, "Semester")); aud = course_audience(c, students, sems, links); tids, reads, done, last, qids, bests = course_stats(c, aud, s)
+        comp = [100 * done[x.id] / len(tids) for x in aud] if tids else []; opened = [100 * reads[x.id] / len(tids) for x in aud] if tids else []; qb = [b for x in aud for b in bests[x.id].values()]
         out.append({"course_id": c.id, "course": c.name, "program": pn.get(c.program_id, ""), "semester": sm.name if sm else "", "students": len(aud), "topics": len(tids),
-                    "avg_completion": round(sum(comp) / len(comp)) if comp else 0, "quizzes": len(qids), "quiz_attempts": s.query(func.count(Attempt.id)).filter(Attempt.quiz_id.in_(qids or [0])).scalar(),
+                    "avg_completion": round(sum(comp) / len(comp)) if comp else 0, "avg_opened": round(sum(opened) / len(opened)) if opened else 0, "quizzes": len(qids), "quiz_attempts": s.query(func.count(Attempt.id)).filter(Attempt.quiz_id.in_(qids or [0])).scalar(),
                     "avg_quiz_percent": round(sum(qb) / len(qb)) if qb else None})
-    if format == "csv": return csv_response("courses.csv", ["Program", term_header(used), "Course", "Students", "Topics", "Average completion %", "Quizzes", "Quiz attempts", "Average best quiz %"],
-                                           [[r["program"], r["semester"], r["course"], r["students"], r["topics"], r["avg_completion"], r["quizzes"], r["quiz_attempts"], r["avg_quiz_percent"]] for r in out])
+    if format == "csv": return csv_response("courses.csv", ["Program", term_header(used), "Course", "Students", "Topics", "Average completion %", "Average opened %", "Quizzes", "Quiz attempts", "Average best quiz %"],
+                                           [[r["program"], r["semester"], r["course"], r["students"], r["topics"], r["avg_completion"], r["avg_opened"], r["quizzes"], r["quiz_attempts"], r["avg_quiz_percent"]] for r in out])
     return out
 @app.get("/api/reports/courses/{cid}/students")
 def report_students(cid: int, format: str = "json", u: User = Depends(staff), s: Session = Depends(db)):
@@ -1065,18 +1065,18 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
     students = s.query(User).filter_by(role="student").all(); sems = {x.id: x for x in s.query(Semester)}; pn = {p.id: p.name for p in s.query(Program)}
     links = defaultdict(list)
     for l in s.query(CourseLink).filter_by(course_id=cid): links[cid].append(l.semester_id)
-    aud = course_audience(c, students, sems, links); tids, reads, last, qids, bests = course_stats(c, aud, s)
+    aud = course_audience(c, students, sems, links); tids, reads, done, last, qids, bests = course_stats(c, aud, s)
     pt = {p.id: term_label(p) for p in s.query(Program)}; used = {pt.get(x.program_id, "Semester") for x in aud}
     batches = latest_batches(s, [x.id for x in aud], course_quiz_ids(cid, s)); ctx = area_context(batches, s); per = defaultdict(list)
     for b in batches: per[b[0]].append(b)
     mine = {uid: tally(bs, ctx, True) for uid, bs in per.items()}
     names = lambda uid, st: [a["title"] for a in sorted(mine.get(uid, {}).values(), key=lambda a: (a["percent"], a["title"])) if a["status"] == st]
-    rows = [{"strong": names(x.id, "strong"), "needs_study": names(x.id, "needs_study"), "name": x.name, "email": x.email, "program": pn.get(x.program_id, ""), "semester": x.semester, "active": bool(x.active), "topics_read": reads[x.id], "topics": len(tids),
-             "completion": round(100 * reads[x.id] / len(tids)) if tids else 0, "quizzes_taken": len(bests[x.id]), "quizzes": len(qids),
+    rows = [{"strong": names(x.id, "strong"), "needs_study": names(x.id, "needs_study"), "name": x.name, "email": x.email, "program": pn.get(x.program_id, ""), "semester": x.semester, "active": bool(x.active), "topics_read": reads[x.id], "topics_completed": done[x.id], "topics": len(tids),
+             "completion": round(100 * done[x.id] / len(tids)) if tids else 0, "quizzes_taken": len(bests[x.id]), "quizzes": len(qids),
              "avg_quiz_percent": round(sum(bests[x.id].values()) / len(bests[x.id])) if bests[x.id] else None, "last_active": (last[x.id].isoformat() + "Z") if last.get(x.id) else None}
             for x in sorted(aud, key=lambda x: (x.name or "").lower())]
-    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", term_header(used), "Active", "Topics read", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active", "Strong areas", "Needs another round of study"],
-                                           [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"], "; ".join(r["strong"]), "; ".join(r["needs_study"])] for r in rows])
+    if format == "csv": return csv_response(f"students-{c.name}.csv".replace(" ", "_"), ["Name", "Email", "Program", term_header(used), "Active", "Topics read", "Topics completed", "Topics", "Completion %", "Quizzes taken", "Quizzes", "Average best quiz %", "Last active", "Strong areas", "Needs another round of study"],
+                                           [[r["name"], r["email"], r["program"], r["semester"], "yes" if r["active"] else "no", r["topics_read"], r["topics_completed"], r["topics"], r["completion"], r["quizzes_taken"], r["quizzes"], r["avg_quiz_percent"], r["last_active"], "; ".join(r["strong"]), "; ".join(r["needs_study"])] for r in rows])
     return {"course": c.name, "students": rows}
 
 # ---- dashboard cards: the list behind each number ----
