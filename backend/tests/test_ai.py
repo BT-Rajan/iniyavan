@@ -31,7 +31,7 @@ def test_without_a_key_everyone_sees_ai_unavailable(env, monkeypatch):
 def test_with_a_key_it_works_and_answers_are_shared(env, monkeypatch):
     t = setup(env, monkeypatch, "sk-test-1234")
     assert env.c.get("/api/ai/status", headers=env.stu).json() == {"available": True, "own_key": False}
-    a = ask(env, env.stu, t).json(); assert a == {"text": "Hard water explained.", "cached": False}
+    a = ask(env, env.stu, t).json(); assert a == {"text": "Hard water explained.", "cached": False, "id": a["id"]} and a["id"]
     assert ask(env, env.admin, t).json()["cached"] is True and FakeClient.calls == 1
     with Session_() as s: assert s.query(AICache).count() == 1
 

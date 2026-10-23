@@ -46,7 +46,7 @@ def ask(env, q, refresh=False, h=None): return env.c.post("/api/search/ai", head
 
 def test_ai_search_is_saved_and_shared_and_recheck_asks_again(env, monkeypatch):
     ai_env(env, monkeypatch)
-    a = ask(env, "What is Raoult's law?").json(); assert a == {"text": "Hard water explained.", "cached": False} and FakeClient.calls == 1
+    a = ask(env, "What is Raoult's law?").json(); assert a == {"text": "Hard water explained.", "cached": False, "id": a["id"]} and FakeClient.calls == 1
     assert ask(env, "what is  RAOULT'S law?", h=env.admin).json()["cached"] is True and FakeClient.calls == 1  # same question, any wording of case and spaces
     r = ask(env, "What is Raoult's law?", refresh=True).json(); assert r["cached"] is False and FakeClient.calls == 2
     with Session_() as s: assert s.query(SearchAnswer).count() == 1 and s.query(SearchLog).count() == 2
@@ -77,7 +77,7 @@ def test_admin_edits_prompts_and_they_are_used(env, monkeypatch):
     i = seed(env); monkeypatch.setattr(main.httpx, "AsyncClient", Spy); Spy.sent = []; Spy.mode = "ok"
     with Session_() as s: s.merge(Setting(k="deepseek_key", v="sk-test-1234")); s.commit()
     items = {x["kind"]: x for x in env.c.get("/api/admin/prompts", headers=env.admin).json()["items"]}
-    assert set(items) == {"explain", "answer", "search", "gist", "why", "example", "exam", "check", "outline", "simpler"} and items["search"]["custom"] is False and items["explain"]["text"] == items["explain"]["default"]
+    assert set(items) == {"explain", "answer", "search", "gist", "why", "example", "exam", "check", "outline", "simpler", "line"} and items["search"]["custom"] is False and items["explain"]["text"] == items["explain"]["default"]
     for h in (env.fac, env.stu): assert env.c.get("/api/admin/prompts", headers=h).status_code == 403 and env.c.put("/api/admin/prompts/explain", headers=h, json={"text": "x" * 50}).status_code == 403
     t = i["topic"]["Water hardness"]; env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu); assert Spy.sent[-1][1]["content"] == main.PROMPTS["explain"]
     assert env.c.get("/api/admin/prompts", headers=env.admin).json()["items"][0]["saved_answers"] == 1

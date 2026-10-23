@@ -20,7 +20,7 @@ export function fixTables(text){
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
 const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
-import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe} from 'lucide-react'
+import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -92,7 +92,7 @@ export default function App(){
   const links=student?[['learn',GraduationCap,tl("My courses")],['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
     :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
     :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
-  return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm}}>
+  return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role}}>
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find}/>}
     <div id="pageslot"/>
@@ -263,7 +263,7 @@ function ArchiveSheet({a,close,done,toast}){  // archive or restore one item; ar
 const ArchPill=({x})=>x.archived?<span className="pill off sm">{x.archived_self?tl("Archived"):tl("Archived with its parent")}</span>:null
 function Learn({user,toast,appName,start}){
   const isAdmin=user.role==='admin',staff=user.role!=='student'
-  const [mat,setMat]=useState(false)
+  const [mat,setMat]=useState(false),[rev,setRev]=useState(null)
   const [bulk,setBulk]=useState(null),[copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
   const load=()=>api('/tree').then(setTree).catch(e=>toast(e.message));useEffect(()=>{load()},[t,ed,qz,qe,sheet,arch,qr])
   const landed=useRef(!!start?.length);useEffect(()=>{if(landed.current||user.role!=='student'||tree.length!==1)return;landed.current=true;const p=tree[0],c=p.semesters.find(x=>x.current)||(p.semesters.length===1?p.semesters[0]:null);setNav(c?[p.id,c.id]:[p.id])},[tree])
@@ -275,6 +275,7 @@ function Learn({user,toast,appName,start}){
   if(qz)return <QuizPlay id={qz} back={()=>setQz(null)} toast={toast} role={user.role}/>
   if(qe)return <QuizEditor {...qe} done={()=>setQe(null)} toast={toast}/>
   if(qr)return <QuizResults id={qr} back={()=>setQr(null)} toast={toast} role={user.role}/>
+  if(rev)return <RevisionSheet uid={rev} toast={toast} back={()=>setRev(null)}/>
   if(gb)return <Gradebook cid={gb} back={()=>setGb(null)} toast={toast} role={user.role}/>
   if(ed)return <TopicEditor role={user.role} toast={toast} edit={ed.id?ed:null} unitId={ed.unit_id} done={()=>setEd(null)} cancel={()=>setEd(null)}/>
   const tsub=x=>[x.published===false&&'Draft · students cannot see it',x.learning_due_at&&(staff?'Due '+when(x.learning_due_at):tl("Your teacher's date")+': '+day(x.learning_due_at)),
@@ -307,6 +308,7 @@ function Learn({user,toast,appName,start}){
        :<p className="known">{tl("No course is assigned to you yet. An admin makes you the owner of a course.")}</p>}<h3 className="sec">{tl("All programs")}</h3></>}
     {mayEdit&&co&&!unit&&!co.shared&&<button className="btn ghost lead" onClick={()=>setSheet({type:'unit',un:{},cid:co.id})}>{tl("Add unit")}</button>}
     {mayEdit&&unit&&!co.shared&&<div className="two lead2"><button className="btn ghost" onClick={()=>setEd({unit_id:unit.id})}>{tl("Add topic to")}{" "}{unit.name}</button><button className="btn ghost" onClick={()=>setBulk(unit)}><Upload size={16}/>{" "}{tl("Upload topic files")}</button></div>}
+    {!staff&&unit&&<button className="btn ghost lead" onClick={()=>setRev(unit.id)}><FileText size={16}/>{" "}{tl("Revision sheet")}</button>}
     {staff&&unit&&<button className="btn ghost lead" onClick={()=>setCopy({kind:'unit',id:unit.id,title:unit.name})}>{tl("Copy this unit to another course")}</button>}
     {<Paged rows={list} render={(x,i)=>x.locked?<div key={x.id} className="card" style={{opacity:.7}}><button className="hit" onClick={()=>toast(tl("This course is unavailable right now"))} aria-label={tl("{n}, unavailable right now",{n:x.n})}><span className="dot" style={{background:'var(--mut)'}}><Lock size={18}/></span><div><b>{x.n}</b><span>{tl("Unavailable right now")}</span></div></button></div>:<div key={x.id} className="card" style={x.archived?{opacity:.75}:undefined}><button className="hit" onClick={x.go}><span className="dot" style={{background:COL[i%5]}}>{x.n[0]}</span><div><b>{x.n}<ArchPill x={x}/></b>{x.sub&&<span>{x.sub}</span>}</div>{(x.s||x.b)&&<span className="marks">{x.b&&<Bookmark className="bm" size={16} fill="currentColor"/>}{x.s&&<Mark s={x.s}/>}</span>}</button>
       <div className="acts">{staff&&x.can&&(x.archived_self||!x.archived)&&<button className="ic sm" aria-label={(x.archived_self?'Restore ':'Archive ')+x.n} onClick={()=>setArch({kind:x.kind,id:x.id,name:x.n,on:!x.archived_self})}>{x.archived_self?<ArchiveRestore size={16}/>:<Archive size={16}/>}</button>}
@@ -393,8 +395,9 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     {d&&total>RS_PAGE&&<nav className="pager" aria-label={tl("Pages")}><button className="btn ghost" disabled={page===0} onClick={()=>setPage(page-1)}><ChevronLeft size={18}/><span>{tl("Previous")}</span></button><small>{tl("Page {v} of",{v:page+1})}{" "}{pages}</small><button className="btn ghost" disabled={page+1>=pages} onClick={()=>setPage(page+1)}><span>{tl("Next")}</span><ChevronRight size={18}/></button></nav>}
   </div></>}
 function StaffHome({user,toast,open}){
-  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null)
-  useEffect(()=>{if(!list&&!rep)api('/overview').then(setO).catch(e=>toast(e.message))},[toast,list,rep])
+  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null),[flags,setFlags]=useState(0),[fp,setFp]=useState(false)
+  useEffect(()=>{if(!list&&!rep&&!fp){api('/overview').then(setO).catch(e=>toast(e.message));api('/flags?limit=1').then(r=>setFlags(r.total)).catch(()=>{})}},[toast,list,rep,fp])
+  if(fp)return <FlagsPage toast={toast} back={()=>setFp(false)}/>
   if(rep)return <StudentReport c={rep} back={()=>setRep(null)} toast={toast}/>
   if(list)return <ResultSet kind={list} user={user} back={()=>setList(null)} toast={toast} open={open}/>
   const admin=user.role==='admin',hour=new Date().getHours(),hi=hour<12?'Good morning, {name}':hour<17?'Good afternoon, {name}':'Good evening, {name}'
@@ -402,12 +405,30 @@ function StaffHome({user,toast,open}){
   return <><Bar title={tl(hi,{name:firstName(user.name)})} sub={admin?tl("Across the whole college"):tl("Your courses")}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {o&&<div className="stats">{stats.map(([n,l0,k])=>{const l=tl(l0);return <button className="stat" key={l0} style={{textAlign:'start',width:'100%'}} onClick={()=>setList(k)} aria-label={tl("{v} {l}. Show the list",{v:(n??0).toLocaleString(),l:l})}><b>{(n??0).toLocaleString()}</b>{l}</button>})}</div>}
+    {flags>0&&<button className="card flagcard" style={{textAlign:'start',width:'100%'}} onClick={()=>setFp(true)}><span className="dot" style={{background:'var(--coral)'}}><Flag size={18}/></span><div style={{flex:1}}><b>{tl(flags===1?'1 AI answer flagged by students':'{n} AI answers flagged by students',{n:flags})}</b><span>{tl("Check it, then have it written again or let it stand")}</span></div><ChevronRight size={18}/></button>}
     {o&&<><h3 className="sec">{tl("Needs attention")}</h3>
       {o.attention.length?<Paged rows={o.attention} render={x=><button key={x.kind} className="card" style={{textAlign:'start'}} onClick={()=>setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{srv(x.text)}</b></div><ChevronRight size={18}/></button>}/>
         :<p className="known">{tl("Nothing needs your attention right now.")}</p>}</>}
     {o&&!o.courses&&!admin&&<p className="known">{tl("No course is assigned to you yet. An admin makes you the owner of a course.")}</p>}
     {o?.courses>0&&<><h3 className="sec">{admin?tl("Courses"):tl("Your courses")}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
+// AI replies students flagged as looking wrong, on this person's topics (all of them for admins), never with who flagged them
+const FLAG_KIND={gist:'The gist',why:'Why?',example:'Example',exam:'Exam angle',check:'Quick check',simpler:'More simply',outline:'Answer outline',explain:'Explain',answer:'Sample answer',line:'Highlight explanation',search:'Search answer'}
+function FlagsPage({toast,back}){
+  const confirm=useConfirm(),[t,setT]=useState(null)
+  const {items,total,page,setPage,ready,reload}=usePaged(o=>`/flags?limit=${PAGE}&offset=${o}`,[],toast)
+  const act=async(f,action)=>{if(action==='rewrite'&&!await confirm({title:tl("Have it written again?"),body:tl("The saved answer is dropped, and the next student who asks gets a new one (that uses AI tokens)."),ok:tl("Write it again")}))return
+    try{await api(`/flags/${f.id}/resolve`,{method:'POST',body:{action}});toast(action==='rewrite'?tl("It will be written again"):tl("Left as it is"));reload()}catch(e){toast(e.message)}}
+  if(t)return <Topic id={t} back={()=>setT(null)} toast={toast} role="faculty"/>
+  return <><Bar title={tl("Flagged AI answers")} sub={ready?pl(total,'answer'):''} back={back}/><div className="main">
+    <p className="known" style={{marginTop:0}}>{tl("Students flagged these AI answers as looking wrong. Who flagged them is never shown.")}</p>
+    {!ready?<Skeleton/>:!items.length?<p className="known">{tl("Nothing is flagged right now.")}</p>:items.map(f=><div key={f.id} className="qbox flagrow">
+      <small className="steplab">{tl(FLAG_KIND[f.kind]||f.kind)}{f.topic?' · '+f.topic+(f.course?' · '+f.course:''):''}</small>
+      <div className="flagex"><Md>{f.excerpt||''}</Md></div>
+      <p className="known" style={{margin:'6px 0'}}>{tl(f.count===1?'Flagged by 1 student':'Flagged by {n} students',{n:f.count})}{f.reasons.length>0&&':'}</p>
+      {f.reasons.length>0&&<ul className="flagwhy">{f.reasons.map((r,i)=><li key={i}>“{r}”</li>)}</ul>}
+      <div className="tools">{f.source==='topic'&&f.topic_id&&<button onClick={()=>setT(f.topic_id)}>{tl("Open the topic")}</button>}<button onClick={()=>act(f,'rewrite')}>{tl("Write it again")}</button><button onClick={()=>act(f,'keep')}>{tl("It's fine")}</button></div></div>)}
+    <Pager page={page} total={total} onPage={setPage}/></div></>}
 function Dashboard({user,toast,onOpen,onStudy,onRoutine}){
   const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
   const [tree,setTree]=useState(null),[today,setToday]=useState(null),[topic,setTopic]=useState(null),[sess,setSess]=useState(null)
@@ -495,7 +516,7 @@ function SearchPage({user,toast,initial}){
       {!ai&&!aiBusy&&<button className="btn ghost" onClick={()=>askAi(asked,false)}><Sparkles size={16}/>{" "}{tl("Not what you wanted? Recheck with AI")}</button>}</>}
     {aiBusy&&<div className="qbox" aria-live="polite"><b>{tl("Asking the AI…")}</b><div className="sk"/></div>}
     {aiErr&&<div className="qbox" role="alert"><b>{tl("The AI could not answer")}</b><p className="known" style={{margin:'6px 0 0'}}>{aiErr}</p></div>}
-    {ai&&!aiBusy&&<><h3 className="sec">{tl("AI answer")}</h3><div className="prose">{ai.cached&&<span className="chip">{tl("Saved answer · no tokens used")}</span>}<Md>{ai.text}</Md></div>
+    {ai&&!aiBusy&&<><h3 className="sec">{tl("AI answer")}</h3><div className="prose">{ai.cached&&<span className="chip">{tl("Saved answer · no tokens used")}</span>}<Md>{ai.text}</Md>{!ai.support&&<FlagLink source="search" id={ai.id} excerpt={ai.text}/>}</div>
       <p className="known">{tl("AI answers can contain mistakes. Check them against your notes and textbook.")}</p>
       <button className="btn ghost" disabled={aiBusy} onClick={()=>askAi(ai.for,true)}><Sparkles size={16}/>{" "}{tl("Not happy? Recheck with AI")}</button></>}</div></>}
 function Hit({x,open}){return <button className="hitrow" onClick={()=>open(x.id)}><b>{x.title}{x.in_title&&<span className="chip" style={{marginLeft:8}}>{tl("Best match")}</span>}</b><small>{[x.program,x.semester,x.course,x.unit].filter(Boolean).join(' › ')}</small>{x.snippet&&<span className="snip">{x.snippet}</span>}</button>}
@@ -986,7 +1007,7 @@ function Topic({id:first,back,toast,role}){
   if(gone)return <><Bar title={tl("Unavailable")} back={back}/><div className="main"><div className="hero"><h2>{gone}</h2><p>{tl("It has been archived. Check back later or ask your teacher.")}</p></div></div></>
   if(!t)return <><Bar title={tl("Loading")} back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const flip=async()=>{const on=!bm;setBm(on);try{await api(`/topics/${id}/bookmark`,{method:on?'PUT':'DELETE'});toast(on?tl("Bookmarked"):tl("Bookmark removed"))}catch(e){setBm(!on);toast(e.message)}}
-  const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">{tl("Saved answer · no tokens used")}</span>}{ai[k].own_notes&&<span className="chip">{tl("Written with your own notes")}</span>}<Md>{ai[k].text}</Md></div>
+  const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">{tl("Saved answer · no tokens used")}</span>}{ai[k].own_notes&&<span className="chip">{tl("Written with your own notes")}</span>}<Md>{ai[k].text}</Md><FlagLink source="topic" id={ai[k].id} topicId={id} excerpt={ai[k].text}/></div>
     :aiOk===false?<p className="known">{ownKey?tl("Add your own DeepSeek API key under “My AI key” in the menu to use AI help."):tl("AI unavailable. Try again later.")}</p>
     :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?tl("Thinking…"):k==='explain'?tl("Explain it to me"):tl("Show a sample answer")}</button>{t.my_notes&&<p className="known">{tl("Uses your own notes too. It counts toward your daily AI requests.")}</p>}{aiMsg&&<p className="known">{aiMsg}</p>}</>
   return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={role!=='admin'&&<button className={'ic'+(bm?' on':'')} aria-label={bm?tl("Remove bookmark"):tl("Bookmark this topic")} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
@@ -1008,7 +1029,7 @@ function Topic({id:first,back,toast,role}){
     {known.length>0&&tab==='explain'&&<p className="known">{tl("You’ve already covered:")}{" "}{known.join(', ')}</p>}
     {tab==='notes'&&t.content&&<button className="btn lead" onClick={()=>setReading(true)}><Maximize2 size={16}/> {t.content_format==='interactive'?tl("Open the interactive page"):tl("Read in full screen")}</button>}
     {tab==='notes'&&<div className="prose">{t.content?(t.content_format==='interactive'?<p className="known" style={{margin:0}}>{tl("This topic is an interactive page. Open it above to use it and highlight its text.")}</p>:<Body text={t.content} format={t.content_format}/>):!t.my_notes&&<Md>{tl("No notes yet.")}</Md>}{t.my_notes&&<>{t.content&&<h3>{tl("Your notes")}</h3>}{!t.content&&<span className="chip">{tl("Your notes")}</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>{tl("Question pattern")}</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>{tl("Answer guideline")}</h3><Md>{t.guideline}</Md></>}{role==='student'&&<button className="tool" onClick={()=>setMat(true)}><FileText size={14}/> {t.my_notes?tl("Update your notes for this course"):tl("Add your own notes for this topic")}</button>}</div>}
-    {tab==='notes'&&hls.length>0&&<><h3 className="sec">{tl("Your highlights ({length})",{length:hls.length})}</h3>{<Paged rows={hls} render={h=><HlItem key={h.id} h={h} toast={toast} onSaved={r=>setHls(l=>l.map(x=>x.id===r.id?r:x))} onDrop={()=>dropHl(h)}/>}/>}</>}
+    {tab==='notes'&&hls.length>0&&<><h3 className="sec">{tl("Your highlights ({length})",{length:hls.length})}</h3>{<Paged rows={hls} render={h=><HlItem key={h.id} h={{...h,tid:id}} toast={toast} onSaved={r=>setHls(l=>l.map(x=>x.id===r.id?r:x))} onDrop={()=>dropHl(h)}/>}/>}</>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&(aiOk===false?view('answer'):<><Outline id={id}/>{ai.answer?view('answer'):<button className="btn ghost" disabled={busy} onClick={()=>ask('answer')}>{busy?tl("Thinking…"):tl("Show the full sample answer")}</button>}{!ai.answer&&aiMsg&&<p className="known">{aiMsg}</p>}</>)}
     {reading&&<Reader t={t} auto={role==='student'} toast={toast} onList={setHls} close={()=>setReading(false)}/>}
     {role==='student'&&aiOk!==false&&<><h3 className="sec">{tl("Want to test yourself?")}</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?tl("Writing questions…"):tl("5 quick questions")}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?tl("Writing the quiz…"):tl("Full quiz · 10")}</button></div>
@@ -1032,17 +1053,18 @@ function SelfMark({id,onSimpler}){
   if(got==='knew')return <p className="known selfm">{tl("Nice. The next ones will stretch you a little more.")}</p>
   if(got==='not_yet')return <p className="known selfm">{tl("That's fine, it takes a few goes.")}{onSimpler&&<>{" "}<button className="link inl" onClick={onSimpler}>{tl("Explain it more simply")}</button></>}</p>
   return <div className="selfm" role="group" aria-label={tl("How did it go? Only you see this")}><button className="stepchip" onClick={()=>mark('knew')}>{tl("I had it")}</button><button className="stepchip" onClick={()=>mark('not_yet')}>{tl("Not quite")}</button><small className="known">{tl("Only you see this")}</small></div>}
-function StepCard({id,k,d,student,onSimpler}){
+function StepCard({id,rid,k,d,student,onSimpler}){
   return <div className={'stepcard '+k}><small className="steplab">{STEP_LABEL(k)}</small>
     {k==='why'||k==='example'||k==='simpler'?<><Md>{d.text||''}</Md>{d.hook&&<p className="hookq">{d.hook}</p>}</>
-      :<><div className="stepq"><Md>{d.question||''}</Md></div><Reveal label={k==='exam'?tl("Show a model answer"):tl("Show the answer")}><Md>{d.answer||''}</Md>{d.tip&&<p className="known">{tl("Examiners look for")}: {d.tip}</p>}{k==='check'&&student&&<SelfMark id={id} onSimpler={onSimpler}/>}</Reveal></>}</div>}
+      :<><div className="stepq"><Md>{d.question||''}</Md></div><Reveal label={k==='exam'?tl("Show a model answer"):tl("Show the answer")}><Md>{d.answer||''}</Md>{d.tip&&<p className="known">{tl("Examiners look for")}: {d.tip}</p>}{k==='check'&&student&&<SelfMark id={id} onSimpler={onSimpler}/>}</Reveal></>}<FlagLink source="topic" id={rid} topicId={id}/></div>}
 // the top of a topic page: the gist and one curious question, then short steps the reader picks. It adapts to each student, privately:
 // the steps they use most come first, quick checks get easier or harder from their own "I had it" / "Not quite", and after a few topics
 // in a unit the question comes first with the gist one tap away. Every reply is a few lines and saved for everyone; the notes stay the reference
 function TopicSteps({id,student}){
   const [g,setG]=useState(null),[you,setYou]=useState(null),[err,setErr]=useState(''),[trail,setTrail]=useState([]),[busy,setBusy]=useState(''),[open,setOpen]=useState(false)
-  useEffect(()=>{setG(null);setYou(null);setOpen(false);setErr('');setTrail([]);api(`/topics/${id}/ai/gist`).then(r=>{setG(r.data);setYou(r.you||null)}).catch(e=>setErr(e.message))},[id])
-  const step=async k=>{setBusy(k);setErr('');try{const r=await api(`/topics/${id}/ai/${k}`);setTrail(x=>[...x.filter(y=>y.k!==k),{k,d:r.data}])}catch(e){setErr(e.message)}setBusy('')}
+  const [gid,setGid]=useState(null)
+  useEffect(()=>{setG(null);setYou(null);setOpen(false);setErr('');setTrail([]);api(`/topics/${id}/ai/gist`).then(r=>{setG(r.data);setGid(r.id);setYou(r.you||null)}).catch(e=>setErr(e.message))},[id])
+  const step=async k=>{setBusy(k);setErr('');try{const r=await api(`/topics/${id}/ai/${k}`);setTrail(x=>[...x.filter(y=>y.k!==k),{k,d:r.data,rid:r.id,raw:r.text}])}catch(e){setErr(e.message)}setBusy('')}
   if(err&&!g)return null  // without AI the page is the notes, as before
   const order=you?.order||STEP_KINDS.map(x=>x[0]),left=order.filter(k=>!trail.some(x=>x.k===k)).map(k=>[k,STEP_LABEL(k)])
   const qFirst=you?.question_first&&!open&&g?.hook
@@ -1051,23 +1073,50 @@ function TopicSteps({id,student}){
         <button className="link" style={{marginTop:10}} onClick={()=>setOpen(true)}>{tl("Show the gist")}</button></>
       :<><h3>{tl("The gist")}<small>{tl("about 30 seconds")}</small></h3>
         <ul>{(g.points||[]).map((x,i)=><li key={i}><Md>{x}</Md></li>)}</ul>
-        {g.hook&&!open&&<Hook q={g.hook} a={g.hook_answer}/>}</>}
-    {g&&<>{trail.map(x=><StepCard key={x.k} id={id} k={x.k} d={x.d} student={student} onSimpler={trail.some(y=>y.k==='simpler')?null:()=>step('simpler')}/>)}
+        {g.hook&&!open&&<Hook q={g.hook} a={g.hook_answer}/>}<FlagLink source="topic" id={gid} topicId={id}/></>}
+    {g&&<>{trail.map(x=><StepCard key={x.k} id={id} rid={x.rid} k={x.k} d={x.d} student={student} onSimpler={trail.some(y=>y.k==='simpler')?null:()=>step('simpler')}/>)}
       {err&&<p className="known" role="alert">{err}</p>}
       {left.length>0&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}</div>}
       {busy==='simpler'&&<p className="known">{tl("Thinking…")}</p>}</>}
   </section>}
+// "This looks wrong?" under an AI reply: a student's private report, which the topic's teacher sees (never who sent it) and can have written again
+function FlagLink({source,id,topicId,excerpt}){
+  const {role}=useContext(Ctx),[st,setSt]=useState(''),[why,setWhy]=useState(''),[err,setErr]=useState('')
+  if(role!=='student')return null
+  if(st==='sent')return <p className="known flagl">{tl("Thanks. Your teacher will take a look.")}</p>
+  if(st!=='open')return <button className="link flagl" onClick={()=>setSt('open')}><Flag size={13}/> {tl("This looks wrong?")}</button>
+  const send=async()=>{setErr('');try{await api('/ai/flag',{method:'POST',body:{source,id:id||null,topic_id:topicId||null,excerpt:String(excerpt||'').slice(0,600),reason:why}});setSt('sent')}catch(e){setErr(e.message)}}
+  return <div className="flagf"><input value={why} maxLength={300} onChange={e=>setWhy(e.target.value)} placeholder={tl("What looks wrong? (optional)")} aria-label={tl("What looks wrong? (optional)")}/>
+    <div className="tools"><button onClick={send}>{tl("Send to my teacher")}</button><button onClick={()=>setSt('')}>{tl("Cancel")}</button></div>{err&&<p className="known">{err}</p>}</div>}
 // the safety rules every AI request starts with, read-only, for admins who want to see exactly what they say
 function GuardText(){
   const [t,setT]=useState(null)
   return t?<pre className="guardtx">{t}</pre>:<button className="link" style={{marginTop:6}} onClick={()=>api('/admin/guardrails').then(r=>setT(r.text)).catch(()=>{})}>{tl("Read the safety rules")}</button>}
+// a unit on one printable sheet, made only when the student asks: each topic's gist and question, and their own highlights.
+// Saved gists show at once; the missing ones are written two at a time and fill in as they arrive. A print page, so no numbered pages
+function RevisionSheet({uid,back,toast}){
+  const [d,setD]=useState(null),[left,setLeft]=useState(0)
+  useEffect(()=>{let live=true
+    api(`/units/${uid}/revision`).then(async r=>{if(!live)return;setD(r);const q=r.topics.filter(x=>!x.gist);if(!q.length)return
+      const on=await api('/ai/status').then(x=>x.available).catch(()=>false);if(!on||!live)return;setLeft(q.length)
+      const work=async()=>{while(live&&q.length){const x=q.shift();try{const g=(await api(`/topics/${x.id}/ai/gist`)).data;if(live)setD(p=>({...p,topics:p.topics.map(y=>y.id===x.id?{...y,gist:g}:y)}))}catch{/* that topic stays without its gist */}if(live)setLeft(n=>n-1)}}
+      await Promise.all([work(),work()])}).catch(e=>toast(e.message))
+    return()=>{live=false}},[uid,toast])
+  return <><Bar title={tl("Revision sheet")} sub={d?d.course+' · '+d.unit:''} back={back}/><div className="main">
+    <div className="revtools"><button className="btn ghost" style={{marginTop:0}} onClick={()=>window.print()}><Printer size={16}/>{" "}{tl("Print or save as PDF")}</button>{left>0&&<small className="known">{tl("Writing {n} more…",{n:left})}</small>}</div>
+    {!d?<Skeleton/>:<article className="revsheet"><h2 className="revhead">{d.unit}<small>{d.course}</small></h2>
+      {d.topics.map(x=><section key={x.id} className="revtopic"><h3>{x.title}</h3>
+        {x.gist?<ul>{(x.gist.points||[]).map((p,i)=><li key={i}><Md>{p}</Md></li>)}</ul>:<p className="known">{left>0?tl("Writing…"):tl("No gist yet. Open the topic once to make it.")}</p>}
+        {x.gist?.hook&&<p className="revq">{tl("Ask yourself")}: {x.gist.hook}</p>}
+        {x.highlights.length>0&&<div className="revhl"><small>{tl("Your highlights")}</small><ul>{x.highlights.map((h,i)=><li key={i}>{h}</li>)}</ul></div>}</section>)}</article>}
+  </div></>}
 // the skeleton of a full-marks answer, shown before the full sample answer
 function Outline({id}){
-  const [d,setD]=useState(null),[err,setErr]=useState('')
-  useEffect(()=>{setD(null);setErr('');api(`/topics/${id}/ai/outline`).then(r=>setD(r.data)).catch(e=>setErr(e.message))},[id])
+  const [d,setD]=useState(null),[err,setErr]=useState(''),[rid,setRid]=useState(null)
+  useEffect(()=>{setD(null);setErr('');api(`/topics/${id}/ai/outline`).then(r=>{setD(r.data);setRid(r.id)}).catch(e=>setErr(e.message))},[id])
   if(err)return <p className="known">{err}</p>
   if(!d)return <Skeleton rows={2}/>
-  return <div className="gist"><h3>{tl("How a full-marks answer goes")}</h3><ol>{(d.points||[]).map((x,i)=><li key={i}><Md>{x}</Md></li>)}</ol>{d.marks&&<p className="known">{d.marks}</p>}</div>}
+  return <div className="gist"><h3>{tl("How a full-marks answer goes")}</h3><ol>{(d.points||[]).map((x,i)=><li key={i}><Md>{x}</Md></li>)}</ol>{d.marks&&<p className="known">{d.marks}</p>}<FlagLink source="topic" id={rid} topicId={id}/></div>}
 
 // a topic's content full screen, with the reader's own highlights: select text to highlight it, tap a highlight to remove it.
 // Markdown and HTML are highlighted right here; an interactive page runs in a sandboxed frame (no access to the app or the sign-in) and
@@ -1075,7 +1124,7 @@ function Outline({id}){
 const Content=memo(({text,format})=><Body text={text} format={format}/>)
 const HL_COL={coral:'#ff9292',yellow:'#ffd60a',green:'#50c878',blue:'#5aa0ff'}
 // one saved highlight: the passage in its colour, where it is (on the list of all of them), the reader's note, and remove
-function HlItem({h,where,onGo,onSaved,onDrop,focus,toast}){
+function HlItem({h,where,onGo,onSaved,onDrop,onExplain,focus,toast}){
   const [ed,setEd]=useState(!!focus),[note,setNote]=useState(h.note||''),ta=useRef(null)
   useEffect(()=>{if(focus)setEd(true)},[focus])
   useEffect(()=>{if(ed)ta.current?.focus()},[ed])
@@ -1083,6 +1132,7 @@ function HlItem({h,where,onGo,onSaved,onDrop,focus,toast}){
   return <div className="hlrow" style={{'--hc':HL_COL[h.color]||HL_COL.coral}}><div className="hlbody">
     {onGo?<button className="hltext" onClick={onGo}>{h.text}</button>:<p className="hltext">{h.text}</p>}
     {where&&<small className="hlwhere">{where}</small>}
+    {h.explain?<div className="hlexp"><Md>{h.explain.text}</Md><FlagLink source="topic" id={h.explain.id} topicId={h.topic_id||h.tid}/></div>:onExplain&&<button className="link hladd" onClick={onExplain}>{tl("Explain this")}</button>}
     {ed?<><textarea ref={ta} className="hlnote" value={note} maxLength={2000} placeholder={tl("Your note")} aria-label={tl("Your note")} onChange={e=>setNote(e.target.value)}/><div className="tools"><button onClick={save}>{tl("Save note")}</button><button onClick={()=>{setNote(h.note||'');setEd(false)}}>{tl("Cancel")}</button></div></>
       :h.note?<button className="hlnoted" onClick={()=>setEd(true)} title={tl("Edit note")}>{h.note}</button>:<button className="link hladd" onClick={()=>setEd(true)}>{tl("Add a note")}</button>}</div>
     <button className="ic sm" aria-label={tl("Remove highlight")} title={tl("Remove")} onClick={onDrop}><Trash2 size={15}/></button></div>}
@@ -1096,14 +1146,19 @@ function Reader({t,auto,toast,onList,close}){
     const f=()=>setFs(!!document.fullscreenElement),k=e=>{if(e.key==='Escape'&&!document.fullscreenElement)close()}
     document.addEventListener('fullscreenchange',f);addEventListener('keydown',k)
     return()=>{document.body.style.overflow='';document.removeEventListener('fullscreenchange',f);removeEventListener('keydown',k);if(document.fullscreenElement)document.exitFullscreen().catch(()=>{})}},[auto,close])
-  const save=useCallback(async h=>{const r=await api(`/topics/${t.id}/highlights`,{method:'POST',body:{text:String(h.text||'').slice(0,5000),prefix:String(h.prefix||'').slice(-200),color:h.color||'coral'}});setList(l=>[...l,r]);return r},[t.id])
+  // the explanation of a passage: written when it is highlighted (and AI is on), shown in a small card, kept on the highlight
+  const [exp,setExp]=useState(null),[aiOn,setAiOn]=useState(false)
+  useEffect(()=>{api('/ai/status').then(r=>setAiOn(!!r.available)).catch(()=>{})},[])
+  const explain=useCallback(async hid=>{const have=now.current.find(x=>x.id===+hid)?.explain;if(have){setExp({hid:+hid,...have});return}
+    setExp({hid:+hid,busy:true});try{const x=(await api(`/me/highlights/${hid}/explain`,{method:'POST'})).explain;setExp({hid:+hid,...x});setList(l=>l.map(y=>y.id===+hid?{...y,explain:x}:y))}catch(e){setExp({hid:+hid,err:e.message})}},[])
+  const save=useCallback(async h=>{const r=await api(`/topics/${t.id}/highlights`,{method:'POST',body:{text:String(h.text||'').slice(0,5000),prefix:String(h.prefix||'').slice(-200),color:h.color||'coral'}});setList(l=>[...l,r]);if(aiOn)setTimeout(()=>explain(r.id),0);return r},[t.id,aiOn,explain])
   const remove=useCallback(async id=>{await api('/me/highlights/'+id,{method:'DELETE'});setList(l=>l.filter(x=>x.id!==+id))},[])
   const recolor=useCallback(async(id,color)=>{const r=await api('/me/highlights/'+id,{method:'PATCH',body:{color}});setList(l=>l.map(x=>x.id===r.id?r:x));return r},[])
   const noteOn=useCallback(id=>{setPanel(true);setNoteFor(+id)},[])
   useEffect(()=>{if(!ready||inter||!box.current||!window.zgHighlighter)return
     const loud=f=>(...a)=>f(...a).catch(e=>{toast(e.message);throw e})
-    hl.current=window.zgHighlighter.attach(box.current,{list:now.current,save:loud(save),remove:loud(remove),update:loud((id,c)=>recolor(id,c.color)),note:noteOn})
-    return()=>{hl.current?.detach();hl.current=null}},[ready,inter,save,remove,recolor,noteOn,toast])
+    hl.current=window.zgHighlighter.attach(box.current,{list:now.current,save:loud(save),remove:loud(remove),update:loud((id,c)=>recolor(id,c.color)),note:noteOn,...(aiOn?{explain}:{})})
+    return()=>{hl.current?.detach();hl.current=null}},[ready,inter,save,remove,recolor,noteOn,toast,aiOn,explain])
   useEffect(()=>{if(!ready||!inter)return
     const win=()=>frame.current?.contentWindow,reply=(k,d)=>win()?.postMessage({zg:1,k,...d},'*')
     const on=async e=>{const d=e.data;if(!win()||e.source!==win()||!d||d.zg!==1)return  // only our own frame, and only these requests
@@ -1112,9 +1167,10 @@ function Reader({t,auto,toast,onList,close}){
       else if(d.type==='remove'){try{await remove(+d.id);reply(d.k,{})}catch(er){toast(er.message);reply(d.k,{error:1})}}
       else if(d.type==='update'){try{await recolor(+d.id,String(d.color));reply(d.k,{})}catch(er){toast(er.message);reply(d.k,{error:1})}}
       else if(d.type==='note')noteOn(d.id)
+      else if(d.type==='explain'&&aiOn)explain(+d.id)
       else if(d.type==='store'&&d.data&&typeof d.data==='object'){const data=Object.fromEntries(Object.entries(d.data).filter(([,v])=>typeof v==='string'))  // the page's localStorage, kept for this person
         api(`/topics/${t.id}/store`,{method:'PUT',body:{data}}).catch(er=>toast(er.message))}}
-    addEventListener('message',on);return()=>removeEventListener('message',on)},[ready,inter,save,remove,recolor,noteOn,toast,t.id])
+    addEventListener('message',on);return()=>removeEventListener('message',on)},[ready,inter,save,remove,recolor,noteOn,toast,t.id,aiOn,explain])
   const goTo=id=>{if(inter)frame.current?.contentWindow?.postMessage({zg:1,type:'scroll',id},'*');else hl.current?.scrollTo(id);if(innerWidth<900)setPanel(false)}
   const drop=async id=>{try{await remove(id);if(inter)frame.current?.contentWindow?.postMessage({zg:1,type:'unpaint',id},'*');else hl.current?.remove(id)}catch(e){toast(e.message)}}
   const toggleFs=()=>document.fullscreenElement?document.exitFullscreen().catch(()=>{}):document.documentElement.requestFullscreen?.().catch(()=>toast(tl("Full screen is not available here")))
@@ -1128,7 +1184,10 @@ function Reader({t,auto,toast,onList,close}){
       {inter?(ready&&<iframe ref={frame} className="rframe" title={t.title} src={t.frame_url} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"/>)
         :<div className="rscroll"><div className="prose rtext" ref={box}>{ready?<Content text={t.content} format={t.content_format}/>:<Skeleton/>}</div></div>}
       {panel&&<aside className="rpanel" aria-label={tl("Your highlights")}><b>{tl("Your highlights")}</b><p className="known">{tl("Select text and pick a colour. Tap a highlight to change its colour, add a note or remove it.")}</p>
-        {list?.length?<Paged rows={list} render={h=><HlItem key={h.id} h={h} toast={toast} focus={noteFor===h.id} onGo={()=>goTo(h.id)} onSaved={r=>{setList(l=>l.map(x=>x.id===r.id?r:x));setNoteFor(null)}} onDrop={()=>drop(h.id)}/>}/>:<p className="known">{tl("None yet.")}</p>}</aside>}</div></div>}
+        {list?.length?<Paged rows={list} render={h=><HlItem key={h.id} h={{...h,tid:t.id}} toast={toast} focus={noteFor===h.id} onExplain={aiOn?()=>explain(h.id):null} onGo={()=>goTo(h.id)} onSaved={r=>{setList(l=>l.map(x=>x.id===r.id?r:x));setNoteFor(null)}} onDrop={()=>drop(h.id)}/>}/>:<p className="known">{tl("None yet.")}</p>}</aside>}</div>
+    {exp&&<div className="rexp" role="status"><div className="rexph"><small>{tl("What this means")}</small><button className="ic sm" aria-label={tl("Close")} onClick={()=>setExp(null)}><X size={15}/></button></div>
+      <p className="rexpq">“{(list?.find(x=>x.id===exp.hid)?.text||'').slice(0,140)}{(list?.find(x=>x.id===exp.hid)?.text||'').length>140?'…':''}”</p>
+      {exp.busy?<p className="known">{tl("Thinking…")}</p>:exp.err?<p className="known">{exp.err}</p>:<><Md>{exp.text||''}</Md><FlagLink source="topic" id={exp.id} topicId={t.id}/></>}</div>}</div>}
 
 const TOPIC_CONFIG_TEMPLATE=`---
 title: 1. Introduction and learning objectives

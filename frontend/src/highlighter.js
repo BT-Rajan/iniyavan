@@ -1,6 +1,6 @@
 // Highlighting text in a topic's content. The app bundles this file for Markdown and HTML topics, and the server runs the same file inside the
-// sandboxed frame of an interactive topic. zgHighlighter.attach(root, {list, save, remove, update, note, changed}) marks the saved passages,
-// offers colour swatches when text is selected, and colours, Note and Remove when a highlight is tapped. A passage is stored as its text plus
+// sandboxed frame of an interactive topic. zgHighlighter.attach(root, {list, save, remove, update, note, explain, changed}) marks the saved passages,
+// offers colour swatches when text is selected, and colours, Explain, Note and Remove when a highlight is tapped. A passage is stored as its text plus
 // the words just before it, and found again by searching the content's text for both, so it survives small edits elsewhere in the topic.
 (function(){
   var CTX=40
@@ -72,6 +72,7 @@
       var m=ev.target.closest&&ev.target.closest('mark.zg-hl');if(!m){if(mode==='edit')hide();return}if(!doc.getSelection().isCollapsed)return
       var id=m.getAttribute('data-hl')
       show(m.getBoundingClientRect(),'edit',swatches(m.getAttribute('data-c')||'coral','Make it',function(c){Promise.resolve(opts.update&&opts.update(id,{color:c})).then(function(){recolor(id,c);changed()}).catch(function(){})})
+        .concat(opts.explain?[button('zg-hl-tx','Explain','Explain this passage',function(){opts.explain(id)})]:[])
         .concat(opts.note?[button('zg-hl-tx','Note','Add a note to this highlight',function(){opts.note(id)})]:[])
         .concat([button('zg-hl-tx','Remove','Remove this highlight',function(){Promise.resolve(opts.remove(id)).then(function(){unpaint(id);list=list.filter(function(x){return String(x.id)!==String(id)});changed()}).catch(function(){})})]))
     }
