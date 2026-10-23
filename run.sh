@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs deps, builds the UI and (re)starts Eng Tutor under pm2.
+# Installs deps, builds the UI and (re)starts Zigora under pm2.
 # Usage: ./run.sh            (uses ./venv, created if missing)
 #        VENV=/apps/engtutor/venv ./run.sh
 set -euo pipefail
@@ -9,7 +9,7 @@ VENV="${VENV:-$ROOT/venv}"
 cd "$ROOT"
 
 [ -f .env ] || { echo "Missing $ROOT/.env. Copy .env.example to .env and fill it in."; exit 1; }
-grep -q '^APP_NAME=' .env || { printf '\nAPP_NAME="Eng Tutor"\n' >> .env; echo "Added APP_NAME to .env (edit it to rename the app)."; }
+grep -q '^APP_NAME=' .env || { printf '\nAPP_NAME="Zigora"\n' >> .env; echo "Added APP_NAME to .env (edit it to rename the app)."; }
 if ! grep -Eq '^JWT_SECRET=.{32,}' .env || grep -Eq '^JWT_SECRET=.*(change-me|generate-with)' .env; then
   sed -i '/^JWT_SECRET=/d' .env; printf 'JWT_SECRET=%s\n' "$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
   echo "Generated a new JWT_SECRET in .env (everyone has to sign in again once)."
@@ -33,4 +33,4 @@ pm2 start backend/run.py --name "$APP" --interpreter "$VENV/bin/python" --cwd "$
 pm2 save >/dev/null
 
 HOST=$(sed -n 's/^HOST=//p' .env | tail -1); PORT=$(sed -n 's/^PORT=//p' .env | tail -1)
-echo "==> Eng Tutor is up at http://${HOST:-0.0.0.0}:${PORT:-5252}   (logs: pm2 logs $APP)"
+echo "==> Zigora is up at http://${HOST:-0.0.0.0}:${PORT:-5252}   (logs: pm2 logs $APP)"

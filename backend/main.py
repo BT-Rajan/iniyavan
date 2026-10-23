@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-APP_NAME = (os.getenv("APP_NAME") or "Eng Tutor").strip()
+APP_NAME = (os.getenv("APP_NAME") or "Zigora").strip()
 VERSION = "1.1.0"
 DB = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost/engtutor")
 log = logging.getLogger("engtutor")
@@ -404,7 +404,7 @@ def manifest():
              {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
              {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
     return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
-                         "background_color": "#0e0a1f", "theme_color": "#0e0a1f", "icons": icons})
+                         "background_color": "#f6f4f7", "theme_color": "#722f99", "icons": icons})
 
 def _addcol(table, col, typ):
     def go(c):
