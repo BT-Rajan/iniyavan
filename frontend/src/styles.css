@@ -413,3 +413,20 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 .panlang{display:none;margin:0 0 6px}.panlang .langsw{width:100%;color:var(--mut)}.panlang select{flex:1}.panlang option{color:#222;background:#fff}
 @media (max-width:599px){.top .langsw{display:none}.panlang{display:block}}
 .pgtop{scroll-margin-top:84px}
+/* a topic's gist and the short steps under it; "Remember this?" on Home; the quiet "learned" line */
+.gist{background:var(--s1);border:1px solid var(--line);border-inline-start:4px solid var(--acc);border-radius:var(--r-box);padding:14px 16px;margin:0 0 14px}
+.gist h3{margin:0 0 8px;font-size:15px;display:flex;align-items:baseline;gap:8px}.gist h3 small{color:var(--mut);font-weight:500;font-size:12px}
+.gist ul,.gist ol{margin:0;padding-inline-start:20px}.gist li{margin:4px 0;line-height:1.5}.gist li p{margin:0}
+.hook{margin:12px 0 0;padding:10px 12px;border-radius:var(--r-ctl);background:var(--accbg)}.hook>p{margin:0 0 6px;font-style:italic;font-weight:600;color:var(--acct)}
+.hook .link,.recall .link,.stepcard .link{margin:0;color:var(--acct)}
+.reveal{margin-top:6px;line-height:1.5}.reveal p{margin:0 0 6px}
+.stepcard{margin:12px 0 0;padding-top:10px;border-top:1px dashed var(--line);line-height:1.5}.stepcard p{margin:0 0 6px}
+.steplab{display:block;color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.stepq{font-weight:600}.hookq{font-style:italic;color:var(--acct)}
+.stepchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.stepchip{border:1px solid var(--line);background:var(--s2);color:var(--tx);border-radius:99px;padding:7px 14px;font-weight:600;font-size:14px;margin:0;width:auto}
+.stepchip:hover{border-color:var(--acc)}.stepchip:disabled{opacity:.6}
+.recall{background:var(--accbg);border-radius:var(--r-box);padding:12px 14px;margin:12px 0}
+.recallh{display:flex;justify-content:space-between;align-items:center}.recallh small{color:var(--acct);font-weight:700;text-transform:uppercase;letter-spacing:.04em;font-size:12px}
+.recallh .ic{background:transparent;width:30px;height:30px}.recallq{margin:4px 0 6px;font-weight:600;font-size:16px}
+.mine{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;color:var(--mut);font-size:14px;margin:18px 0 6px}.mine .link{margin:0;color:var(--acct)}
