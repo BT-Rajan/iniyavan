@@ -3649,6 +3649,7 @@ def normalise_sections(raw, n, refs):  # any AI answer -> sections covering para
 def material_view(m, s, cid, u):
     reading = scan_state(m, s); syl = syllabus(s, cid); paras = json.loads(m.paras or "[]") if m else []; secs = json.loads(m.sections) if m and m.sections else []
     title = {x.id: x.title for _, ts in syl for x in ts}; covered = {x["topic_id"] for x in secs if x["topic_id"] in title}
+    secs = [{**x, "topic_id": x["topic_id"] if x["topic_id"] in title else None} for x in secs]  # a topic moved out of this course (or unpublished) shows as not filed yet, so saving the sections again works
     notes = {r.topic_id for r in s.query(TopicNote.topic_id).filter(TopicNote.user_id == m.user_id, TopicNote.topic_id.in_(list(title) or [0]))} if m else set()
     return {"sources": json.loads(m.sources or "[]") if m else [], "matched_by": m.matched_by if m else "", "saved_at": utc_iso(m.saved_at) if m else None,
             "syllabus": [{"id": un.id, "name": un.name, "topics": [{"id": x.id, "title": x.title, "has_notes": x.id in notes} for x in ts]} for un, ts in syl],
@@ -3703,11 +3704,13 @@ def material_sections(cid: int, b: SectionsIn, u: User = Depends(me), s: Session
     """The student's corrections: which topic each section belongs to (or none). Sections stay in order and never overlap."""
     m = my_material(cid, u, s); n = len(json.loads(m.paras or "[]")) if m else 0
     ok = {x.id for _, ts in syllabus(s, cid) for x in ts}; last, out = 0, []
+    gone = {y.get("topic_id") for y in json.loads(m.sections or "[]")} - ok - {None} if m else set()  # topics the saved filing used that are no longer in this course
     for x in b.sections:
         try: f, to = int(x["from"]), int(x["to"])
         except (KeyError, TypeError, ValueError): raise HTTPException(400, "Each section needs its first and last paragraph")
         if not (last < f <= to <= n): raise HTTPException(400, "Sections must stay in order without overlapping")
         tid = x.get("topic_id")
+        if tid in gone: tid = None  # the old filing pointed at a topic that has moved away: leave that part unfiled instead of failing
         if tid is not None and tid not in ok: raise HTTPException(400, "Choose a topic of this course")
         last = to; out.append({"from": f, "to": to, "topic_id": tid})
     m.sections, m.updated_at = json.dumps(out), dt.datetime.utcnow(); s.commit(); return material_view(m, s, cid, u)
