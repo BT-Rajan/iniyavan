@@ -141,6 +141,9 @@ def test_explain_uses_the_students_own_notes_privately(env, monkeypatch):
     env.c.post(url(i, "/text"), headers=env.stu, json={"text": NOTES}); env.c.post(url(i, "/match"), headers=env.stu, json={"method": "headings"}); env.c.post(url(i, "/save"), headers=env.stu)
     r = env.c.get(f"/api/topics/{h}/ai/explain", headers=env.stu).json(); assert r["own_notes"] and not r["cached"]
     assert "Boiling removes temporary hardness" in FakeAI.calls[-1][1]  # the student's notes went with the question
-    with Session_() as s: assert s.query(main.AICache).count() == 0 and s.query(StudyAICall).filter_by(kind="topic_explain").count() == 1  # never shared; counts toward their daily limit
+    with Session_() as s: assert s.query(main.AICache).count() == 0 and s.query(StudyAICall).filter_by(kind="t_explain").count() == 1  # never shared; counts toward their daily limit (kind is short enough for its 10-character column)
+    n = len(FakeAI.calls); again = env.c.get(f"/api/topics/{h}/ai/explain", headers=env.stu).json()  # the second look shows the kept copy: nothing is sent, nothing is counted
+    assert again["own_notes"] and again["cached"] and again["text"] == r["text"] and len(FakeAI.calls) == n
+    with Session_() as s: assert s.query(StudyAICall).filter_by(kind="t_explain").count() == 1 and s.query(main.PrivateAnswer).count() == 1
     r = env.c.get(f"/api/topics/{h}/ai/explain", headers=s2).json(); assert "own_notes" not in r and "Boiling removes" not in FakeAI.calls[-1][1]  # a classmate without notes gets the shared answer
     with Session_() as s: assert s.query(main.AICache).count() == 1
