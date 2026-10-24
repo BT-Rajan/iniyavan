@@ -187,6 +187,12 @@ class TopicStore(Base):  # what an interactive page keeps in localStorage for on
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); data = Column(Text); updated = Column(DateTime, default=dt.datetime.utcnow)
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class AIFlag(Base):  # a student's private "this looks wrong" on an AI reply; the topic's teachers (or an admin, for searches) see it without the student's name
+    __tablename__ = "ai_flags"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True)
+    source = Column(String(8)); kind = Column(String(10)); ref = Column(Integer, nullable=True)  # "topic" (an ai_cache row) or "search" (a search_answers row), and which
+    excerpt = Column(Text); reason = Column(String(300), nullable=True); status = Column(String(10), default="open", index=True); at = Column(DateTime, default=dt.datetime.utcnow)
 class StepLog(Base):  # what a student does with a topic's short steps (a step opened, or "I had it" / "Not quite" on a quick check); private to them, used only to adapt the steps
     __tablename__ = "step_log"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -2456,7 +2462,7 @@ def highlighter_js():  # the same highlighter the app bundles (frontend/src/high
 FRAME_BOOT = """(function(){var P=parent,n=0,wait={},h=null;function ask(m){return new Promise(function(ok,no){var k=++n;wait[k]=[ok,no];P.postMessage(Object.assign({zg:1,k:k},m),'*')})}
 addEventListener('message',function(e){if(e.source!==P)return;var d=e.data||{};if(!d.zg)return
 if(d.k&&wait[d.k]){wait[d.k][d.error?1:0](d);delete wait[d.k];return}
-if(d.type==='init'&&!h&&window.zgHighlighter)h=zgHighlighter.attach(document.body,{list:d.list||[],save:function(x){return ask({type:'save',text:x.text,prefix:x.prefix,color:x.color})},remove:function(id){return ask({type:'remove',id:id})},update:function(id,c){return ask({type:'update',id:id,color:c.color})},note:function(id){P.postMessage({zg:1,type:'note',id:id},'*')},changed:function(l){P.postMessage({zg:1,type:'changed',list:l},'*')}})
+if(d.type==='init'&&!h&&window.zgHighlighter)h=zgHighlighter.attach(document.body,{list:d.list||[],save:function(x){return ask({type:'save',text:x.text,prefix:x.prefix,color:x.color})},remove:function(id){return ask({type:'remove',id:id})},update:function(id,c){return ask({type:'update',id:id,color:c.color})},note:function(id){P.postMessage({zg:1,type:'note',id:id},'*')},explain:function(id){P.postMessage({zg:1,type:'explain',id:id},'*')},changed:function(l){P.postMessage({zg:1,type:'changed',list:l},'*')}})
 if(d.type==='scroll'&&h)h.scrollTo(d.id);if(d.type==='unpaint'&&h)h.remove(d.id)});P.postMessage({zg:1,type:'ready'},'*')})()"""
 # localStorage and sessionStorage for the page: the sandbox has none (reading them throws), so these stand in. localStorage starts with what this
 # person saved last time and sends each change to the app (which saves it); sessionStorage lives as long as the page is open.
@@ -2519,13 +2525,21 @@ class HighlightEdit(BaseModel): color: str | None = None; note: str | None = Non
 def hl_color(c):
     if c not in HL_COLORS: raise HTTPException(400, "Choose coral, yellow, green or blue")
     return c
-def hl_row(h): return {"id": h.id, "text": h.text, "prefix": h.prefix or "", "color": h.color or "coral", "note": h.note or "", "created": h.created.isoformat() + "Z" if h.created else None}
+def hl_row(h, explain=None): return {"id": h.id, "text": h.text, "prefix": h.prefix or "", "color": h.color or "coral", "note": h.note or "", "created": h.created.isoformat() + "Z" if h.created else None,
+                                     **({"explain": explain} if explain else {})}
+LINE_DAILY = int(os.getenv("AI_LINE_DAILY") or 40)  # new highlight explanations a student can ask the AI for each day (ones already saved are free)
+def line_hash(t, prompt, text): return topic_hash(t, "line", prompt + "\n\nPassage: " + " ".join((text or "").split()).lower())
+def line_saved(s, t, u, text, prompt=None):  # the saved explanation of this passage in this person's language, if there is one: {"id", "text"}
+    hit = s.query(AICache).filter_by(topic_id=t.id, kind="line", chash=line_hash(t, prompt or in_lang(u, prompt_for(s, "line")), text)).first()
+    d = step_reply("line", hit.text) if hit else None
+    return {"id": hit.id, "text": d["text"]} if d else None
 @app.get("/api/topics/{tid}/highlights")
 def my_highlights(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
     if not t: raise HTTPException(404, "Topic not found")
     check_topic_access(u, t, s)
-    return {"items": [hl_row(h) for h in s.query(Highlight).filter_by(user_id=u.id, topic_id=tid).order_by(Highlight.id)]}
+    prompt = in_lang(u, prompt_for(s, "line"))
+    return {"items": [hl_row(h, line_saved(s, t, u, h.text, prompt)) for h in s.query(Highlight).filter_by(user_id=u.id, topic_id=tid).order_by(Highlight.id)]}
 @app.post("/api/topics/{tid}/highlights")
 def add_highlight(tid: int, b: HighlightIn, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
@@ -2555,7 +2569,29 @@ def all_my_highlights(q: str = "", color: str = "", limit: int = 25, offset: int
         like = f"%{q.strip().lower()}%"; qs = qs.filter(or_(*[func.lower(func.coalesce(c, "")).like(like) for c in (Highlight.text, Highlight.note, Topic.title, Course.name)]))
     total = qs.count()
     rows = qs.order_by(Highlight.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
-    return {"total": total, "items": [{**hl_row(h), "topic_id": t.id, "topic": t.title, "unit": un.name if un else "", "course": co.name if co else ""} for h, t, un, co in rows]}
+    prompt = in_lang(u, prompt_for(s, "line"))
+    return {"total": total, "items": [{**hl_row(h, line_saved(s, t, u, h.text, prompt)), "topic_id": t.id, "topic": t.title, "unit": un.name if un else "", "course": co.name if co else ""} for h, t, un, co in rows]}
+@app.post("/api/me/highlights/{hid}/explain")
+async def explain_highlight(hid: int, u: User = Depends(me), s: Session = Depends(db)):
+    """What a highlighted passage means, in a few plain lines. Written when the passage is first highlighted and saved for everyone who highlights the same words."""
+    h = s.get(Highlight, hid)
+    if not h or h.user_id != u.id: raise HTTPException(404, "Highlight not found")
+    t = s.get(Topic, h.topic_id); check_topic_access(u, t, s)
+    prompt = in_lang(u, prompt_for(s, "line")); key = key_or_fail(u, s)
+    got = line_saved(s, t, u, h.text, prompt)
+    if got: return {"explain": got}
+    if u.role == "student" and s.query(func.count(StepLog.id)).filter(StepLog.user_id == u.id, StepLog.kind == "line", StepLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= LINE_DAILY:
+        raise HTTPException(429, f"You have used today's {LINE_DAILY} highlight explanations. Your highlight is saved; ask again tomorrow.")
+    f = full(t, s)  # like a doubt: the names and the passage only, never the topic's notes
+    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe passage the student highlighted:\n{h.text[:600]}"
+    text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=STEPS["line"], kind="line", topic_id=t.id)
+    d = step_reply("line", text)
+    if not d: raise HTTPException(502, "The AI's answer could not be read. Try again.")
+    if u.role == "student": s.add(StepLog(user_id=u.id, topic_id=t.id, kind="line"))
+    row = AICache(topic_id=t.id, kind="line", chash=line_hash(t, prompt, h.text), text=text, tokens=tokens)
+    try: s.add(row); s.commit()
+    except Exception: s.rollback(); row = None
+    return {"explain": {"id": row.id if row else None, "text": d["text"]}}
 @app.delete("/api/me/highlights/{hid}")
 def remove_highlight(hid: int, u: User = Depends(me), s: Session = Depends(db)):
     h = s.get(Highlight, hid)
@@ -2701,7 +2737,7 @@ def course_progress(cid: int, u: User = Depends(staff), s: Session = Depends(db)
 STEP_RULES = ("You help a busy engineering student learn one topic in small steps. Use only what fits the topic's notes and stay accurate. "
               "Plain short sentences: no greeting, no filler, no headings. Write formulas in plain text or $...$ math. "
               "Reply with only a JSON object with exactly these keys (the keys stay in English): ")
-STEPS = {"gist": 350, "why": 300, "example": 300, "exam": 400, "check": 250, "outline": 400, "simpler": 250}  # the kinds that answer in JSON, and their token limits
+STEPS = {"gist": 350, "why": 300, "example": 300, "exam": 400, "check": 250, "outline": 400, "simpler": 250, "line": 250}  # the kinds that answer in JSON, and their token limits
 EXAM_KINDS = ("answer", "exam", "outline")  # the kinds that also get the question pattern, answer guideline and sample content
 PROMPTS = {  # the built-in prompts; an admin can replace any of them under Settings (stored as prompt_<kind>)
  "explain": ("You are a warm, sharp engineering tutor for a busy student with little time. Explain the topic in at most 150 words: one line on why it matters, "
@@ -2717,6 +2753,8 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
  "exam": STEP_RULES + ('{"question": "one typical short exam question on this topic with its marks in brackets, following the question pattern when one is given", '
                        '"answer": "a model answer in at most 60 words, in points when that is how it is marked, following the answer guideline", "tip": "what examiners look for, at most 15 words"}'),
  "check": STEP_RULES + '{"question": "one question that tests understanding rather than memory of the wording", "answer": "the answer in at most 30 words, with a one-line reason"}',
+ "line": STEP_RULES + ('{"text": "at most 60 words: what the highlighted passage means, in plain words, for a student of this course and topic; '
+                       'explain any hard term, symbol or step in it"}'),
  "simpler": STEP_RULES + ('{"text": "at most 60 words: the core idea again in the plainest everyday words, with one familiar comparison, for a student who did not get it the first time", '
                           '"hook": "one easy question to check the idea has landed"}'),
  "outline": STEP_RULES + ('{"points": [four to seven short lines: the skeleton of a full-marks answer in order, with the headings, key terms, and the diagram or equation to include], '
@@ -2736,6 +2774,7 @@ PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on 
                "example": ("Topic step: Example", "A short real example of the topic."),
                "exam": ("Topic step: Exam angle", "One exam-style question with a short model answer."),
                "check": ("Topic step: Quick check", "One question whose answer the student reveals; nothing is scored."),
+               "line": ("Highlight explanation", "Written when a student highlights a passage: what that passage means. Saved per passage, so the same passage costs tokens once."),
                "simpler": ("Topic step: More simply", "Offered after a student says a quick check was not quite right: the idea again in plainer words."),
                "outline": ("Sample answer outline", "The skeleton of a full-marks answer, shown before the full sample answer."),
                "doubt": ("Doubt (a marked phrase)", "Used when a student marks a phrase they do not follow and asks the AI. Only the program, semester, course and topic names and the phrase are sent, never the notes."),
@@ -2771,7 +2810,7 @@ def topic_msg(f, kind, mine=None):  # what the AI is told about a topic
             + (f"The student's own notes on this topic:\n{mine}\n\n" if mine else "")
             + (f"Question pattern:\n{f['question_pattern']}\n\nAnswer guideline:\n{f['guideline']}\n\nSample content:\n{f['sample_content']}\n" if kind in EXAM_KINDS else ""))
 def topic_hash(t, kind, prompt): return hashlib.sha256("|".join([kind, t.title, t.content or "", t.sample_content or "", t.question_pattern or "", t.guideline or "", prompt]).encode()).hexdigest()
-STEP_NEEDS = {"gist": ("points",), "why": ("text",), "example": ("text",), "simpler": ("text",), "exam": ("question", "answer"), "check": ("question", "answer"), "outline": ("points",)}
+STEP_NEEDS = {"line": ("text",), "gist": ("points",), "why": ("text",), "example": ("text",), "simpler": ("text",), "exam": ("question", "answer"), "check": ("question", "answer"), "outline": ("points",)}
 def step_reply(kind, text):  # a step's JSON, or None when the AI did not keep to it (not JSON, or a part the page shows is missing)
     try: d = ai_json(text)
     except HTTPException: return None
@@ -2797,7 +2836,7 @@ def question_first(u, t, s):
 @app.get("/api/topics/{tid}/ai/{kind}")
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
-    if not t or kind not in PROMPTS or kind in ("search", "doubt"): raise HTTPException(404, "Not found")
+    if not t or kind not in PROMPTS or kind in ("search", "line", "doubt"): raise HTTPException(404, "Not found")
     check_topic_access(u, t, s)
     you = learner(u, s) if u.role == "student" else None
     f = full(t, s); prompt = in_lang(u, prompt_for(s, kind) + (CHECK_LEVEL.get(you["level"], "") if you and kind == "check" else ""))
@@ -2819,13 +2858,14 @@ async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit:
         hit.hits += 1; s.commit()
-        return {"text": hit.text, "cached": True, **({"data": step_reply(kind, hit.text)} if kind in STEPS else {}), **extra}
+        return {"text": hit.text, "cached": True, "id": hit.id, **({"data": step_reply(kind, hit.text)} if kind in STEPS else {}), **extra}
     text, tokens = await ask_ai(u, s, key, prompt, topic_msg(f, kind), max_tokens=STEPS.get(kind, 700 if kind == "explain" else None), kind="topic_" + kind, topic_id=tid)
     data = step_reply(kind, text) if kind in STEPS else None
     if kind in STEPS and data is None: raise HTTPException(502, "The AI's answer could not be read. Try again.")  # not saved, so the next try asks again
-    try: s.add(AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)); s.commit()
-    except Exception: s.rollback()
-    return {"text": text, "cached": False, **({"data": data} if kind in STEPS else {}), **extra}
+    row = AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)
+    try: s.add(row); s.commit()
+    except Exception: s.rollback(); row = None
+    return {"text": text, "cached": False, "id": row.id if row else None, **({"data": data} if kind in STEPS else {}), **extra}
 class CheckResult(BaseModel): outcome: str
 @app.post("/api/topics/{tid}/check-result")
 def check_result(tid: int, b: CheckResult, u: User = Depends(me), s: Session = Depends(db)):  # "I had it" or "Not quite" after a quick check: private, never a score
@@ -2839,6 +2879,77 @@ def my_learning(u: User = Depends(me), s: Session = Depends(db)): return learner
 @app.delete("/api/me/learning/steps")
 def forget_learning(u: User = Depends(me), s: Session = Depends(db)):
     n = s.query(StepLog).filter_by(user_id=u.id).delete(); s.commit(); return {"ok": True, "cleared": n}
+# ---- "this looks wrong": a student flags an AI reply; the topic's teachers see it (never who sent it) and write it again or let it stand ----
+class FlagIn(BaseModel): source: str; id: int | None = None; topic_id: int | None = None; kind: str = ""; excerpt: str = ""; reason: str = ""
+FLAG_DAILY = 20
+@app.post("/api/ai/flag")
+def flag_ai(b: FlagIn, u: User = Depends(me), s: Session = Depends(db)):
+    if b.source not in ("topic", "search"): raise HTTPException(400, "Unknown source")
+    if s.query(func.count(AIFlag.id)).filter(AIFlag.user_id == u.id, AIFlag.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= FLAG_DAILY:
+        raise HTTPException(429, "Thanks, that's plenty of reports for today.")
+    excerpt, kind, tid = (b.excerpt or "")[:600], (b.kind or "")[:10], None
+    if b.source == "topic":
+        t = s.get(Topic, b.topic_id or 0)
+        if not t: raise HTTPException(404, "Topic not found")
+        check_topic_access(u, t, s); tid = t.id
+        row = s.get(AICache, b.id) if b.id else None
+        if row and row.topic_id == t.id: excerpt, kind = readable(row.kind, row.text)[:600], row.kind
+        elif b.id: raise HTTPException(404, "That answer is no longer saved")
+    else:
+        row = s.get(SearchAnswer, b.id) if b.id else None
+        if row: excerpt, kind = row.text[:600], "search"
+        kind = "search"
+    if b.id and s.query(AIFlag).filter_by(user_id=u.id, source=b.source, ref=b.id, status="open").first(): return {"ok": True}  # already reported
+    s.add(AIFlag(user_id=u.id, topic_id=tid, source=b.source, kind=kind, ref=b.id, excerpt=excerpt, reason=(b.reason or "").strip()[:300] or None)); s.commit()
+    return {"ok": True}
+def readable(kind, text):  # a saved step reply (JSON) as plain lines, for a teacher reading a flag
+    d = step_reply(kind, text) if kind in STEPS else None
+    if not d: return text
+    parts = [*(f"- {x}" for x in d.get("points") or []), d.get("text"), d.get("question"), d.get("answer") and "Answer: " + d["answer"], d.get("hook") and "*" + d["hook"] + "*", d.get("tip") and "Examiners look for: " + d["tip"]]
+    return "\n".join(str(x) for x in parts if x)
+def flags_for(u, s):  # the open flags this person can act on: a faculty member's own courses, everything for admins
+    q = s.query(AIFlag).filter(AIFlag.status == "open")
+    if u.role == "faculty": q = q.join(Topic, Topic.id == AIFlag.topic_id).join(Course, Course.id == Topic.course_id).filter(Course.faculty_owner_id == u.id)
+    return q
+@app.get("/api/flags")
+def list_flags(limit: int = 10, offset: int = 0, u: User = Depends(staff), s: Session = Depends(db)):
+    """Open flags, one row per reply flagged (with how many students flagged it and what they said), newest first."""
+    groups = {}
+    for f in flags_for(u, s).order_by(AIFlag.id.desc()).all():
+        g = groups.setdefault((f.source, f.ref or -f.id), {"id": f.id, "source": f.source, "kind": f.kind, "topic_id": f.topic_id, "excerpt": f.excerpt, "reasons": [], "count": 0, "at": f.at.isoformat() + "Z"})
+        g["count"] += 1
+        if f.reason and len(g["reasons"]) < 5: g["reasons"].append(f.reason)
+    items = list(groups.values()); page = items[max(offset, 0):max(offset, 0) + min(max(limit, 1), 50)]
+    names = {t.id: (t.title, c.name) for t, c in s.query(Topic, Course).join(Course, Course.id == Topic.course_id).filter(Topic.id.in_([g["topic_id"] for g in page if g["topic_id"]] or [0]))}
+    for g in page: g["topic"], g["course"] = names.get(g["topic_id"], ("", ""))
+    return {"total": len(items), "items": page}
+class FlagDo(BaseModel): action: str
+@app.post("/api/flags/{fid}/resolve")
+def resolve_flag(fid: int, b: FlagDo, u: User = Depends(staff), s: Session = Depends(db)):
+    """'rewrite' drops the saved reply so the next request writes it again; 'keep' lets it stand. Either closes every flag on that reply."""
+    f = flags_for(u, s).filter(AIFlag.id == fid).first()
+    if not f: raise HTTPException(404, "Flag not found")
+    if b.action not in ("rewrite", "keep"): raise HTTPException(400, "Choose rewrite or keep")
+    same = s.query(AIFlag).filter(AIFlag.source == f.source, AIFlag.ref == f.ref, AIFlag.status == "open") if f.ref else s.query(AIFlag).filter(AIFlag.id == f.id)
+    if b.action == "rewrite" and f.ref:
+        if f.source == "topic": s.query(AICache).filter(AICache.id == f.ref).delete(synchronize_session=False)
+        else: s.query(SearchAnswer).filter(SearchAnswer.id == f.ref).delete(synchronize_session=False)
+    n = same.update({"status": "fixed" if b.action == "rewrite" else "kept"}, synchronize_session=False); s.commit()
+    return {"ok": True, "closed": n}
+# ---- a unit's revision sheet: every topic's gist (saved ones only; the page asks for the rest one by one) and the student's own highlights ----
+@app.get("/api/units/{uid}/revision")
+def revision(uid: int, u: User = Depends(me), s: Session = Depends(db)):
+    un = s.get(Unit, uid)
+    if not un: raise HTTPException(404, "Unit not found")
+    check_course_access(u, un.course_id, s); c = s.get(Course, un.course_id)
+    live = {x for x, in live_topic_ids(s, [un.course_id])}; prompt = in_lang(u, prompt_for(s, "gist")); out = []
+    hls = defaultdict(list)
+    for h in s.query(Highlight).filter(Highlight.user_id == u.id, Highlight.topic_id.in_(live or {0})).order_by(Highlight.id): hls[h.topic_id].append(h.text[:220])
+    for t in s.query(Topic).filter(Topic.unit_id == uid).order_by(*ORDER.get(Topic, (Topic.id,))):
+        if t.id not in live: continue
+        hit = s.query(AICache).filter_by(topic_id=t.id, kind="gist", chash=topic_hash(t, "gist", prompt)).first()
+        out.append({"id": t.id, "title": t.title, "gist": step_reply("gist", hit.text) if hit else None, "highlights": hls.get(t.id, [])[:5]})
+    return {"unit": un.name, "course": c.name if c else "", "topics": out}
 # ---- a doubt: the student marks a phrase they do not follow. The app's own copy answers first; only if that is not enough does the phrase go to the AI, with the names of
 # ---- the program, semester, course and topic and nothing else (never the notes). The AI's answer is kept, so the same doubt is never sent twice.
 DOUBT_DAILY = int(os.getenv("AI_DOUBT_DAILY") or 30)  # doubts a student can send to the AI per day (kept answers don't count)
@@ -2965,7 +3076,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     key = key_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
-        if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
+        if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True, "id": hit.id}
     if u.role == "student" and s.query(func.count(SearchLog.id)).filter(SearchLog.user_id == u.id, SearchLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= SEARCH_DAILY:
         raise HTTPException(429, f"You have used today's {SEARCH_DAILY} AI searches. Try again tomorrow, or browse your courses.")
     who = ""
@@ -2974,10 +3085,11 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     msg = who + f"Search: {q}" + ("\n\nThe student was not satisfied with the first answer or the topics the app found. Give a fresh, clearer and more complete explanation from a different angle." if b.refresh else "")
     text, tokens = await ask_ai(u, s, key, prompt, msg, kind="search")
     s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
+    saved = None
     if not b.refresh:  # a recheck is the student asking for something different, so it is not saved for others
-        try: s.add(SearchAnswer(qhash=qh, query=q[:200], text=text, tokens=tokens)); s.flush()
-        except Exception: s.rollback(); s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
-    s.commit(); return {"text": text, "cached": False}
+        try: saved = SearchAnswer(qhash=qh, query=q[:200], text=text, tokens=tokens); s.add(saved); s.flush()
+        except Exception: s.rollback(); saved = None; s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
+    s.commit(); return {"text": text, "cached": False, "id": saved.id if saved else None}
 # ---- admin: edit the AI prompts ----
 def saved_count(s, kind): return s.query(func.count(SearchAnswer.id)).scalar() if kind == "search" else s.query(func.count(DoubtAnswer.id)).scalar() if kind == "doubt" else s.query(func.count(AICache.id)).filter(AICache.kind == kind).scalar()
 def clear_saved(s, kind): return (s.query(SearchAnswer).delete() if kind == "search" else s.query(DoubtAnswer).delete() if kind == "doubt" else s.query(AICache).filter(AICache.kind == kind).delete(synchronize_session=False))
