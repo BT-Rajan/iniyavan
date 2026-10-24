@@ -213,6 +213,20 @@ class AICache(Base):  # shared by all students; key changes when the topic is ed
     kind = Column(String(10)); chash = Column(String(64)); text = Column(Text)
     tokens = Column(Integer, default=0); hits = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint("topic_id", "kind", "chash"),)
+class PrivateAnswer(Base):  # an AI answer written for one student from their own notes: sent once, then shown from here, so showing it again sends nothing
+    __tablename__ = "private_answers"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
+    kind = Column(String(10)); chash = Column(String(64)); text = Column(Text); created_at = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("user_id", "topic_id", "kind", "chash"),)
+class DoubtAnswer(Base):  # the AI's answer to a doubt, kept so the same doubt is never sent twice; it holds only the phrase and the labels it was asked with
+    __tablename__ = "doubt_answers"
+    id = Column(Integer, primary_key=True); qhash = Column(String(64), unique=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
+    phrase = Column(String(300)); text = Column(Text); tokens = Column(Integer, default=0); hits = Column(Integer, default=0); created_at = Column(DateTime, default=dt.datetime.utcnow)
+class AIEgress(Base):  # one row for every request that left for the AI provider: what kind, about which topic, how many characters, and whether it was answered. Never the text itself.
+    __tablename__ = "ai_egress"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, index=True); kind = Column(String(20)); topic_id = Column(Integer, nullable=True)
+    chars = Column(Integer, default=0); ok = Column(Boolean, default=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
 
 def _dk(p, salt, it): return hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), it).hex()
 def hp(p, iters=None):
@@ -2125,7 +2139,7 @@ def my_scores(u: User = Depends(me), s: Session = Depends(db)):
 def drop_topics(s, cond):  # topics with their reading progress, bookmarks and saved AI answers (SQLite would not cascade them)
     ids = [i for (i,) in s.query(Topic.id).filter(cond)]
     if ids:
-        for m in (Progress, Bookmark, AICache, TopicVersion, TopicNote): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
+        for m in (Progress, Bookmark, AICache, TopicVersion, TopicNote, PrivateAnswer, DoubtAnswer): s.query(m).filter(m.topic_id.in_(ids)).delete(synchronize_session=False)
         s.query(Topic).filter(Topic.id.in_(ids)).delete(synchronize_session=False)
 def drop_quizzes(s, cond):
     ids = [q.id for q in s.query(Quiz).filter(cond)]
@@ -2568,8 +2582,9 @@ async def explain_highlight(hid: int, u: User = Depends(me), s: Session = Depend
     if got: return {"explain": got}
     if u.role == "student" and s.query(func.count(StepLog.id)).filter(StepLog.user_id == u.id, StepLog.kind == "line", StepLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= LINE_DAILY:
         raise HTTPException(429, f"You have used today's {LINE_DAILY} highlight explanations. Your highlight is saved; ask again tomorrow.")
-    msg = topic_msg(full(t, s), "line") + "\nThe passage the student highlighted:\n" + h.text[:2000]
-    text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=STEPS["line"])
+    f = full(t, s)  # like a doubt: the names and the passage only, never the topic's notes
+    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe passage the student highlighted:\n{h.text[:600]}"
+    text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=STEPS["line"], kind="line", topic_id=t.id)
     d = step_reply("line", text)
     if not d: raise HTTPException(502, "The AI's answer could not be read. Try again.")
     if u.role == "student": s.add(StepLog(user_id=u.id, topic_id=t.id, kind="line"))
@@ -2738,12 +2753,15 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
  "exam": STEP_RULES + ('{"question": "one typical short exam question on this topic with its marks in brackets, following the question pattern when one is given", '
                        '"answer": "a model answer in at most 60 words, in points when that is how it is marked, following the answer guideline", "tip": "what examiners look for, at most 15 words"}'),
  "check": STEP_RULES + '{"question": "one question that tests understanding rather than memory of the wording", "answer": "the answer in at most 30 words, with a one-line reason"}',
- "line": STEP_RULES + ('{"text": "at most 60 words: what the highlighted passage means, in plain words and in the context of this topic; '
+ "line": STEP_RULES + ('{"text": "at most 60 words: what the highlighted passage means, in plain words, for a student of this course and topic; '
                        'explain any hard term, symbol or step in it"}'),
  "simpler": STEP_RULES + ('{"text": "at most 60 words: the core idea again in the plainest everyday words, with one familiar comparison, for a student who did not get it the first time", '
                           '"hook": "one easy question to check the idea has landed"}'),
  "outline": STEP_RULES + ('{"points": [four to seven short lines: the skeleton of a full-marks answer in order, with the headings, key terms, and the diagram or equation to include], '
                           '"marks": "how the marks usually split, at most 15 words, or an empty string"}'),
+ "doubt": ("You are a patient tutor inside a study app. A student marked a phrase they do not understand in one topic. You are told only the program, semester, course and topic names and the phrase itself, never the notes. "
+           "Say what the phrase means in that course in at most 90 words: a plain definition first, then one tiny example. If the phrase could mean different things without the notes, say in one short line which meaning you assume. "
+           "Use Markdown, plain short sentences, no greeting."),
  "search": ("You are the search helper inside a study app for college students. The student typed a search about something they are studying and the app has no good match in its own notes, "
             "or they asked for a second opinion. Answer it as a clear, accurate tutor: start with a one-line definition, then explain the core idea simply, give one example, and end with 3 recap bullets. "
             "Use Markdown; show comparisons and families of related items as a table with every row on its own line. Fit the answer to the student's program and level when it is given. "
@@ -2759,6 +2777,7 @@ PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on 
                "line": ("Highlight explanation", "Written when a student highlights a passage: what that passage means. Saved per passage, so the same passage costs tokens once."),
                "simpler": ("Topic step: More simply", "Offered after a student says a quick check was not quite right: the idea again in plainer words."),
                "outline": ("Sample answer outline", "The skeleton of a full-marks answer, shown before the full sample answer."),
+               "doubt": ("Doubt (a marked phrase)", "Used when a student marks a phrase they do not follow and asks the AI. Only the program, semester, course and topic names and the phrase are sent, never the notes."),
                "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
 MAX_PROMPT = 4000
 def prompt_for(s, kind): return setting(s, "prompt_" + kind).strip() or PROMPTS[kind]
@@ -2767,13 +2786,21 @@ def key_or_fail(u, s):  # without a key AI is off, even for saved answers
     if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
     if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")
     return key
-async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60):
-    try: return await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
+def egress(s, u, kind, topic_id, chars, ok):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
+    try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok)); s.commit()
+    except Exception: s.rollback()
+async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60, kind="other", topic_id=None):
+    size = len(system) + len(msg)
+    try:
+        out = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
+        egress(s, u, kind, topic_id, size, True); return out
     except httpx.HTTPStatusError as e:
+        egress(s, u, kind, topic_id, size, False)
         log.warning("DeepSeek answered %s", e.response.status_code)
         if u.self_registered: raise HTTPException(503, f"DeepSeek refused your key ({e.response.status_code}). Check it, or your DeepSeek balance, under AI key in the menu.")
         raise ai_down(u, "DeepSeek refused the request (" + str(e.response.status_code) + "). Check the key, model name and balance under AI config.")
     except Exception as e:
+        egress(s, u, kind, topic_id, size, False)
         log.warning("DeepSeek call failed: %s", type(e).__name__)
         if u.self_registered: raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
         raise ai_down(u, "DeepSeek did not answer.")
@@ -2809,22 +2836,30 @@ def question_first(u, t, s):
 @app.get("/api/topics/{tid}/ai/{kind}")
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
-    if not t or kind not in PROMPTS or kind in ("search", "line"): raise HTTPException(404, "Not found")
+    if not t or kind not in PROMPTS or kind in ("search", "line", "doubt"): raise HTTPException(404, "Not found")
     check_topic_access(u, t, s)
     you = learner(u, s) if u.role == "student" else None
     f = full(t, s); prompt = in_lang(u, prompt_for(s, kind) + (CHECK_LEVEL.get(you["level"], "") if you and kind == "check" else ""))
     if you and kind in PICKS + ("simpler",): s.add(StepLog(user_id=u.id, topic_id=tid, kind=kind)); s.commit()  # a step the student chose to open
     extra = {"you": {**you, "question_first": question_first(u, t, s)}} if you and kind == "gist" else {"level": you["level"]} if you and kind == "check" else {}
     mine = my_notes(s, u.id, tid) if u.role == "student" and kind in ("explain", "answer") else None
-    if mine:  # the student's own notes are private: the answer is written for them alone, never saved for others, and counts toward their daily AI requests
-        return {"text": await study_ask(u, s, "topic_" + kind, prompt, topic_msg(f, kind, mine), max_tokens=None), "cached": False, "own_notes": True}
+    if mine:  # the student's own notes are private: the answer is written for them alone and never shared. It goes to the AI once; after that the kept copy is shown and nothing is sent.
+        key_or_fail(u, s); ch = hashlib.sha256("|".join(["own", topic_hash(t, kind, prompt), mine]).encode()).hexdigest()
+        hit = s.query(PrivateAnswer).filter_by(user_id=u.id, topic_id=tid, kind=kind, chash=ch).first()
+        if hit: return {"text": hit.text, "cached": True, "own_notes": True}
+        text = await study_ask(u, s, "t_" + kind, prompt, topic_msg(f, kind, mine), max_tokens=None, topic_id=tid)  # kinds fit the 10-character column
+        try:
+            s.query(PrivateAnswer).filter_by(user_id=u.id, topic_id=tid, kind=kind).delete()  # an answer for older notes is no use now
+            s.add(PrivateAnswer(user_id=u.id, topic_id=tid, kind=kind, chash=ch, text=text)); s.commit()
+        except Exception: s.rollback()
+        return {"text": text, "cached": False, "own_notes": True}
     ch = topic_hash(t, kind, prompt)
     key = key_or_fail(u, s)
     hit = s.query(AICache).filter_by(topic_id=tid, kind=kind, chash=ch).first()
     if hit:
         hit.hits += 1; s.commit()
         return {"text": hit.text, "cached": True, "id": hit.id, **({"data": step_reply(kind, hit.text)} if kind in STEPS else {}), **extra}
-    text, tokens = await ask_ai(u, s, key, prompt, topic_msg(f, kind), max_tokens=STEPS.get(kind, 700 if kind == "explain" else None))
+    text, tokens = await ask_ai(u, s, key, prompt, topic_msg(f, kind), max_tokens=STEPS.get(kind, 700 if kind == "explain" else None), kind="topic_" + kind, topic_id=tid)
     data = step_reply(kind, text) if kind in STEPS else None
     if kind in STEPS and data is None: raise HTTPException(502, "The AI's answer could not be read. Try again.")  # not saved, so the next try asks again
     row = AICache(topic_id=tid, kind=kind, chash=ch, text=text, tokens=tokens)
@@ -2915,6 +2950,62 @@ def revision(uid: int, u: User = Depends(me), s: Session = Depends(db)):
         hit = s.query(AICache).filter_by(topic_id=t.id, kind="gist", chash=topic_hash(t, "gist", prompt)).first()
         out.append({"id": t.id, "title": t.title, "gist": step_reply("gist", hit.text) if hit else None, "highlights": hls.get(t.id, [])[:5]})
     return {"unit": un.name, "course": c.name if c else "", "topics": out}
+# ---- a doubt: the student marks a phrase they do not follow. The app's own copy answers first; only if that is not enough does the phrase go to the AI, with the names of
+# ---- the program, semester, course and topic and nothing else (never the notes). The AI's answer is kept, so the same doubt is never sent twice.
+DOUBT_DAILY = int(os.getenv("AI_DOUBT_DAILY") or 30)  # doubts a student can send to the AI per day (kept answers don't count)
+MAX_PHRASE = 300
+class DoubtIn(BaseModel): phrase: str
+def doubt_phrase(b):
+    p = " ".join((b.phrase or "").split())
+    if not 2 <= len(p) <= MAX_PHRASE: raise HTTPException(400, f"Select a short phrase (2 to {MAX_PHRASE} characters)")
+    return p
+def passage_around(text, phrase):  # the sentence or two around the phrase, taken from the app's own copy
+    body, want = plain(text), plain(phrase).lower()
+    i = body.lower().find(want) if want else -1
+    if i < 0: return ""
+    a = body.rfind(". ", 0, i); a = 0 if a < 0 else a + 2
+    z = body.find(". ", i + len(want)); z = len(body) if z < 0 else z + 1
+    return body[a:z][:600].strip()
+def doubt_key(u, t, phrase, s):
+    prompt = in_lang(u, prompt_for(s, "doubt"))
+    return prompt, hashlib.sha256("|".join(["doubt", GUARD_VERSION, str(t.id), phrase.lower(), prompt]).encode()).hexdigest()
+def doubt_topic(tid, u, s):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s); return t
+@app.post("/api/topics/{tid}/doubt")
+def doubt_local(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = Depends(db)):
+    """Step one, nothing leaves the server: where the phrase sits in the topic (and in the student's own notes), and a kept AI answer if this doubt was asked before."""
+    t = doubt_topic(tid, u, s); phrase = doubt_phrase(b); f = full(t, s)
+    mine = my_notes(s, u.id, tid) if u.role == "student" else None
+    _, qh = doubt_key(u, t, phrase, s); hit = s.query(DoubtAnswer).filter_by(qhash=qh).first() if key_for(u, s) else None
+    if hit: hit.hits += 1; s.commit()
+    return {"phrase": phrase, "where": {"program": f["program"], "semester": f["semester"], "course": f["course"], "topic": f["title"]},
+            "passage": passage_around(words_of(t.content, fmt_of(t)), phrase), "my_passage": passage_around(mine, phrase) if mine else "", "saved": hit.text if hit else None,
+            "ai_left": max(0, DOUBT_DAILY - s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar()) if u.role == "student" else None}  # noqa: E712
+@app.post("/api/topics/{tid}/doubt/ask")
+async def doubt_ask(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = Depends(db)):
+    """Step two, only when the app's own copy did not clear it up: the AI gets the program, semester, course and topic names and the phrase. Not the topic's text, not the student's notes."""
+    t = doubt_topic(tid, u, s); phrase = doubt_phrase(b)
+    if crisis(phrase): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}
+    key = key_or_fail(u, s); prompt, qh = doubt_key(u, t, phrase, s)
+    hit = s.query(DoubtAnswer).filter_by(qhash=qh).first()
+    if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
+    if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= DOUBT_DAILY:  # noqa: E712
+        raise HTTPException(429, f"You have used today's {DOUBT_DAILY} AI doubts. Try again tomorrow, or reread the passage above.")
+    f = full(t, s)
+    msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe student does not understand this phrase:\n{phrase}"
+    text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=500, kind="doubt", topic_id=tid)
+    try: s.add(DoubtAnswer(qhash=qh, topic_id=tid, phrase=phrase[:300], text=text, tokens=tokens)); s.commit()
+    except Exception: s.rollback()
+    return {"text": text, "cached": False}
+@app.get("/api/admin/egress")
+def egress_report(days: int = 30, _: User = Depends(admin), s: Session = Depends(db)):
+    """What has left for the AI provider, by kind: requests, characters sent and failures. Sizes only, never the text."""
+    since = dt.datetime.utcnow() - dt.timedelta(days=min(max(days, 1), 400))
+    rows = s.query(AIEgress.kind, func.count(AIEgress.id), func.coalesce(func.sum(AIEgress.chars), 0)).filter(AIEgress.at >= since).group_by(AIEgress.kind).all()
+    failed = dict(s.query(AIEgress.kind, func.count(AIEgress.id)).filter(AIEgress.at >= since, AIEgress.ok == False).group_by(AIEgress.kind).all())  # noqa: E712
+    return {"days": days, "by_kind": [{"kind": k, "requests": n, "chars": int(c), "failed": failed.get(k, 0)} for k, n, c in sorted(rows, key=lambda r: -r[1])], "total": sum(r[1] for r in rows)}
 @app.get("/api/me/recall")
 def recall(u: User = Depends(me), s: Session = Depends(db)):
     """'Remember this?': one curious question from a topic the student opened a few days ago, from its saved gist (never a new AI call). Changes daily."""
@@ -2992,7 +3083,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     if u.role == "student" and u.program_id:
         pr = s.get(Program, u.program_id); who = f"Student's program: {pr.name if pr else ''}" + (f", {term_label(pr)} {u.semester}" if u.semester else "") + "\n"
     msg = who + f"Search: {q}" + ("\n\nThe student was not satisfied with the first answer or the topics the app found. Give a fresh, clearer and more complete explanation from a different angle." if b.refresh else "")
-    text, tokens = await ask_ai(u, s, key, prompt, msg)
+    text, tokens = await ask_ai(u, s, key, prompt, msg, kind="search")
     s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
     saved = None
     if not b.refresh:  # a recheck is the student asking for something different, so it is not saved for others
@@ -3000,8 +3091,8 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
         except Exception: s.rollback(); saved = None; s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
     s.commit(); return {"text": text, "cached": False, "id": saved.id if saved else None}
 # ---- admin: edit the AI prompts ----
-def saved_count(s, kind): return s.query(func.count(SearchAnswer.id)).scalar() if kind == "search" else s.query(func.count(AICache.id)).filter(AICache.kind == kind).scalar()
-def clear_saved(s, kind): return (s.query(SearchAnswer).delete() if kind == "search" else s.query(AICache).filter(AICache.kind == kind).delete(synchronize_session=False))
+def saved_count(s, kind): return s.query(func.count(SearchAnswer.id)).scalar() if kind == "search" else s.query(func.count(DoubtAnswer.id)).scalar() if kind == "doubt" else s.query(func.count(AICache.id)).filter(AICache.kind == kind).scalar()
+def clear_saved(s, kind): return (s.query(SearchAnswer).delete() if kind == "search" else s.query(DoubtAnswer).delete() if kind == "doubt" else s.query(AICache).filter(AICache.kind == kind).delete(synchronize_session=False))
 @app.get("/api/admin/guardrails")
 def get_guardrails(_: User = Depends(admin)): return {"text": GUARDRAILS, "version": GUARD_VERSION}  # read-only: the rules live in guardrails.py
 @app.get("/api/admin/prompts")
@@ -3158,13 +3249,13 @@ def ai_json(text):  # the first JSON object in an AI reply, even when it is wrap
         try: return json.loads(t[a:b + 1])
         except ValueError: pass
     raise HTTPException(502, "The AI's answer could not be read. Try again.")
-async def study_ask(u, s, kind, system, msg, max_tokens=8000):
+async def study_ask(u, s, kind, system, msg, max_tokens=8000, topic_id=None):
     key = study_ai_key(u, s)
     call = StudyAICall(user_id=u.id, kind=kind)
     s.add(call); s.commit()
     call_id = call.id  # kept so the request can be given back if the AI call fails
     try:
-        text, _ = await ask_ai(u, s, key, system, msg, max_tokens=max_tokens, timeout=120)
+        text, _ = await ask_ai(u, s, key, system, msg, max_tokens=max_tokens, timeout=120, kind=kind, topic_id=topic_id)
     except BaseException:
         # a failed or timed-out AI call must not use up one of the student's daily requests
         try:
@@ -3760,6 +3851,7 @@ def normalise_sections(raw, n, refs):  # any AI answer -> sections covering para
 def material_view(m, s, cid, u):
     reading = scan_state(m, s); syl = syllabus(s, cid); paras = json.loads(m.paras or "[]") if m else []; secs = json.loads(m.sections) if m and m.sections else []
     title = {x.id: x.title for _, ts in syl for x in ts}; covered = {x["topic_id"] for x in secs if x["topic_id"] in title}
+    secs = [{**x, "topic_id": x["topic_id"] if x["topic_id"] in title else None} for x in secs]  # a topic moved out of this course (or unpublished) shows as not filed yet, so saving the sections again works
     notes = {r.topic_id for r in s.query(TopicNote.topic_id).filter(TopicNote.user_id == m.user_id, TopicNote.topic_id.in_(list(title) or [0]))} if m else set()
     return {"sources": json.loads(m.sources or "[]") if m else [], "matched_by": m.matched_by if m else "", "saved_at": utc_iso(m.saved_at) if m else None,
             "syllabus": [{"id": un.id, "name": un.name, "topics": [{"id": x.id, "title": x.title, "has_notes": x.id in notes} for x in ts]} for un, ts in syl],
@@ -3814,11 +3906,13 @@ def material_sections(cid: int, b: SectionsIn, u: User = Depends(me), s: Session
     """The student's corrections: which topic each section belongs to (or none). Sections stay in order and never overlap."""
     m = my_material(cid, u, s); n = len(json.loads(m.paras or "[]")) if m else 0
     ok = {x.id for _, ts in syllabus(s, cid) for x in ts}; last, out = 0, []
+    gone = {y.get("topic_id") for y in json.loads(m.sections or "[]")} - ok - {None} if m else set()  # topics the saved filing used that are no longer in this course
     for x in b.sections:
         try: f, to = int(x["from"]), int(x["to"])
         except (KeyError, TypeError, ValueError): raise HTTPException(400, "Each section needs its first and last paragraph")
         if not (last < f <= to <= n): raise HTTPException(400, "Sections must stay in order without overlapping")
         tid = x.get("topic_id")
+        if tid in gone: tid = None  # the old filing pointed at a topic that has moved away: leave that part unfiled instead of failing
         if tid is not None and tid not in ok: raise HTTPException(400, "Choose a topic of this course")
         last = to; out.append({"from": f, "to": to, "topic_id": tid})
     m.sections, m.updated_at = json.dumps(out), dt.datetime.utcnow(); s.commit(); return material_view(m, s, cid, u)

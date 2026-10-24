@@ -65,7 +65,7 @@
       show(r.getBoundingClientRect(),'add',[label].concat(swatches('','Highlight in',function(c){
         var h={text:text,prefix:prefix,color:c}
         Promise.resolve(opts.save(h)).then(function(saved){h.id=saved.id;list.push(h);wrap(walk(root),s,e,h.id,c);sel.removeAllRanges();changed()}).catch(function(){})
-      })))
+      })).concat(opts.doubt&&text.length<=300?[button('zg-hl-tx',opts.doubtLabel||'Not clear?','Ask about this phrase',function(){opts.doubt(text)})]:[]))
     }
     function onSelect(){clearTimeout(timer);timer=setTimeout(check,200)}
     function onTap(ev){

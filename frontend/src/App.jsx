@@ -1136,8 +1136,26 @@ function HlItem({h,where,onGo,onSaved,onDrop,onExplain,focus,toast}){
     {ed?<><textarea ref={ta} className="hlnote" value={note} maxLength={2000} placeholder={tl("Your note")} aria-label={tl("Your note")} onChange={e=>setNote(e.target.value)}/><div className="tools"><button onClick={save}>{tl("Save note")}</button><button onClick={()=>{setNote(h.note||'');setEd(false)}}>{tl("Cancel")}</button></div></>
       :h.note?<button className="hlnoted" onClick={()=>setEd(true)} title={tl("Edit note")}>{h.note}</button>:<button className="link hladd" onClick={()=>setEd(true)}>{tl("Add a note")}</button>}</div>
     <button className="ic sm" aria-label={tl("Remove highlight")} title={tl("Remove")} onClick={onDrop}><Trash2 size={15}/></button></div>}
+// "Not clear?" on a marked phrase. Step one stays on the server: where the phrase sits in the topic and in the student's own notes, and a kept AI answer if there is one.
+// Step two, only if the student asks for it, sends the AI the names of the program, semester, course and topic and the phrase. Never the notes.
+function DoubtBox({tid,phrase,close,toast}){
+  const [d,setD]=useState(null),[ans,setAns]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState('')
+  useEffect(()=>{setD(null);setAns(null);setErr('');api(`/topics/${tid}/doubt`,{method:'POST',body:{phrase}}).then(setD).catch(e=>{toast(e.message);close()})},[tid,phrase])
+  const ask=async()=>{setBusy(true);setErr('');try{setAns(await api(`/topics/${tid}/doubt/ask`,{method:'POST',body:{phrase}}))}catch(e){setErr(e.message)}setBusy(false)}
+  const shown=ans||(d?.saved?{text:d.saved,cached:true}:null)
+  return <><div className="tools" style={{justifyContent:'space-between'}}><b>{tl("Not clear?")}</b><button className="ic sm" aria-label={tl("Close")} onClick={close}><X size={16}/></button></div>
+    <p className="hltext" style={{marginTop:8}}>“{phrase}”</p>
+    {!d?<Skeleton/>:<>
+      {d.where&&<small className="known">{[d.where.program,d.where.semester,d.where.course,d.where.topic].filter(Boolean).join(' › ')}</small>}
+      <h4 style={{margin:'14px 0 4px'}}>{tl("In your topic")}</h4>
+      {d.passage?<p className="prose">{d.passage}</p>:<p className="known">{tl("This exact phrase is not in the topic text. It may be in a picture or formula.")}</p>}
+      {d.my_passage&&<><h4 style={{margin:'14px 0 4px'}}>{tl("In your own notes")}</h4><p className="prose">{d.my_passage}</p></>}
+      {shown?<><h4 style={{margin:'14px 0 4px'}}>{tl("Explained")}</h4>{shown.cached&&<span className="chip">{tl("Saved answer · nothing was sent")}</span>}{shown.support?<p>{shown.text}</p>:<div className="prose"><Md>{shown.text}</Md></div>}</>
+        :<><button className="btn" disabled={busy} onClick={ask}><Sparkles size={16}/> {busy?tl("Thinking…"):tl("Still not clear? Ask AI")}</button>
+          <p className="known">{tl("Only the names of your program, semester, course and topic and this phrase are sent. Your notes never are.")}{d.ai_left!=null&&d.ai_left<=10?' '+tl("{n} left today.",{n:d.ai_left}):''}</p>
+          {err&&<p className="known">{err}</p>}</>}</>}</>}
 function Reader({t,auto,toast,onList,close}){
-  const [list,setList]=useState(null),[panel,setPanel]=useState(false),[noteFor,setNoteFor]=useState(null),[fs,setFs]=useState(!!document.fullscreenElement),box=useRef(null),frame=useRef(null),hl=useRef(null),now=useRef([])
+  const [list,setList]=useState(null),[panel,setPanel]=useState(false),[doubt,setDoubt]=useState(null),[noteFor,setNoteFor]=useState(null),[fs,setFs]=useState(!!document.fullscreenElement),box=useRef(null),frame=useRef(null),hl=useRef(null),now=useRef([])
   const inter=t.content_format==='interactive',ready=list!==null
   now.current=list||[]
   useEffect(()=>{api(`/topics/${t.id}/highlights`).then(r=>setList(r.items)).catch(e=>{toast(e.message);setList([])})},[t.id,toast])
@@ -1157,7 +1175,7 @@ function Reader({t,auto,toast,onList,close}){
   const noteOn=useCallback(id=>{setPanel(true);setNoteFor(+id)},[])
   useEffect(()=>{if(!ready||inter||!box.current||!window.zgHighlighter)return
     const loud=f=>(...a)=>f(...a).catch(e=>{toast(e.message);throw e})
-    hl.current=window.zgHighlighter.attach(box.current,{list:now.current,save:loud(save),remove:loud(remove),update:loud((id,c)=>recolor(id,c.color)),note:noteOn,...(aiOn?{explain}:{})})
+    hl.current=window.zgHighlighter.attach(box.current,{list:now.current,save:loud(save),remove:loud(remove),update:loud((id,c)=>recolor(id,c.color)),note:noteOn,doubt:p=>{setPanel(false);setDoubt(p)},...(aiOn?{explain}:{}),doubtLabel:tl("Not clear?")})
     return()=>{hl.current?.detach();hl.current=null}},[ready,inter,save,remove,recolor,noteOn,toast,aiOn,explain])
   useEffect(()=>{if(!ready||!inter)return
     const win=()=>frame.current?.contentWindow,reply=(k,d)=>win()?.postMessage({zg:1,k,...d},'*')
@@ -1183,7 +1201,8 @@ function Reader({t,auto,toast,onList,close}){
     <div className="rmain">
       {inter?(ready&&<iframe ref={frame} className="rframe" title={t.title} src={t.frame_url} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"/>)
         :<div className="rscroll"><div className="prose rtext" ref={box}>{ready?<Content text={t.content} format={t.content_format}/>:<Skeleton/>}</div></div>}
-      {panel&&<aside className="rpanel" aria-label={tl("Your highlights")}><b>{tl("Your highlights")}</b><p className="known">{tl("Select text and pick a colour. Tap a highlight to change its colour, add a note or remove it.")}</p>
+      {doubt&&<aside className="rpanel" aria-label={tl("Not clear?")}><DoubtBox tid={t.id} phrase={doubt} close={()=>setDoubt(null)} toast={toast}/></aside>}
+      {!doubt&&panel&&<aside className="rpanel" aria-label={tl("Your highlights")}><b>{tl("Your highlights")}</b><p className="known">{tl("Select text and pick a colour. Tap a highlight to change its colour, add a note or remove it.")}</p>
         {list?.length?<Paged rows={list} render={h=><HlItem key={h.id} h={{...h,tid:t.id}} toast={toast} focus={noteFor===h.id} onExplain={aiOn?()=>explain(h.id):null} onGo={()=>goTo(h.id)} onSaved={r=>{setList(l=>l.map(x=>x.id===r.id?r:x));setNoteFor(null)}} onDrop={()=>drop(h.id)}/>}/>:<p className="known">{tl("None yet.")}</p>}</aside>}</div>
     {exp&&<div className="rexp" role="status"><div className="rexph"><small>{tl("What this means")}</small><button className="ic sm" aria-label={tl("Close")} onClick={()=>setExp(null)}><X size={15}/></button></div>
       <p className="rexpq">“{(list?.find(x=>x.id===exp.hid)?.text||'').slice(0,140)}{(list?.find(x=>x.id===exp.hid)?.text||'').length>140?'…':''}”</p>
