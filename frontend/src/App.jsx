@@ -98,7 +98,7 @@ export default function App(){
     <div id="pageslot"/>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
-    {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn}/>}
+    {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role} onRoutine={()=>go('routine')}/>}{page==='saved'&&student&&<Saved toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
@@ -159,9 +159,9 @@ function MyAiKey({toast}){
   const [d,setD]=useState(null),[key,setKey]=useState(''),[b,setB]=useState(false)
   const load=()=>api('/me/ai-key').then(setD).catch(e=>toast(e.message));useEffect(()=>{load()},[])
   const save=async()=>{setB(true);try{await api('/me/ai-key',{method:'PUT',body:{key}});setKey('');toast(tl("Key saved. AI help is on."));load()}catch(e){toast(e.message)}setB(false)}
-  const del=async()=>{if(!await confirm({title:tl("Remove your key?"),body:tl("AI help turns off for you until you add one again."),ok:tl("Remove key"),danger:true}))return;try{await api('/me/ai-key',{method:'DELETE'});toast(tl("Key removed"));load()}catch(e){toast(e.message)}}
+  const del=async()=>{if(!await confirm({title:tl("Remove your key?"),body:tl("You go back to Lite: the free daily allowance."),ok:tl("Remove key"),danger:true}))return;try{await api('/me/ai-key',{method:'DELETE'});toast(tl("Key removed"));load()}catch(e){toast(e.message)}}
   return <><Bar title={tl("My AI key")} sub={d?.key_set?tl("AI is on · key {key_hint}",{key_hint:d.key_hint}):tl("AI is off · no key yet")}/><div className="main">
-    <p className="known">{tl("AI explanations on your account use your own DeepSeek API key, so any usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.")}</p>
+    <p className="known">{tl("Optional. Without a key you are on Lite: a free daily allowance of AI on your college's key. With your own DeepSeek key there is no daily limit, and usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.")}</p>
     <label htmlFor="k">{tl("DeepSeek API key")}</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?tl("Paste a new key to replace the current one"):tl("sk-…")}/>
     <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?tl("Checking the key…"):tl("Save key")}</button>
     {d?.key_set&&<button className="btn ghost" onClick={del}>{tl("Remove my key")}</button>}</div></>}
@@ -186,11 +186,18 @@ function PromptEditor({toast}){
 
 function SelfReg({cfg,run}){
   const [dom,setDom]=useState(null);const on=!!cfg.self_registration,shown=dom??cfg.allowed_domains??''
-  return <><p className="known">{on?tl("On. The sign-in page shows “Create an account”. People confirm their email with a code, then you place them in a program and semester or year from Users (they show as Self-registered)."):tl("Off. Only admins can create accounts.")} {!cfg.mail_on&&tl("Emailing codes needs SMTP set up first (see the email section below), so registration stays closed until it is.")} {cfg.self_registered_users>0&&tl("{self_registered_users} people have registered themselves so far.",{self_registered_users:cfg.self_registered_users})}</p>
+  return <><p className="known">{on?tl("On. The sign-in page shows “Create an account”. People confirm their email with a code, then you place them in a program and semester or year from Users (they show as Self-registered)."):tl("Off. Only admins can create accounts.")} {!cfg.mail_on&&tl("Emailing codes needs email set up first (the Email tab), so registration stays closed until it is.")} {cfg.self_registered_users>0&&tl("{self_registered_users} people have registered themselves so far.",{self_registered_users:cfg.self_registered_users})}</p>
     <label className="chk"><input type="checkbox" checked={on} onChange={e=>run(()=>api('/admin/settings',{method:'PUT',body:{self_registration:e.target.checked}}),e.target.checked?'Self-registration is on':'Self-registration is off')}/>{" "}{tl("Allow people to register themselves")}</label>
     <label htmlFor="dom">{tl("Only these email domains (optional)")}</label><input id="dom" value={shown} onChange={e=>setDom(e.target.value)} placeholder={tl("college.edu, mail.college.edu")}/>
     <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{allowed_domains:shown}}).then(()=>setDom(null)),'Domains saved')}>{tl("Save domains")}</button>
-    <p className="known">{tl("Self-registered people always use their own DeepSeek key, never yours.")}</p></>}
+    <h3 className="sec">{tl("Free daily AI for self-registered people (Lite)")}</h3>
+    <p className="known">{tl("They use your DeepSeek key within this allowance each day. Beyond it they can add their own key, or ask you for more: make them Pro until a date from Users. Saved answers never count.")}</p>
+    <LiteLimits cfg={cfg} run={run}/></>}
+function LiteLimits({cfg,run}){
+  const [v,setV]=useState(null),cur=v||{searches:String(cfg.lite?.searches??10),minutes:String(cfg.lite?.minutes??20)}
+  return <><div className="two"><div><label htmlFor="ls">{tl("AI searches a day")}</label><input id="ls" type="number" min="0" max="1000" value={cur.searches} onChange={e=>setV({...cur,searches:e.target.value})}/></div>
+    <div><label htmlFor="lm">{tl("Minutes of learning with AI a day")}</label><input id="lm" type="number" min="0" max="1000" value={cur.minutes} onChange={e=>setV({...cur,minutes:e.target.value})}/></div></div>
+    <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{lite_searches:+cur.searches||0,lite_minutes:+cur.minutes||0}}).then(()=>setV(null)),'Allowance saved')}>{tl("Save allowance")}</button></>}
 
 function ResetPassword({token,toast,msg,done,leave,canReset,appName,logo}){
   const [ok,setOk]=useState(null),[f,setF]=useState({password:'',again:''}),[b,setB]=useState(false)
@@ -370,6 +377,7 @@ function AreaList({areas,onStudy,staff}){
     return <div className={'qbox area '+k} key={k}><b>{title} ({L.length})</b>{hint&&!staff&&<p className="known" style={{margin:'4px 0 8px'}}>{hint}</p>}
       {<Paged rows={L} render={a=><div className="arow" key={a.topic_id||'u'+a.unit_id}><div><span>{a.title}</span><small>{a.correct}{" "}{tl("of {total} right · {percent}%",{total:a.total,percent:a.percent})}{a.study&&!staff?' · '+STUDY[a.study]:''}{a.course?' · '+a.course:''}</small><Bar2 v={a.percent}/></div>
         {a.topic_id&&onStudy&&<button className="tool" onClick={()=>onStudy(a.topic_id)}>{k==='strong'?tl("Review"):tl("Study again")}</button>}</div>}/>}</div>})}</>}
+let usersPlan=''  // a filter for the Users page, set when the Home page sends the admin there
 const ATTN_GO={drafts:'drafts',empty_courses:'empty_courses',unowned:'unowned',unenrolled:'unenrolled',semester_numbers:'semester_numbers',never_opened:'never_opened'}
 const RS_PAGE=PAGE
 function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard card: search, sort, 5 per page, and a tap on a row opens its details
@@ -395,7 +403,7 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     {d&&!d.items.length&&<p className="known">{q?tl("Nothing matches that search."):tl("Nothing here. All clear.")}</p>}
     {d&&total>RS_PAGE&&<nav className="pager" aria-label={tl("Pages")}><button className="btn ghost" disabled={page===0} onClick={()=>setPage(page-1)}><ChevronLeft size={18}/><span>{tl("Previous")}</span></button><small>{tl("Page {v} of",{v:page+1})}{" "}{pages}</small><button className="btn ghost" disabled={page+1>=pages} onClick={()=>setPage(page+1)}><span>{tl("Next")}</span><ChevronRight size={18}/></button></nav>}
   </div></>}
-function StaffHome({user,toast,open}){
+function StaffHome({user,toast,open,goUsers}){
   const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null),[flags,setFlags]=useState(0),[fp,setFp]=useState(false),[bud,setBud]=useState(null)
   useEffect(()=>{if(!list&&!rep&&!fp){api('/overview').then(setO).catch(e=>toast(e.message));api('/flags?limit=1').then(r=>setFlags(r.total)).catch(()=>{})
     if(user.role==='admin')api('/admin/budget').then(setBud).catch(()=>{})}},[toast,list,rep,fp,user.role])
@@ -411,7 +419,7 @@ function StaffHome({user,toast,open}){
       <p className="known" style={{margin:'4px 0 0'}}>{bud[p].share>=1?tl("New AI answers have stopped until the 1st; saved answers still work. You can raise the allowance under Settings → AI."):tl("When it is used up, new AI answers stop until the 1st. You can raise it under Settings → AI.")}</p></div>)}
     {flags>0&&<button className="card flagcard" style={{textAlign:'start',width:'100%'}} onClick={()=>setFp(true)}><span className="dot" style={{background:'var(--coral)'}}><Flag size={18}/></span><div style={{flex:1}}><b>{tl(flags===1?'1 AI answer flagged by students':'{n} AI answers flagged by students',{n:flags})}</b><span>{tl("Check it, then have it written again or let it stand")}</span></div><ChevronRight size={18}/></button>}
     {o&&<><h3 className="sec">{tl("Needs attention")}</h3>
-      {o.attention.length?<Paged rows={o.attention} render={x=><button key={x.kind} className="card" style={{textAlign:'start'}} onClick={()=>setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{srv(x.text)}</b></div><ChevronRight size={18}/></button>}/>
+      {o.attention.length?<Paged rows={o.attention} render={x=><button key={x.kind} className="card" style={{textAlign:'start'}} onClick={()=>x.kind==='more_ai'&&goUsers?goUsers('asked'):setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{srv(x.text)}</b></div><ChevronRight size={18}/></button>}/>
         :<p className="known">{tl("Nothing needs your attention right now.")}</p>}</>}
     {o&&!o.courses&&!admin&&<p className="known">{tl("No course is assigned to you yet. An admin makes you the owner of a course.")}</p>}
     {o?.courses>0&&<><h3 className="sec">{admin?tl("Courses"):tl("Your courses")}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
@@ -883,6 +891,7 @@ function StudyCourse({id,topic:first,toast,back,setup}){
 const AiNote=({o})=>!o?null:!o.ai_available?<p className="known" role="note">{o.ai_own_key?tl("Add your own DeepSeek API key under “My AI key” in the menu to use explanations, quick checks and quizzes."):tl("AI help is switched off right now. Ask your admin to add an AI key.")}</p>
   :o.ai_left!=null&&o.ai_left<=10?<p className="known" role="note">{o.ai_left?tl("{n} left today for your own courses.",{n:pl(o.ai_left,'AI request')}):tl("You have used today's AI requests for your own courses. Reviews still work; new questions come back tomorrow.")}</p>:null
 function StudyTopicPage({id,toast,back,go}){
+  useLearnClock()  // a lite person's learning minutes
   const confirm=useConfirm()
   const [t,setT]=useState(null),[tab,setTab]=useState('notes'),[ex,setEx]=useState(null),[busy,setBusy]=useState(''),[quiz,setQuiz]=useState(null),[ed,setEd]=useState(null)
   const load=()=>api('/study/topics/'+id).then(setT).catch(e=>{toast(e.message);back()})
@@ -992,6 +1001,7 @@ function HistorySheet({tid,close,done,toast}){
       :<Paged rows={list} render={x=><button key={x.id} className="row" style={{width:'100%',textAlign:'start',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):tl("Before history began")}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">{tl("Current")}</span>}<ChevronRight size={16}/></button>}/>}
     <button className="btn ghost" onClick={close}>{tl("Close")}</button></Sheet>}
 function Topic({id:first,back,toast,role}){
+  useLearnClock()  // a lite person's learning minutes
   const [practice,setPractice]=useState(null),[checking,setChecking]=useState(''),[reading,setReading]=useState(false),[hls,setHls]=useState([]),[tr,setTr]=useState(null)
   useEffect(()=>{setTr(null)},[first])
   const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
@@ -1131,6 +1141,7 @@ function Profile({toast,onPassword,onKey}){
     <div className="card profcard"><span className="av big" aria-hidden="true">{initials(d.name)}</span><div><b>{d.name}</b><span>{d.email}</span>
       <span>{tl(cap(d.role))}{d.program?' · '+d.program+(d.semester?' · '+tl('{term} {n}',{term:d.term,n:d.semester}):''):''}</span></div></div>
     <div className="two"><button className="btn ghost" onClick={onPassword}>{tl("Change password")}</button>{d.self_registered&&<button className="btn ghost" onClick={onKey}>{tl("My AI key")}</button>}</div>
+    {d.self_registered&&<PlanCard toast={toast} onKey={onKey}/>}
     {r&&<><h3 className="sec">{tl("Rewards")}</h3>
       <div className="qbox rewards"><div className="rwtop"><b className="rwpts">{r.points.toLocaleString()}</b><span>{tl("points")}</span></div>
         <p className="known" style={{margin:'6px 0'}}>{tl("Other students were shown answers your questions brought {n} times.",{n:r.uses.toLocaleString()})}</p>
@@ -1543,27 +1554,28 @@ function BulkSheet({act,ids,progs,toast,close,done}){
   return <Sheet close={close}><h3>{t.replace('these',ids.length===1?'this':'these')}</h3><p className="known">{pl(ids.length,'account')}{" "}{tl("selected.")}{" "}{d}</p>
     <button className={'btn'+(act.kind==='disable'?' danger':'')} disabled={busy} onClick={run}>{busy?tl("Working…"):l}</button><button className="btn ghost" onClick={close}>{tl("Cancel")}</button></Sheet>}
 function Users({toast,me}){
-  const [q,setQ]=useState(''),[prog,setProg]=useState(''),[sem,setSem]=useState(''),[order,setOrder]=useState('role'),[progs,setProgs]=useState([])
+  const [q,setQ]=useState(''),[prog,setProg]=useState(''),[sem,setSem]=useState(''),[order,setOrder]=useState('role'),[progs,setProgs]=useState([]),[plan,setPlan]=useState(()=>{const p=usersPlan;usersPlan='';return p})
   const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef(),[selMode,setSelMode]=useState(false),[sel,setSel]=useState([]),[act,setAct]=useState(null)
-  const {items,total,page,setPage,reload:load}=usePaged(offset=>`/admin/users?q=${encodeURIComponent(q)}&order=${order}&limit=${PAGE}&offset=${offset}`+(prog?'&program_id='+prog:'')+(sem?'&semester='+sem:''),[q,prog,sem,order],toast)
+  const {items,total,page,setPage,reload:load}=usePaged(offset=>`/admin/users?q=${encodeURIComponent(q)}&order=${order}&limit=${PAGE}&offset=${offset}`+(prog?'&program_id='+prog:'')+(sem?'&semester='+sem:'')+(plan?'&plan='+plan:''),[q,prog,sem,order,plan],toast)
   useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[])
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/users/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
   const commit=async()=>{try{setBulk({...bulk,stage:'done',res:await api('/admin/users/import',{method:'POST',body:{csv:bulk.text,dry_run:false}})});load()}catch(e){toast(e.message)}}
-  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem,lab=prog?termOf(progs,prog):progs.every(x=>x.term==='Semester')?'Semester':progs.length&&progs.every(x=>x.term==='Grade')?'Grade':'Term'
+  const cell=v=>'"'+String(v).replace(/"/g,'""')+'"',r=bulk?.res,filtered=q||prog||sem||plan,lab=prog?termOf(progs,prog):progs.every(x=>x.term==='Semester')?'Semester':progs.length&&progs.every(x=>x.term==='Grade')?'Grade':'Term'
   if(view)return <UserDetail id={view} me={me} progs={progs} toast={toast} back={()=>{setView(null);load()}}/>
   return <><Bar title={tl("Users")} sub={filtered?matches(total):pl(total,'account')}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label={tl("Search users")} placeholder={tl("Search name, email, ID, program, semester, year or grade")} value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="filters">
       <select aria-label={tl("Filter by program")} value={prog} onChange={e=>{const id=e.target.value;setProg(id);if(+sem>semsOf(progs,id).length)setSem('')}}><option value="">{tl("All programs")}</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
       <select aria-label={tl("Filter by semester, year or grade")} value={sem} onChange={e=>setSem(e.target.value)}><option value="">{lab==='Term'?tl("All terms"):tl("All {lab}s",{lab:lab.toLowerCase()})}</option>{semsOf(progs,prog).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select>
-      <select aria-label={tl("Sort by")} value={order} onChange={e=>setOrder(e.target.value)}><option value="role">{tl("Sort: role, then name")}</option><option value="name">{tl("Sort: name")}</option><option value="program">{tl("Sort: program")}</option><option value="semester">{tl("Sort:")}{" "}{lab.toLowerCase()}</option><option value="newest">{tl("Sort: newest first")}</option></select></div>
+      <select aria-label={tl("Sort by")} value={order} onChange={e=>setOrder(e.target.value)}><option value="role">{tl("Sort: role, then name")}</option><option value="name">{tl("Sort: name")}</option><option value="program">{tl("Sort: program")}</option><option value="semester">{tl("Sort:")}{" "}{lab.toLowerCase()}</option><option value="newest">{tl("Sort: newest first")}</option></select>
+      <select aria-label={tl("Filter by AI plan")} value={plan} onChange={e=>setPlan(e.target.value)}><option value="">{tl("All plans")}</option><option value="lite">{tl("Lite")}</option><option value="pro">{tl("Pro")}</option><option value="asked">{tl("Asked for more AI")}</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>{tl("New user")}</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>{tl("Bulk upload")}</button></div>
     <button className="btn ghost" style={{marginTop:10}} aria-pressed={selMode} onClick={()=>{setSelMode(!selMode);setSel([])}}>{selMode?tl("Done selecting"):tl("Select several users")}</button>
     {selMode&&items.length>0&&<div className="selbar"><button className="tool" onClick={()=>setSel(items.map(u=>u.id))}>{tl("Select all {length} shown",{length:items.length})}</button>{sel.length>0&&<button className="tool" onClick={()=>setSel([])}>{tl("Clear")}</button>}</div>}
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead" aria-hidden="true"><span>{tl("Name")}</span><span>{tl("Program")}</span><span>{lab==='Semester'?tl("Sem"):lab}</span></div>}
     {items.map(u=><button key={u.id} className={'utr'+(selMode?' sel':'')+(sel.includes(u.id)?' on':'')} onClick={()=>selMode?setSel(sel.includes(u.id)?sel.filter(i=>i!==u.id):[...sel,u.id]):setView(u.id)} aria-label={tl(selMode?(sel.includes(u.id)?'Deselect {name}':'Select {name}'):'Open {name}',{name:u.name})} aria-pressed={selMode?sel.includes(u.id):undefined}>
-      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active||u.self_registered)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?tl("Admin"):tl("Faculty")}</span>}{u.self_registered&&<span className="pill">{tl("Self-registered")}</span>}{!u.active&&<span className="pill off">{tl("Disabled")}</span>}</span>}</span></span>
+      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active||u.self_registered)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?tl("Admin"):tl("Faculty")}</span>}{u.self_registered&&<span className="pill">{tl("Self-registered")} · {tl(PLAN_NAME[u.plan]||'Lite')}</span>}{u.asked&&<span className="pill">{tl("Asked for more AI")}</span>}{!u.active&&<span className="pill off">{tl("Disabled")}</span>}</span>}</span></span>
       <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
     {!items.length&&<p className="known">{filtered?tl("No one matches that search."):tl("No users yet.")}</p>}
     <Pager page={page} total={total} onPage={setPage}/>
@@ -1583,6 +1595,44 @@ function Users({toast,me}){
         <button className="btn ghost" onClick={()=>setBulk(null)}>{tl("Close")}</button></>}
     </Sheet>}</>}
 
+// AI plans of self-registered people: lite (a free daily allowance on the college's key), their own key, or pro (more, given by an admin until a date)
+const PLAN_NAME={lite:'Lite',pro:'Pro',own:'Own key',college:'College'}
+const planLine=u=>u.plan==='pro'?tl("Pro until {date}",{date:day(new Date(new Date(u.pro_until)-1).toISOString())}):u.plan==='own'?tl("Own key: uses their own DeepSeek key"):tl("Lite: the free daily allowance")
+function ProControl({u,toast,done}){
+  const [until,setUntil]=useState(''),[busy,setBusy]=useState(false),confirm=useConfirm()
+  const set=async body=>{setBusy(true);try{await api(`/admin/users/${u.id}/pro`,{method:'PUT',body});toast(body.end?tl("Back on Lite"):tl("{name} is Pro now",{name:u.name}));setUntil('');done()}catch(e){toast(srv(e.message))}setBusy(false)}
+  return <><h3 className="sec">{tl("More AI")}</h3>
+    {u.asked&&<div className="qbox" style={{marginTop:0}}><b>{tl("Asked for more AI")}</b> · <small>{when(u.asked.at)}</small>{u.asked.note&&<p style={{margin:'4px 0 0'}}>“{u.asked.note}”</p>}</div>}
+    <p className="known">{u.plan==='pro'?tl("Pro: the college's AI with the usual limits, until the date below. Then back to Lite."):u.plan==='own'?tl("They use their own DeepSeek key, so no limit applies. Pro would also let them ask about diagrams in photos."):tl("Lite: a few free AI searches and minutes of learning a day. Pro lifts that until a date you choose.")}</p>
+    <div className="chips wrap">{[7,30,90,365].map(d=><button key={d} className="stepchip" disabled={busy} onClick={()=>set({days:d})}>{d===365?tl("1 year"):tl("{n} days",{n:d})}</button>)}</div>
+    <label htmlFor="prou">{tl("Or Pro until")}</label><div className="two"><input id="prou" type="date" value={until} onChange={e=>setUntil(e.target.value)} min={new Date().toISOString().slice(0,10)}/><button className="btn" style={{marginTop:0}} disabled={busy||!until} onClick={()=>set({until})}>{tl("Make Pro")}</button></div>
+    {u.plan==='pro'&&<button className="btn ghost" disabled={busy} onClick={async()=>{if(await confirm({title:tl("End Pro for {name}?",{name:u.name}),body:tl("They go back to the free daily allowance straight away."),ok:tl("End Pro"),danger:true}))set({end:true})}}>{tl("End Pro now")}</button>}</>}
+// the learning clock: while a learning screen is open and on screen, a lite person's minutes are counted (one tick a minute; the server counts each minute once)
+let litePlan=null
+function useLearnClock(){
+  useEffect(()=>{let t=null,off=false
+    const start=()=>{t=setInterval(()=>{if(document.visibilityState==='visible')api('/me/plan/tick',{method:'POST'}).catch(()=>{})},60000)}
+    if(litePlan===null)api('/ai/status').then(r=>{litePlan=r.plan==='lite';if(litePlan&&!off)start()}).catch(()=>{});else if(litePlan)start()
+    return()=>{off=true;if(t)clearInterval(t)}},[])}
+// a self-registered student's plan, with today's free allowance and the two ways to more
+function PlanCard({toast,onKey}){
+  const [p,setP]=useState(null),[note,setNote]=useState(''),[asking,setAsking]=useState(false),[busy,setBusy]=useState(false)
+  const load=()=>api('/me/plan').then(r=>{setP(r);litePlan=r.plan==='lite'}).catch(()=>{});useEffect(()=>{load()},[])
+  if(!p||p.plan==='college')return null
+  const send=async()=>{setBusy(true);try{toast(srv((await api('/me/plan/request',{method:'POST',body:{note}})).message));setAsking(false);setNote('');load()}catch(e){toast(srv(e.message))}setBusy(false)}
+  const meter=(used,max,label)=><div style={{marginTop:8}}><small className="known">{label}</small><div className="meter" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={used}><i style={{width:Math.min(100,Math.round(100*used/Math.max(1,max)))+'%'}}/></div></div>
+  return <><h3 className="sec">{tl("AI help")}</h3><div className="qbox">
+    <b>{tl(PLAN_NAME[p.plan])}</b>
+    {p.plan==='pro'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("No daily limit until {date}. Then you are back on Lite.",{date:day(new Date(new Date(p.pro_until)-1).toISOString())})}</p>}
+    {p.plan==='own'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("You use your own DeepSeek key, so there is no daily limit.")}</p>}
+    {p.plan==='lite'&&<><p className="known" style={{margin:'4px 0 0'}}>{tl("Free each day: {s} AI searches and {m} minutes of learning with AI. Saved answers never count.",{s:p.searches_limit,m:p.minutes_limit})}</p>
+      {meter(p.searches_used,p.searches_limit,tl("Searches today: {n} of {max}",{n:p.searches_used,max:p.searches_limit}))}
+      {meter(p.minutes_used,p.minutes_limit,tl("Minutes today: {n} of {max}",{n:p.minutes_used,max:p.minutes_limit}))}
+      <div className="two" style={{marginTop:10}}><button className="btn ghost" onClick={onKey}>{tl("Use my own AI key")}</button>
+        {p.asked?<button className="btn ghost" disabled>{tl("Asked your admin")}</button>:<button className="btn ghost" onClick={()=>setAsking(true)}>{tl("Ask my admin for more")}</button>}</div></>}</div>
+    {asking&&<Sheet close={()=>setAsking(false)}><h3>{tl("Ask for more AI")}</h3><p className="known">{tl("Your admin can give you more for a while. Say why if you like.")}</p>
+      <label htmlFor="mnote">{tl("Note (optional)")}</label><input id="mnote" value={note} maxLength={300} onChange={e=>setNote(e.target.value)} placeholder={tl("Exams next week")}/>
+      <button className="btn" disabled={busy} onClick={send}>{tl("Send request")}</button><button className="btn ghost" onClick={()=>setAsking(false)}>{tl("Cancel")}</button></Sheet>}</>}
 function UserDetail({id,me,progs,back,toast}){
   const confirm=useConfirm()
   const [u,setU]=useState(null),[ed,setEd]=useState(false),[ask,setAsk]=useState(false),[pw,setPw]=useState(null),[busy,setBusy]=useState(false),[asg,setAsg]=useState(null),[ctree,setCtree]=useState([])
@@ -1599,7 +1649,8 @@ function UserDetail({id,me,progs,back,toast}){
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>{tl("Topics read")}</div><div className="stat"><b>{u.reads}</b>{tl("Total reads")}</div></div>
     <h3 className="sec">{tl("Profile")}</h3>
-    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(u.own_ai_key?'Has added their own key':'No key yet · AI is off for them','AI (self-registered, uses their own key)')}</>}{row(day(u.last_active),'Last active')}
+    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(planLine(u),'AI plan')}</>}{row(day(u.last_active),'Last active')}
+    {u.self_registered&&<ProControl u={u} toast={toast} done={load}/>}
     {u.role==='faculty'&&<><h3 className="sec">{tl("Courses they own")}</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">{tl("None yet. They can read published content but edit nothing until they own a course.")}</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>{tl("Assign courses")}</button></>}
     <h3 className="sec">{tl("Recently read")}</h3>
     {u.recent.length?<Paged rows={u.recent} render={(x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads}{" "}{tl("reads, last")}{" "}{day(x.last_read)}</small></div></div>}/>:<p className="known">{tl("No reading activity yet.")}</p>}

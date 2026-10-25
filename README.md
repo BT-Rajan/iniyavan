@@ -301,6 +301,12 @@ Off by default. Turn it on under Settings > Self-registration. It also needs ema
 - They arrive with no program or semester. Find them in Users (marked "Self-registered"; search by name, email, ID or phone), then use Select several > Move.
 - **AI uses their own key.** Self-registered people never use the shared admin key. They add a DeepSeek key under "My AI key"; it is checked with DeepSeek, then stored encrypted (derived from `JWT_SECRET`, so changing that secret means they add their key again). Until they do, AI shows as off for them.
 
+### AI plans for self-registered people
+- **Lite** (everyone who registers themselves): your DeepSeek key, within a free daily allowance set under Settings > Sign-in (default 10 AI searches and 20 minutes of learning with AI a day, by the students' local day). A search is a question to the AI (search, a photo question or "Not clear?"); the rest (topic steps, explanations, sample answers, translations, highlight explanations, own courses) is learning time. Time counts each minute once: the app ticks once a minute while a topic or own-course screen is open and on screen, and every new AI answer counts its minute too. Saved answers never count. When the allowance is used up, the message offers the two ways to more.
+- **Own key**: they save their own DeepSeek key under My AI key; no allowance applies and their usage is billed to them.
+- **Pro**: an admin opens the person under Users (filter "Asked for more AI", or the Home page's attention item) and makes them Pro for 7, 30, 90 or 365 days or until a date. They then use the college's key like a college student (photos of diagrams included) until the end of that day, and get an email about it when email is on. **End Pro now** takes them back to Lite.
+- Lite people ask for more from My profile (web) or Me (Android), with an optional note; one open request at a time.
+
 ## Shared question bank
 
 A pool of questions every faculty member and admin can browse, so a good question is written once and reused across courses.

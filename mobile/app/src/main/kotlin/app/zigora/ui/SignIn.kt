@@ -51,6 +51,7 @@ fun SignIn(done: (Me) -> Unit) {
     val app = app(); val scope = rememberCoroutineScope()
     var server by rememberSaveable { mutableStateOf(app.store.server) }
     var college by rememberSaveable { mutableStateOf<String?>(null) }
+    var canRegister by rememberSaveable { mutableStateOf(false) }
     var editing by rememberSaveable { mutableStateOf(app.store.server.isEmpty()) }
     var email by rememberSaveable { mutableStateOf("") }
     var pw by rememberSaveable { mutableStateOf("") }
@@ -63,7 +64,7 @@ fun SignIn(done: (Me) -> Unit) {
         // "learn.college.edu", "169.58.13.213:5252" or a copied link to the web app: https is tried first, then plain http
         for (s in serverCandidates(typed)) {
             app.store.server = s
-            try { college = app.api.get("/config", Config.serializer()).name; server = s; editing = false; msg = ""; return true }
+            try { val c = app.api.get("/config", Config.serializer()); college = c.name; canRegister = c.self_registration; server = s; editing = false; msg = ""; return true }
             catch (e: Exception) { msg = e.message.orEmpty() }
         }
         return false
@@ -103,6 +104,12 @@ fun SignIn(done: (Me) -> Unit) {
                     Text(stringResource(if (busy) R.string.signing_in else R.string.sign_in))
                 }
                 Quiet(stringResource(R.string.signin_help))
+                if (canRegister && !editing) { // registering (with the emailed code) happens on the college's site; then the person signs in here
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    androidx.compose.material3.OutlinedButton(onClick = { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(app.api.base + "/app/"))) },
+                        modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.create_account)) }
+                    Quiet(stringResource(R.string.create_account_hint))
+                }
             }
         }
     }

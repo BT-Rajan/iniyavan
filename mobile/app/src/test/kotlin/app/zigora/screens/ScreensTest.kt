@@ -44,9 +44,9 @@ class ScreensTest {
         app.store = Store(app, object : Sealer { override fun seal(s: String) = s; override fun open(s: String) = s })
         app.api = Api(app.store) { app.signedOut.value++ }
     }
-    private fun signIn(wallpaper: Boolean = false) = runBlocking {
+    private fun signIn(wallpaper: Boolean = false, email: String = "stu@mail.com") = runBlocking {
         app.store.server = System.getProperty("screens.server")!!; app.store.wallpaper = wallpaper
-        val r = app.api.send("POST", "/login", buildJsonObject { put("email", "stu@mail.com"); put("password", "pw123456") }, LoginOut.serializer())
+        val r = app.api.send("POST", "/login", buildJsonObject { put("email", email); put("password", "pw123456") }, LoginOut.serializer())
         app.store.token = r.token; app.store.userJson = json.encodeToString(Me.serializer(), r.user)
     }
     private fun see(text: String, ms: Long = 20_000) = rule.waitUntilAtLeastOneExists(hasText(text, substring = true), ms)
@@ -96,5 +96,12 @@ class ScreensTest {
         rule.setContent { ZigoraRoot(null) {} }
         see("Engineering Chemistry"); rule.onNodeWithText("Engineering Chemistry").performClick()
         see("Hardness of Water"); rule.onNodeWithText("Hardness of Water").performClick(); see("calcium and magnesium"); shot("11-topic-tamil-dark")
+    }
+
+    @Test fun aLiteStudentsPlan() {
+        signIn(email = "ravi@gmail.com")
+        rule.setContent { ZigoraRoot(null) {} }
+        see("Engineering Chemistry"); rule.onNodeWithText("Me").performClick()
+        see("Searches today"); rule.onNodeWithText("Asked your admin").performScrollTo(); shot("12-lite-plan")
     }
 }

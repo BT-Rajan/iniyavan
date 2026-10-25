@@ -87,11 +87,11 @@ def test_allowed_domains(reg):
 def signed_up(reg):
     reg.start(); t = reg.c.post("/api/register/verify", json={"email": "asha@college.edu", "code": reg.code()}).json()["token"]; return {"Authorization": "Bearer " + t}
 
-def test_self_registered_users_need_their_own_ai_key_and_never_use_the_shared_one(reg, monkeypatch):
+def test_self_registered_users_are_lite_on_the_shared_key_and_can_save_their_own(reg, monkeypatch):
     monkeypatch.setattr(main.httpx, "AsyncClient", FakeClient); FakeClient.mode, FakeClient.calls = "ok", 0
     with Session_() as s: s.merge(main.Setting(k="deepseek_key", v="sk-shared-admin-key-123456")); s.commit()
     h = signed_up(reg)
-    assert reg.c.get("/api/ai/status", headers=h).json()["available"] is False and reg.c.get("/api/ai/status", headers=h).json()["own_key"] is True
+    st = reg.c.get("/api/ai/status", headers=h).json(); assert st["available"] is True and st["own_key"] is True and st["plan"] == "lite"
     assert reg.c.get("/api/ai/status", headers=reg.stu).json()["available"] is True  # staff-added users still use the shared key
     assert reg.c.put("/api/me/ai-key", headers=reg.stu, json={"key": "sk-" + "a" * 30}).status_code == 403
     for bad in ("short", "sk-" + "a b" * 12): assert reg.c.put("/api/me/ai-key", headers=h, json={"key": bad}).status_code == 400
@@ -102,8 +102,8 @@ def test_self_registered_users_need_their_own_ai_key_and_never_use_the_shared_on
     with Session_() as s: raw = s.query(User).filter_by(email="asha@college.edu").one().ai_key
     assert raw and key not in raw and main.unseal(raw) == key  # stored encrypted
     g = reg.c.get("/api/me/ai-key", headers=h).json(); assert g == {"own_key": True, "key_set": True, "key_hint": "…zzzz"} and key not in str(g)
-    assert reg.c.get("/api/ai/status", headers=h).json()["available"] is True
-    assert reg.c.delete("/api/me/ai-key", headers=h).status_code == 200 and reg.c.get("/api/ai/status", headers=h).json()["available"] is False
+    assert reg.c.get("/api/ai/status", headers=h).json()["plan"] == "own"
+    assert reg.c.delete("/api/me/ai-key", headers=h).status_code == 200 and reg.c.get("/api/ai/status", headers=h).json()["plan"] == "lite"
 
 def test_ai_endpoint_uses_the_users_own_key(reg, monkeypatch):
     from tests.test_access import CSV, ids, enrol
@@ -116,9 +116,9 @@ def test_ai_endpoint_uses_the_users_own_key(reg, monkeypatch):
     h = signed_up(reg)
     with Session_() as s: uid = s.query(User).filter_by(email="asha@college.edu").one().id
     enrol("asha@college.edu", i["prog"]["Mech"], 1)
-    r = reg.c.get(f"/api/topics/{t}/ai/explain", headers=h); assert r.status_code == 503 and r.json()["detail"] == main.NEEDS_OWN_KEY and seen == []
+    r = reg.c.get(f"/api/topics/{t}/ai/explain", headers=h); assert r.status_code == 200 and seen == ["Bearer sk-shared-admin-key-123456"]  # lite: the shared key
     reg.c.put("/api/me/ai-key", headers=h, json={"key": "sk-" + "q" * 30}); seen.clear()
-    r = reg.c.get(f"/api/topics/{t}/ai/explain", headers=h); assert r.status_code == 200 and seen == ["Bearer sk-" + "q" * 30]
+    r = reg.c.get(f"/api/topics/{t}/ai/answer", headers=h); assert r.status_code == 200 and seen == ["Bearer sk-" + "q" * 30]  # a new answer: their own key
 
 def test_admin_sees_registration_details_and_migration_adds_columns(reg, tmp_path):
     signed_up(reg); rows = reg.c.get("/api/admin/users?q=21CS001", headers=reg.admin).json()

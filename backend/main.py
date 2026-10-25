@@ -40,7 +40,8 @@ class User(Base):
     program_id = Column(Integer, nullable=True, index=True)  # which program the student is enrolled in (no FK: users and programs reference each other)
     semester = Column(Integer, nullable=True)  # current semester, year or grade, 1 to 12
     institution = Column(String(150), nullable=True); id_number = Column(String(60), nullable=True); phone = Column(String(30), nullable=True)  # given at self-registration
-    self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email; they use their own AI key, never the shared one
+    self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email: "lite" on the college's AI key, unless they bring their own key or are made pro
+    pro_until = Column(DateTime, nullable=True)  # a self-registered person an admin made "pro": the college's AI key with the usual limits until then
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
     digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)
     lang = Column(String(5), nullable=True)  # the language of the app's screens and AI answers for them: en, ar or ta (null = English)  # a daily email of new notifications, if they asked for it; when it last went
@@ -154,6 +155,15 @@ class ActivityDay(Base):  # one row per student per local day they opened topics
     __tablename__ = "activity_days"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); day = Column(Date); reads = Column(Integer, default=0)
     __table_args__ = (UniqueConstraint("user_id", "day", name="uq_activity_user_day"),)
+class LiteUse(Base):  # a lite (self-registered) person's free AI use on one local day: searches asked and minutes spent learning with AI
+    __tablename__ = "lite_use"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); day = Column(Date)
+    searches = Column(Integer, default=0); minutes = Column(Integer, default=0); last_min = Column(Integer, default=0)  # last_min: the minute (since 1970) last counted
+    __table_args__ = (UniqueConstraint("user_id", "day", name="uq_lite_user_day"),)
+class MoreRequest(Base):  # a lite person asking the admin for more AI; closed when an admin makes them pro (or they bring their own key)
+    __tablename__ = "more_requests"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    note = Column(String(300), nullable=True); at = Column(DateTime, default=dt.datetime.utcnow); done_at = Column(DateTime, nullable=True)
 class Routine(Base):  # when and how long a student studies; each day's plan is worked out from it
     __tablename__ = "routines"
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
@@ -346,7 +356,7 @@ class MailLog(Base):  # what was sent, to whom and whether it went: never the te
     __tablename__ = "mail_log"
     id = Column(Integer, primary_key=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
     kind = Column(String(20)); to = Column(String(190)); ok = Column(Boolean, default=True); error = Column(String(300), nullable=True)
-MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test"}
+MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test", "pro": "More AI given"}
 class MailError(Exception): pass  # a message written for the admin
 def site_url(s): return (setting(s, "app_url") or os.getenv("APP_URL") or "").rstrip("/")
 def mail_conf(s):
@@ -643,7 +653,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
                                                                                      ("users", "digest", "TINYINT(1) NOT NULL DEFAULT 0"), ("users", "digest_at", "DATETIME NULL"))]),
               ("0023_users_lang", _addcol("users", "lang", "VARCHAR(5) NULL")),
               ("0024_answer_authors", lambda c: [_addcol(t, "author_id", "INTEGER NULL")(c) for t in ("search_answers", "doubt_answers", "ai_cache")]),
-              ("0025_egress_tokens", lambda c: [_addcol("ai_egress", "tokens", "INTEGER NOT NULL DEFAULT 0")(c), _addcol("ai_egress", "own", "BOOLEAN NOT NULL DEFAULT 0")(c)])]
+              ("0025_egress_tokens", lambda c: [_addcol("ai_egress", "tokens", "INTEGER NOT NULL DEFAULT 0")(c), _addcol("ai_egress", "own", "BOOLEAN NOT NULL DEFAULT 0")(c)]),
+              ("0026_users_pro_until", _addcol("users", "pro_until", "DATETIME NULL"))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -853,9 +864,10 @@ class UserPatch(BaseModel):
 USORT = {"name": (func.lower(User.name),), "role": (User.role, func.lower(User.name)), "program": (func.lower(func.coalesce(Program.name, "~")), User.semester, func.lower(User.name)),
          "semester": (func.coalesce(User.semester, 99), func.lower(User.name)), "newest": (User.id.desc(),)}
 def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester,
-                           "self_registered": bool(u.self_registered), "institution": u.institution, "id_number": u.id_number, "phone": u.phone, "own_ai_key": bool(u.ai_key)}
+                           "self_registered": bool(u.self_registered), "institution": u.institution, "id_number": u.id_number, "phone": u.phone, "own_ai_key": bool(u.ai_key),
+                           "plan": ai_plan(u), "pro_until": utc_iso(u.pro_until) if pro_active(u) else None}
 @app.get("/api/admin/users")
-def users(q: str = "", program_id: int | None = None, semester: int | None = None, role: str = "", order: str = "role", limit: int = 50, offset: int = 0,
+def users(q: str = "", program_id: int | None = None, semester: int | None = None, role: str = "", order: str = "role", limit: int = 50, offset: int = 0, plan: str = "",
           _: User = Depends(admin), s: Session = Depends(db)):
     qs = s.query(User, Program.name).outerjoin(Program, Program.id == User.program_id)
     if q.strip():
@@ -867,8 +879,13 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
     if program_id is not None: qs = qs.filter(User.program_id == program_id)
     if semester is not None: qs = qs.filter(User.semester == semester)
     if role: qs = qs.filter(User.role == role)
+    now = dt.datetime.utcnow(); asking = s.query(MoreRequest.user_id).filter(MoreRequest.done_at.is_(None))
+    if plan == "asked": qs = qs.filter(User.id.in_(asking))  # self-registered people asking for more AI
+    elif plan == "pro": qs = qs.filter(User.self_registered == True, User.pro_until > now)  # noqa: E712
+    elif plan == "lite": qs = qs.filter(User.self_registered == True, User.ai_key.is_(None), or_(User.pro_until.is_(None), User.pro_until <= now))  # noqa: E712
     rows = qs.order_by(*USORT.get(order, USORT["role"]), User.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
-    return {"total": qs.count(), "items": [urow(u, pn) for u, pn in rows]}
+    asked = {i for (i,) in asking.filter(MoreRequest.user_id.in_([u.id for u, _ in rows] or [0]))}
+    return {"total": qs.count(), "items": [{**urow(u, pn), "asked": u.id in asked} for u, pn in rows]}
 @app.get("/api/admin/users/{uid}")
 def user_detail(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
@@ -877,7 +894,8 @@ def user_detail(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     live = live_topic_ids(s, [c.id for c in live_courses(a, s)])  # same rule as the Reports screens
     n, reads, last = s.query(func.count(Progress.id), func.coalesce(func.sum(Progress.reads), 0), func.max(Progress.last_read)).filter(Progress.user_id == uid, Progress.topic_id.in_(live)).one()
     recent = s.query(Topic.title, Progress.reads, Progress.last_read).join(Progress, Progress.topic_id == Topic.id).filter(Progress.user_id == uid, Topic.id.in_(live)).order_by(Progress.last_read.desc()).limit(500).all()
-    return {**urow(u, prog.name if prog else None), "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
+    req = s.query(MoreRequest).filter_by(user_id=uid, done_at=None).order_by(MoreRequest.id.desc()).first()
+    return {**urow(u, prog.name if prog else None), "asked": {"at": req.at.isoformat() + "Z", "note": req.note or ""} if req else None, "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
             "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
             "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)]}  # the courses they own
 class CoursesIn(BaseModel): course_ids: list[int]
@@ -1122,7 +1140,7 @@ async def deepseek(key, model, messages, max_tokens=None, timeout=45):
     return checked(text), j.get("usage", {}).get("total_tokens", 0)
 VISION_MODEL = "claude-opus-5-5"  # the default model for photos of diagrams; an admin can choose another under Settings
 def vision_key(s): return setting(s, "vision_key") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-def vision_on(u, s): return bool(vision_key(s)) and not u.self_registered  # the college's Claude key; self-registered people bring only a DeepSeek key
+def vision_on(u, s): return bool(vision_key(s)) and (not u.self_registered or pro_active(u))  # the college's Claude key: not for lite people, whose own key can only be DeepSeek
 REFUSED = "I can't help with that photo. Ask me about something you are studying."
 async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
     """The only way a photo leaves the server: to Claude, which can see diagrams. Like deepseek(), the built-in safety rules come first,
@@ -1139,12 +1157,12 @@ async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
     return checked(out), (r.usage.input_tokens or 0) + (r.usage.output_tokens or 0)
 def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
     return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
-def key_for(u, s):  # self-registered people use their own key and never the shared one; everyone else uses the admin's
-    return unseal(u.ai_key) if u.self_registered and u.ai_key else "" if u.self_registered else ai_key(s)
+def key_for(u, s):  # a self-registered person's own key when they saved one; otherwise the admin's (for lite people, within the free daily allowance)
+    return unseal(u.ai_key) if u.self_registered and u.ai_key else ai_key(s)
 NEEDS_OWN_KEY = "Add your own DeepSeek API key under AI key in the menu to use AI help."
 @app.get("/api/ai/status")
 def ai_status(u: User = Depends(me), s: Session = Depends(db)):
-    return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered), "vision": vision_on(u, s), "ocr": ocr_ready()}
+    return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered), "vision": vision_on(u, s), "ocr": ocr_ready(), "plan": ai_plan(u)}
 class OwnKey(BaseModel): key: str
 KEY_TRIES = 10  # saving a key checks it with DeepSeek; at most this many tries an hour per person
 @app.get("/api/me/ai-key")
@@ -1162,7 +1180,7 @@ async def set_my_ai_key(b: OwnKey, u: User = Depends(me), s: Session = Depends(d
     try: await deepseek(k, setting(s, "model", "deepseek-chat"), [{"role": "user", "content": "Reply with the word OK."}], max_tokens=5, timeout=20)
     except httpx.HTTPStatusError as e: raise HTTPException(400, "DeepSeek rejected this key (" + str(e.response.status_code) + ")." + (" Check that you copied it correctly." if e.response.status_code in (401, 403) else " Check your DeepSeek balance."))
     except Exception: raise HTTPException(400, "Could not reach DeepSeek to check the key. Try again in a moment.")
-    me_row = s.get(User, u.id); me_row.ai_key = seal(k); s.commit()
+    me_row = s.get(User, u.id); me_row.ai_key = seal(k); close_requests(s, u.id); s.commit()
     return {"ok": True, "key_hint": "…" + k[-4:]}
 @app.delete("/api/me/ai-key")
 def delete_my_ai_key(u: User = Depends(me), s: Session = Depends(db)):
@@ -1171,6 +1189,7 @@ class Cfg(BaseModel):
     deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False; self_registration: bool | None = None; allowed_domains: str | None = None
     vision_key: str | None = None; vision_model: str | None = None; remove_vision_key: bool = False
     budget_deepseek: int | None = None; budget_claude: int | None = None  # tokens a month on the college's keys; 0 means no limit
+    lite_searches: int | None = None; lite_minutes: int | None = None  # the free daily allowance of self-registered (lite) people
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
@@ -1178,7 +1197,8 @@ def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     return {"mail_on": mail_on(s), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
             "vision_set": bool(vk), "vision_hint": ("…" + vk[-4:]) if vk else "", "vision_model": setting(s, "vision_model", VISION_MODEL), "ocr": ocr_ready(),
             "budget": {p: budget(s, p) for p in ("deepseek", "claude")},
-            "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count()}
+            "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count(),
+            "lite": dict(zip(("searches", "minutes"), lite_limits(s)))}
 @app.put("/api/admin/settings")
 def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
@@ -1192,6 +1212,10 @@ def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     for k, v in (("vision_key", b.vision_key), ("vision_model", b.vision_model)):
         if v and v.strip() and not (k == "vision_key" and b.remove_vision_key): s.merge(Setting(k=k, v=v.strip()))
     if b.self_registration is not None: s.merge(Setting(k="self_registration", v="1" if b.self_registration else "0"))
+    for k, v in (("lite_searches", b.lite_searches), ("lite_minutes", b.lite_minutes)):
+        if v is not None:
+            if not 0 <= v <= 1000: raise HTTPException(400, "Enter a number from 0 to 1000")
+            s.merge(Setting(k=k, v=str(v)))
     if b.allowed_domains is not None:
         doms = [d.lstrip("@") for d in re.split(r"[,\s]+", b.allowed_domains.lower()) if d]
         if not all(re.fullmatch(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}", d) for d in doms): raise HTTPException(400, "Enter email domains such as college.edu, separated by commas")
@@ -1444,6 +1468,8 @@ def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs 
         add("unowned", len(noown), f"{len(noown)} course{'s have' if len(noown) != 1 else ' has'} no owner, so only admins can edit: " + ", ".join(c.name for c in noown[:5]))
         unplaced = stu.filter(or_(User.program_id.is_(None), User.semester.is_(None))).count()
         add("unenrolled", unplaced, f"{unplaced} active student{'s are' if unplaced != 1 else ' is'} not placed in a program and semester or year, so they see nothing")
+        more = s.query(func.count(func.distinct(MoreRequest.user_id))).filter(MoreRequest.done_at.is_(None)).scalar()
+        add("more_ai", more, f"{more} self-registered {'people ask' if more != 1 else 'person asks'} for more AI (Users > Asked for more)")
         nonum = s.query(Semester).filter(Semester.semester_no.is_(None)).count()
         add("semester_numbers", nonum, f"{nonum} semester{'s have' if nonum != 1 else ' has'} no semester number (set it under Programs)")
         quiet = stu.filter(User.id.notin_(s.query(Progress.user_id))).count()
@@ -2949,6 +2975,83 @@ def key_or_fail(u, s):  # without a key AI is off, even for saved answers
     if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
     if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")
     return key
+# ---- plans for self-registered people. Lite: the college's AI key with a small free allowance each local day (searches, and minutes of learning with AI).
+# ---- Own key: their own DeepSeek key, no allowance. Pro: an admin lets them use the college's key like a college student until a date.
+# ---- Students the college added are not affected. Saved answers never count: they cost nothing.
+LITE_SEARCH_KINDS = ("search", "photo", "doubt")  # asking the AI a question; everything else (topic steps, explanations, own courses, translations) is learning time
+def pro_active(u): return bool(u.pro_until and u.pro_until > dt.datetime.utcnow())
+def ai_plan(u): return "college" if not u.self_registered else "own" if u.ai_key else "pro" if pro_active(u) else "lite"
+def lite_limits(s):
+    def num(k, d):
+        try: return max(0, int(setting(s, k) or d))
+        except ValueError: return d
+    return num("lite_searches", 10), num("lite_minutes", 20)
+def lite_row(s, u):
+    day = local_day(dt.datetime.utcnow()); r = s.query(LiteUse).filter_by(user_id=u.id, day=day).first()
+    if r: return r
+    try:
+        with s.begin_nested(): s.add(LiteUse(user_id=u.id, day=day, searches=0, minutes=0, last_min=0))
+    except IntegrityError: pass  # another request made today's row first
+    return s.query(LiteUse).filter_by(user_id=u.id, day=day).one()
+def lite_tick(s, u):  # counts the current minute once, however many requests or heartbeats fall in it
+    r = lite_row(s, u); m = int(time.time() // 60)
+    if r.last_min != m: r.minutes = (r.minutes or 0) + 1; r.last_min = m
+    s.commit(); return r
+LITE_MORE = " Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+def lite_search_or_fail(u, s):
+    if ai_plan(u) != "lite": return
+    r = lite_row(s, u); limit = lite_limits(s)[0]
+    if (r.searches or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free AI searches." + LITE_MORE)
+    r.searches = (r.searches or 0) + 1; s.commit()
+def lite_time_or_fail(u, s):
+    if ai_plan(u) != "lite": return
+    r = lite_row(s, u); limit = lite_limits(s)[1]
+    if (r.minutes or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free minutes of learning with AI." + LITE_MORE)
+    lite_tick(s, u)
+def plan_json(u, s):
+    p = ai_plan(u); out = {"plan": p, "pro_until": utc_iso(u.pro_until) if p == "pro" else None}
+    if p == "lite":
+        r = s.query(LiteUse).filter_by(user_id=u.id, day=local_day(dt.datetime.utcnow())).first(); ls, lm = lite_limits(s)
+        out.update(searches_used=r.searches if r else 0, searches_limit=ls, minutes_used=r.minutes if r else 0, minutes_limit=lm,
+                   asked=s.query(MoreRequest.id).filter_by(user_id=u.id, done_at=None).first() is not None)
+    return out
+def close_requests(s, uid): s.query(MoreRequest).filter(MoreRequest.user_id == uid, MoreRequest.done_at.is_(None)).update({"done_at": dt.datetime.utcnow()}, synchronize_session=False)
+@app.get("/api/me/plan")
+def my_plan(u: User = Depends(me), s: Session = Depends(db)): return plan_json(u, s)
+@app.post("/api/me/plan/tick")
+def plan_tick(u: User = Depends(me), s: Session = Depends(db)):  # sent each minute while a learning screen is open; only lite time is counted
+    if ai_plan(u) == "lite": lite_tick(s, u)
+    return plan_json(u, s)
+class MoreIn(BaseModel): note: str = ""
+@app.post("/api/me/plan/request")
+def ask_for_more(b: MoreIn, u: User = Depends(me), s: Session = Depends(db)):
+    if ai_plan(u) != "lite": raise HTTPException(400, "Your plan already has no daily limit")
+    if s.query(MoreRequest.id).filter_by(user_id=u.id, done_at=None).first(): return {"ok": True, "message": "Your request is with your admin."}
+    if s.query(func.count(MoreRequest.id)).filter(MoreRequest.user_id == u.id, MoreRequest.at >= dt.datetime.utcnow() - dt.timedelta(days=1)).scalar() >= 3:
+        raise HTTPException(429, "You have asked a few times today. Your admin will see it.")
+    s.add(MoreRequest(user_id=u.id, note=" ".join((b.note or "").split())[:300] or None)); s.commit()
+    return {"ok": True, "message": "Sent. Your admin will see your request."}
+class ProIn(BaseModel): days: int | None = None; until: str | None = None; end: bool = False
+@app.put("/api/admin/users/{uid}/pro")
+def make_pro(uid: int, b: ProIn, bg: BackgroundTasks, a: User = Depends(admin), s: Session = Depends(db)):
+    u = s.get(User, uid)
+    if not u: raise HTTPException(404, "No such user")
+    if not u.self_registered: raise HTTPException(400, "Only self-registered people have a plan. Students your college added already use the college's AI.")
+    if b.end: u.pro_until = None; s.commit(); return urow(u, None)
+    if b.days is not None:
+        if not 1 <= b.days <= 3660: raise HTTPException(400, "Choose between 1 day and 10 years")
+        until = dt.datetime.utcnow() + dt.timedelta(days=b.days)
+    else:
+        try: d = dt.date.fromisoformat((b.until or "").strip())
+        except ValueError: raise HTTPException(400, "Choose the last day of pro, or a number of days")
+        if d < local_day(dt.datetime.utcnow()): raise HTTPException(400, "Choose a day from today on")
+        until = dt.datetime.combine(d + dt.timedelta(days=1), dt.time()) - dt.timedelta(minutes=DAY_OFFSET)  # the end of that day, in the students' local time
+    u.pro_until = until; close_requests(s, u.id); s.commit()
+    if mail_on(s): bg.add_task(deliver_pro, u.email, u.name, local_day(until - dt.timedelta(seconds=1)))
+    return urow(u, None)
+def deliver_pro(email, name, last_day):
+    try: send_mail(email, f"More AI on {APP_NAME}", f"Hi {name},\n\nYour admin has given you more AI help on {APP_NAME}: no daily limit until {last_day.strftime('%d %B %Y')}.\n\nEnjoy your studies.\n", kind="pro")
+    except MailError: pass
 # ---- rewards for sharing: nothing to do by hand. When others are shown an answer a student's own search, doubt or highlight first brought,
 # ---- each person counts once a day per answer; every SHARE_USES uses earn SHARE_POINTS points. Others never see who asked first.
 SHARE_USES, SHARE_POINTS = 1000, 100
@@ -2972,7 +3075,7 @@ def rewards(s, uid):
 def my_profile(u: User = Depends(me), s: Session = Depends(db)):
     pr = s.get(Program, u.program_id) if u.program_id else None
     return {"name": u.name, "email": u.email, "role": u.role, "lang": u.lang or "en", "program": pr.name if pr else "", "semester": u.semester, "term": term_label(pr) if pr else "",
-            "self_registered": bool(u.self_registered), **({"rewards": rewards(s, u.id)} if u.role == "student" else {})}
+            "self_registered": bool(u.self_registered), "ai": plan_json(u, s), **({"rewards": rewards(s, u.id)} if u.role == "student" else {})}
 def own_key(u): return bool(u.self_registered and u.ai_key)  # paying with their own DeepSeek key: outside the college's allowance
 def egress(s, u, kind, topic_id, chars, ok, tokens=0):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
     try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok, tokens=tokens or 0, own=own_key(u) and kind != "vision")); s.commit()
@@ -2995,18 +3098,19 @@ def budget_or_fail(u, s, provider):
 async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60, kind="other", topic_id=None):
     size = len(system) + len(msg)
     if not own_key(u): budget_or_fail(u, s, "deepseek")
+    if kind not in LITE_SEARCH_KINDS: lite_time_or_fail(u, s)  # searches were counted when asked
     try:
         out = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
         egress(s, u, kind, topic_id, size, True, out[1]); return out
     except httpx.HTTPStatusError as e:
         egress(s, u, kind, topic_id, size, False)
         log.warning("DeepSeek answered %s", e.response.status_code)
-        if u.self_registered: raise HTTPException(503, f"DeepSeek refused your key ({e.response.status_code}). Check it, or your DeepSeek balance, under AI key in the menu.")
+        if own_key(u): raise HTTPException(503, f"DeepSeek refused your key ({e.response.status_code}). Check it, or your DeepSeek balance, under AI key in the menu.")
         raise ai_down(u, "DeepSeek refused the request (" + str(e.response.status_code) + "). Check the key, model name and balance under AI config.")
     except Exception as e:
         egress(s, u, kind, topic_id, size, False)
         log.warning("DeepSeek call failed: %s", type(e).__name__)
-        if u.self_registered: raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
+        if own_key(u): raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
         raise ai_down(u, "DeepSeek did not answer.")
 def topic_msg(f, kind, mine=None):  # what the AI is told about a topic
     body = words_of(f["content"], f["content_format"])  # the AI gets the words of an HTML topic, not its tags or scripts
@@ -3193,7 +3297,7 @@ async def doubt_ask(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = De
     """Step two, only when the app's own copy did not clear it up: the AI gets the program, semester, course and topic names and the phrase. Not the topic's text, not the student's notes."""
     t = doubt_topic(tid, u, s); phrase = doubt_phrase(b)
     if crisis(phrase): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}
-    key = key_or_fail(u, s); prompt, qh = doubt_key(u, t, phrase, s)
+    key = key_or_fail(u, s); lite_search_or_fail(u, s); prompt, qh = doubt_key(u, t, phrase, s)
     hit = s.query(DoubtAnswer).filter_by(qhash=qh).first()
     if hit: hit.hits += 1; s.commit(); note_use(s, u, "doubt", hit.id, hit.author_id); return {"text": hit.text, "cached": True}
     if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= DOUBT_DAILY:  # noqa: E712
@@ -3244,6 +3348,8 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
     if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind.in_(("photo", "vision")), AIEgress.ok == True,  # noqa: E712
                                                                     AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= PHOTO_DAILY:
         raise HTTPException(429, f"You have used today's {PHOTO_DAILY} photo questions. Try again tomorrow.")
+    if not see: key_or_fail(u, s)  # before counting a lite search, so a missing key doesn't use one up
+    lite_search_or_fail(u, s)
     who = ""
     if u.role == "student" and u.program_id:
         pr = s.get(Program, u.program_id); who = f"Student's program: {pr.name if pr else ''}" + (f", {term_label(pr)} {u.semester}" if u.semester else "") + "\n"
@@ -3361,7 +3467,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     q = " ".join(b.q.split())
     if not 2 <= len(q) <= 200: raise HTTPException(400, "Type what you want to look up (2 to 200 characters)")
     if crisis(q): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}  # answered with care at once: no AI, nothing saved or logged
-    key = key_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
+    key = key_or_fail(u, s); lite_search_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
         if hit: hit.hits += 1; s.commit(); note_use(s, u, "search", hit.id, hit.author_id); return {"text": hit.text, "cached": True, "id": hit.id}

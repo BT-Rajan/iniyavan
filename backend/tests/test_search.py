@@ -62,12 +62,15 @@ def test_ai_search_needs_a_key_and_respects_the_daily_limit(env, monkeypatch):
     assert ask(env, "one question", refresh=True).status_code == 429
     assert ask(env, "three question", h=env.admin).status_code == 200  # staff aren't limited
 
-def test_provider_errors_are_clean_and_self_registered_people_use_their_own_key(env, monkeypatch):
+def test_provider_errors_are_clean_and_a_lite_person_without_any_key_is_told_to_add_one(env, monkeypatch):
     ai_env(env, monkeypatch); FakeClient.mode = "500"; r = ask(env, "some question"); assert r.status_code == 503 and "500" not in r.json()["detail"]
     with Session_() as s:
         s.add(User(name="Self", email="self@x.com", pw=main.hp("pw1234567"), role="student", self_registered=True)); s.commit()
     h = env.login("self@x.com", "pw1234567") if "pw" in env.login.__code__.co_varnames else None
-    if h: FakeClient.mode = "ok"; assert ask(env, "some question", h=h).json()["detail"] == main.NEEDS_OWN_KEY
+    if h:
+        FakeClient.mode = "ok"; assert ask(env, "some question", h=h).status_code == 200  # lite: the admin's key
+        with Session_() as s: s.query(Setting).filter_by(k="deepseek_key").delete(); s.commit()
+        assert ask(env, "another question", h=h).json()["detail"] == main.NEEDS_OWN_KEY  # no admin key at all: bring your own
 
 class Spy(FakeClient):
     sent = []

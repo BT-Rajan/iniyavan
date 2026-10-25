@@ -101,6 +101,7 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit) {
     var marked by remember(t) { mutableStateOf(t?.bookmarked ?: false) }
     var status by remember(t) { mutableStateOf(t?.status ?: "not_started") }
     LaunchedEffect(id) { runCatching { a.raw("POST", "/topics/$id/read") } } // opening a topic starts it; it never completes it
+    LearnClock()
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val student = me.role == "student"
     Scaffold(Modifier.nestedScroll(scroll.nestedScrollConnection), snackbarHost = { SnackbarHost(snack) }, topBar = {
