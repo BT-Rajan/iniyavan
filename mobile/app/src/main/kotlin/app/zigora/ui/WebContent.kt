@@ -85,6 +85,7 @@ fun WebContent(text: String, format: String = "markdown", modifier: Modifier = M
         WebView(ctx).apply {
             setBackgroundColor(0)
             settings.javaScriptEnabled = true; settings.allowFileAccess = false; settings.allowContentAccess = false
+            settings.textZoom = 100  // the page scales its own text by the phone's font size (fontScale below), once
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE // images from a college server without https
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(v: WebView, r: WebResourceRequest) = loader.shouldInterceptRequest(r.url)

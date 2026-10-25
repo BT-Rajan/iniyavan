@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package app.zigora.ui
 
 import android.net.Uri
@@ -126,7 +128,7 @@ fun MyMaterialScreen(cid: Int, name: String, back: () -> Unit) {
                     IconButton(enabled = busy.isEmpty(), onClick = { run("drop") { a.raw("DELETE", "$base/sources/$i") } }) { Icon(Icons.Filled.Close, stringResource(R.string.remove_name, x.name)) }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {  // buttons go to a new line rather than squeeze their text
                 OutlinedButton(enabled = busy.isEmpty(), onClick = { picker.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "text/markdown")) }) {
                     Icon(Icons.Outlined.UploadFile, null); Text(" " + stringResource(if (busy == "file") R.string.reading else R.string.add_a_file)) }
                 OutlinedButton(enabled = busy.isEmpty(), onClick = { paste = "" }) { Text(stringResource(R.string.paste_text)) }

@@ -69,3 +69,11 @@ if('serviceWorker' in navigator)navigator.serviceWorker.getRegistrations().then(
 // sections fade in as they come into view
 var io='IntersectionObserver' in window?new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12}):null
 document.querySelectorAll('.reveal').forEach(function(e){io?io.observe(e):e.classList.add('in')})
+// the menu on small screens: the section links and "Open Zigora" in a panel under the header
+;(function(){var h=document.querySelector('header'),b=document.querySelector('.mbtn');if(!h||!b)return
+  function set(o){h.classList.toggle('open',o);b.setAttribute('aria-expanded',String(o))}
+  b.addEventListener('click',function(){set(!h.classList.contains('open'))})
+  document.querySelectorAll('.mnav a').forEach(function(a){a.addEventListener('click',function(){set(false)})})
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')set(false)})
+  document.addEventListener('click',function(e){if(!h.contains(e.target))set(false)})
+})()

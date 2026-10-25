@@ -101,7 +101,7 @@ fun SignIn(done: (Me) -> Unit) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Gap(32)
-            Image(painterResource(R.drawable.ic_splash), null, Modifier.size(96.dp))
+            Image(painterResource(R.drawable.ic_logo), null, Modifier.size(72.dp))
             Text(college ?: stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
             Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 val emailField = @Composable {
@@ -158,7 +158,8 @@ fun SignIn(done: (Me) -> Unit) {
                         TextButton(onClick = { mode = "register"; code = ""; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.change_my_details)) }
                     }
                     else -> {
-                        Quiet(stringResource(R.string.signin_lead))
+                        Text(stringResource(R.string.signin_lead), Modifier.fillMaxWidth().padding(bottom = 8.dp), style = MaterialTheme.typography.bodyLarge,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         if (editing) {
                             OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.college_address)) },
                                 supportingText = { Text(stringResource(R.string.college_address_hint)) }, singleLine = true,

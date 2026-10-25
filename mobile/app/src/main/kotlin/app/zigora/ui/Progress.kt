@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Print
@@ -145,28 +146,28 @@ private fun Bookmarks(openTopic: (Int) -> Unit, sub: (String) -> Unit) {
         val co = sm.courses.firstOrNull { it.id == course } ?: sm.courses.first()
         FlowRow(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             sems.forEach { x -> FilterChip(selected = x.id == sm.id, onClick = { sem = x.id; course = null },
-                                            label = { Text((if (multi) x.prog + " · " else "") + tl(x.name) + "  " + x.courses.sumOf { marks(it).size }) }) }
+                                            label = { Text((if (multi) x.prog + " · " else "") + tl(x.name)) }, trailingIcon = { Count(x.courses.sumOf { marks(it).size }) }) }
         }
         PrimaryScrollableTabRow(selectedTabIndex = sm.courses.indexOf(co), edgePadding = 0.dp) {
-            sm.courses.forEach { c -> Tab(selected = c.id == co.id, onClick = { course = c.id }, text = { Text(c.name + "  " + marks(c).size) }) }
+            sm.courses.forEach { c -> Tab(selected = c.id == co.id, onClick = { course = c.id }, text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(c.name, maxLines = 1); Count(marks(c).size) } }) }
         }
         if (msg.isNotEmpty()) Quiet(msg)
         val rows = marks(co)
         Paged(rows, key = co.id) { m ->
             val i = rows.indexOf(m)
             if (i == 0 || rows[i - 1].unit != m.unit) SectionTitle(m.unit)
-            Panel(onClick = { openTopic(m.t.id) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Dot(m.t.title, CourseColors[i % CourseColors.size])
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { Text(m.t.title, style = MaterialTheme.typography.titleSmall); StatusLine(m.t.status) }
-                    IconButton(onClick = { scope.launch {
-                        try { a.raw("DELETE", "/topics/${m.t.id}/bookmark"); gone = gone + m.t.id; msg = tl("Bookmark removed") } catch (e: Exception) { msg = e.message.orEmpty() }
-                    } }) { Icon(Icons.Filled.Bookmark, tl("Remove bookmark: {title}", "title" to m.t.title), tint = MaterialTheme.colorScheme.primary) }
-                }
-            }
+            ListRow(m.t.title, onClick = { openTopic(m.t.id) }, leading = { Dot(m.t.title, CourseColors[i % CourseColors.size]) }, extra = { StatusLine(m.t.status) },
+                trailing = { IconButton(onClick = { scope.launch {
+                    try { a.raw("DELETE", "/topics/${m.t.id}/bookmark"); gone = gone + m.t.id; msg = tl("Bookmark removed") } catch (e: Exception) { msg = e.message.orEmpty() }
+                } }) { Icon(Icons.Filled.Bookmark, tl("Remove bookmark: {title}", "title" to m.t.title), tint = MaterialTheme.colorScheme.primary) } })
         }
     }
 }
+
+/** a small count beside a label */
+@Composable
+fun Count(n: Int) = androidx.compose.material3.Badge(Modifier.padding(start = 6.dp), containerColor = MaterialTheme.colorScheme.secondaryContainer,
+    contentColor = MaterialTheme.colorScheme.onSecondaryContainer) { Text("$n") }
 
 /** only what the student marked as learned; nothing for the rest */
 @Composable
@@ -203,7 +204,6 @@ private fun MyHighlights(openTopic: (Int) -> Unit, sub: (String) -> Unit) {
                onSaved = { tick++ }, topicId = h.topic_id, onDrop = { scope.launch {
                    try { a.raw("DELETE", "/me/highlights/${h.id}"); msg = tl("Highlight removed"); tick++ } catch (e: Exception) { msg = e.message.orEmpty() }
                } })
-        HorizontalDivider()
     }
     if (list.isEmpty()) Quiet(if (q.isNotEmpty() || color.isNotEmpty()) tl("No highlight matches.") else tl("No highlights yet. Open a topic, select some text and pick a colour."))
     val total = (l.state as? Load.Ok)?.value?.total ?: 0
@@ -231,10 +231,9 @@ fun ProgressScreen(openTopic: (Int) -> Unit, openRoutine: () -> Unit, openScores
         SectionTitle(tl("Study routine"))
         RowLink(tl("Set or change your study days"), tl("Optional. Some people like a rhythm; nothing changes unless you set one."), openRoutine)
         var open by rememberSaveable { mutableStateOf(false) }
-        TextButton(onClick = { open = !open }, modifier = Modifier.padding(top = 8.dp)) {
-            Text(tl("Test results"), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
-        }
+        SectionTitle(tl("Test results"))
+        ListRow(tl("Scores"), onClick = { open = !open }, leading = { RowIcon(Icons.Outlined.Assessment) },
+                trailing = { Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null) })
         if (open) MyScores(openScores)
         AdaptCard()
     }
@@ -245,7 +244,6 @@ private fun MyScores(open: (Int) -> Unit) {
     val d = rememberLoad("scores") { get("/me/scores", Scores.serializer()) }
     val x = (d.state as? Load.Ok)?.value ?: return
     if (x.courses.isEmpty()) { Quiet(tl("No test results yet.")); return }
-    SectionTitle(tl("Scores"))
     Paged(x.courses, key = "sc") { c ->
         RowLink(c.course, (if (c.final == null) tl("No tests taken yet") else tl("Final score {final}%", "final" to c.final)) + " " +
                 tl("· {taken} of {length} taken · {passed} passed", "taken" to c.taken, "length" to c.tests.size, "passed" to c.passed), { open(c.course_id) }) {
@@ -358,7 +356,7 @@ fun Option(k: Int, text: String, img: String, state: OptState, tag: String = "",
         OptState.Ok -> Color(0x332E7D5B) to Color(0xFF2E7D5B)
         OptState.Bad -> cs.errorContainer to cs.error
         OptState.Picked -> cs.primaryContainer to cs.primary
-        OptState.Plain -> cs.surface to cs.outlineVariant
+        OptState.Plain -> cs.surface to cs.outline
     }
     val shape = RoundedCornerShape(12.dp)
     val body = @Composable {
@@ -533,11 +531,13 @@ fun RevisionScreen(uid: Int, back: () -> Unit) {
 @Composable
 private fun RevSection(t: RevTopic, g: JsonObject?, writing: Boolean) = Column(Modifier.padding(top = 16.dp)) {
     Text(t.title, style = MaterialTheme.typography.titleMedium)
-    if (g != null) g.texts("points").forEach { p -> Row { Text("•  "); Md(p) } }
+    if (g != null) g.texts("points").forEach { p ->  // short plain points, shown as on the topic page's gist
+        Row(Modifier.padding(top = 4.dp)) { Text("•", Modifier.padding(end = 10.dp)); Text(p.replace(Regex("""\*\*|__|`"""), "")) }
+    }
     else Quiet(if (writing) tl("Writing…") else tl("No gist yet. Open the topic once to make it."))
     g?.text("hook")?.takeIf { it.isNotEmpty() }?.let { Text(tl("Ask yourself") + ": " + it, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp)) }
     if (t.highlights.isNotEmpty()) {
-        Text(tl("Your highlights"), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+        Text(tl("Your highlights"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
         t.highlights.forEach { Quiet("•  $it") }
     }
     HorizontalDivider(Modifier.padding(top = 12.dp))

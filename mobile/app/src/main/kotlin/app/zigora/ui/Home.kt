@@ -20,6 +20,9 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.core.net.toUri
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,6 +81,7 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
                openSearch: () -> Unit, openRoutine: () -> Unit, openSession: (app.zigora.data.SessionItem) -> Unit, openStudy: () -> Unit,
                openOwn: (Int, Int) -> Unit, review: (Int) -> Unit) {
     val tree = rememberLoad("tree") { get("/tree", ListSerializer(ProgramNode.serializer())) }
+    val zapp = app(); androidx.compose.runtime.LaunchedEffect(tree.state) { if (tree.state !is Load.Loading) zapp.firstScreenReady.value = true }
     val today = rememberLoad("today") { get("/me/today", Today.serializer()) }
     val notes = rememberLoad("notes") { get("/me/notifications", Notes.serializer()) }
     val sme = (rememberLoad("study-me") { get("/study/me", app.zigora.data.StudyMe.serializer()) }.state as? Load.Ok)?.value
@@ -103,23 +107,16 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
                 sess?.let { SessionCard(it, openRoutine, openSession) { n -> sess = n } }
                 (today.state as? Load.Ok)?.value?.takeIf { sess?.routine == null }?.let { t ->  // with a routine, its session says what is next
                     val f = t.focus.filter { it.kind == "resume" }.maxByOrNull { it.last_read.orEmpty() } ?: t.focus.firstOrNull { it.kind == "next" }
-                    if (f?.topic_id != null) Panel(onClick = { openTopic(f.topic_id) }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.PlayArrow, null, tint = MaterialTheme.colorScheme.primary)
-                            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                                Text(f.title, style = MaterialTheme.typography.titleMedium)
-                                Quiet(stringResource(if (f.kind == "resume") R.string.where_left_off else R.string.up_next) + " · " + f.course)
-                            }
-                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
-                        }
-                    }
+                    if (f?.topic_id != null) ListRow(f.title, stringResource(if (f.kind == "resume") R.string.where_left_off else R.string.up_next) + " · " + f.course,
+                                                     onClick = { openTopic(f.topic_id) }, leading = { RowIcon(Icons.Filled.PlayArrow) })
                 }
                 RecallCard(openTopic)
                 if (sme != null && sme.courses > 0) { SectionTitle(tl("Your own courses")); LearnCard(sme, openOwn, review) }
                 Loaded(tree) { list ->
                     val courses = coursesOf(list)
                     if (sme != null && sme.courses == 0 && courses.isEmpty())
-                        RowLink(tl("Build a course from your own notes"), tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews"), openStudy)
+                        ListRow(tl("Build a course from your own notes"), tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews"), onClick = openStudy,
+                                leading = { RowIcon(Icons.Outlined.AutoStories) })
                     if (courses.isEmpty()) Quiet(stringResource(if (me.self_registered && !me.placed) R.string.not_placed else R.string.not_enrolled), Modifier.padding(top = 16.dp))
                     else {
                         SectionTitle(stringResource(R.string.my_courses))
@@ -138,19 +135,13 @@ fun CourseList(courses: List<CourseNode>, open: (Int) -> Unit) {
         val topics = c.units.flatMap { it.topics }
         val done = topics.count { it.status == "completed" }; val opened = topics.count { it.status != "not_started" }
         val i = courses.indexOf(c)
-        ListItem(
-            modifier = Modifier.fillMaxWidth().clickableRounded {
-                if (c.archived) android.widget.Toast.makeText(ctx, R.string.course_unavailable, android.widget.Toast.LENGTH_SHORT).show() else open(c.id)
-            },
-            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-            leadingContent = { if (c.archived) Icon(Icons.Outlined.Lock, null) else Dot(c.name, CourseColors[i % CourseColors.size]) },
-            headlineContent = { Text(c.name, fontWeight = FontWeight.Medium) },
-            supportingContent = {
-                if (c.archived) Text(stringResource(R.string.course_unavailable))
-                else Text(listOfNotNull(pluralStringResource(R.plurals.topics, topics.size, topics.size),
-                    if (opened > 0) stringResource(R.string.n_opened, opened) else null, if (done > 0) stringResource(R.string.n_learned, done) else null).joinToString(" · "))
-            },
-            trailingContent = { if (!c.archived) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) })
+        ListRow(c.name,
+            if (c.archived) stringResource(R.string.course_unavailable)
+            else listOfNotNull(pluralStringResource(R.plurals.topics, topics.size, topics.size),
+                if (opened > 0) stringResource(R.string.n_opened, opened) else null, if (done > 0) stringResource(R.string.n_learned, done) else null).joinToString(" · "),
+            onClick = { if (c.archived) android.widget.Toast.makeText(ctx, R.string.course_unavailable, android.widget.Toast.LENGTH_SHORT).show() else open(c.id) },
+            leading = { if (c.archived) RowIcon(Icons.Outlined.Lock) else Dot(c.name, CourseColors[i % CourseColors.size]) },
+            trailing = if (c.archived) ({}) else null)
     }
 }
 
@@ -184,8 +175,6 @@ fun UpdateCard() {
     val rel = (r.state as? Load.Ok)?.value ?: return
     if ((rel.code ?: 0) <= BuildConfig.VERSION_CODE || rel.url == null) return
     val ctx = LocalContext.current
-    Panel(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(rel.url))) }) {
-        Text(stringResource(R.string.update_ready, rel.version.orEmpty()), style = MaterialTheme.typography.titleSmall)
-        Quiet(stringResource(R.string.update_tap))
-    }
+    ListRow(stringResource(R.string.update_ready, rel.version.orEmpty()), stringResource(R.string.update_tap),
+            onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, rel.url.toUri())) }, leading = { RowIcon(Icons.Outlined.SystemUpdate) })
 }

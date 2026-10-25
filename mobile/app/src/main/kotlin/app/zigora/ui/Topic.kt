@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package app.zigora.ui
 
 import android.annotation.SuppressLint
@@ -65,6 +67,7 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -135,7 +138,7 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
                 Body(t, me, aiOn, known, openReader = { openReader(id) }, openMaterial = { openMaterial(t.course_id, t.course) })
                 if (student && aiOn) {
                     SectionTitle(stringResource(R.string.test_yourself))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {  // buttons go to a new line rather than squeeze their text
                         listOf("mcq" to R.string.five_quick, "quiz" to R.string.full_quiz_10).forEach { (k, l) ->
                             OutlinedButton(enabled = practising.isEmpty(), onClick = { scope.launch {
                                 practising = k
@@ -283,7 +286,7 @@ private fun Body(t: TopicFull, me: Me, aiOn: Boolean, known: List<String>, openR
     var tab by rememberSaveable(t.id) { mutableIntStateOf(0) }
     Gap(12)
     SecondaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface) {
-        listOf(R.string.tab_notes, R.string.tab_explain, R.string.tab_answer).forEachIndexed { i, s -> Tab(tab == i, onClick = { tab = i }, text = { Text(stringResource(s)) }) }
+        listOf(R.string.tab_notes, R.string.tab_explain, R.string.tab_answer).forEachIndexed { i, s -> Tab(tab == i, onClick = { tab = i }, text = { Text(stringResource(s), maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }) }
     }
     Gap(8)
     when (tab) {

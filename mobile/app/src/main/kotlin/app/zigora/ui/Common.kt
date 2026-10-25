@@ -1,6 +1,7 @@
 package app.zigora.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -193,14 +194,33 @@ fun Page(title: String, sub: String = "", back: (() -> Unit)? = null, actions: @
     }
 }
 
-/** a list row: a title, a quieter line, and an arrow when it opens something */
+/** the app's one list row, the same on every screen: an optional mark on the left (40dp), a title, a quieter line, anything [extra],
+ *  and on the right [trailing] or an arrow when the row opens something */
 @Composable
-fun RowLink(title: String, sub: String = "", onClick: (() -> Unit)?, extra: @Composable () -> Unit = {}) = Panel(onClick = onClick) {
+fun ListRow(title: String, sub: String = "", onClick: (() -> Unit)? = null, leading: (@Composable () -> Unit)? = null,
+            trailing: (@Composable () -> Unit)? = null, extra: @Composable () -> Unit = {}) = Panel(onClick = onClick) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); if (sub.isNotEmpty()) Quiet(sub); extra() }
-        if (onClick != null) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
+        if (leading != null) { Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) { leading() }; androidx.compose.foundation.layout.Spacer(Modifier.size(14.dp)) }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+            extra()
+        }
+        when {
+            trailing != null -> trailing()
+            onClick != null -> Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
+
+/** a round mark for the start of a row: an icon on the brand's soft colour */
+@Composable
+fun RowIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) = Box(
+    Modifier.size(40.dp).background(MaterialTheme.colorScheme.primaryContainer, androidx.compose.foundation.shape.CircleShape),
+    contentAlignment = Alignment.Center) { Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(22.dp)) }
+
+@Composable
+fun RowLink(title: String, sub: String = "", onClick: (() -> Unit)?, extra: @Composable () -> Unit = {}) = ListRow(title, sub, onClick, extra = extra)
 
 /** a short note at the bottom of the screen, like the web's toast */
 @Composable

@@ -1,8 +1,10 @@
 package app.zigora.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
@@ -70,6 +72,7 @@ fun ZigoraRoot(incoming: Incoming?, handled: () -> Unit) {
     var me by remember(out) { mutableStateOf(app.store.userJson?.let { runCatching { json.decodeFromString(Me.serializer(), it) }.getOrNull() }.takeIf { app.store.token != null }) }
     ZigoraTheme(wallpaper, theme) {
         val user = me
+        if (user == null || user.role != "student" || user.must_change) LaunchedEffect(Unit) { app.firstScreenReady.value = true }  // Home says so itself, once it has loaded
         when {
             user == null -> SignIn { m -> app.store.userJson = json.encodeToString(Me.serializer(), m); me = m }
             user.role != "student" -> StaffNote(user) { app.store.signOut(); me = null }  // teachers and admins stay on the web
@@ -86,8 +89,9 @@ private data class Tab(val route: Any, val label: String, val icon: androidx.com
 private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (Boolean) -> Unit, theme: (String) -> Unit, signOut: () -> Unit) {
     val nav = rememberNavController()
     // the web's menu for students (My courses, Saved, My progress) with Home and the account; search sits at the top, as in the web's header
-    val tabs = listOf(Tab(HomeR, stringResource(R.string.tab_home), Icons.Outlined.Home), Tab(CoursesR, tl("My courses"), Icons.AutoMirrored.Outlined.MenuBook),
-                      Tab(SavedR, tl("Saved"), Icons.Outlined.BookmarkBorder), Tab(ProgressR, tl("My progress"), Icons.AutoMirrored.Outlined.TrendingUp),
+    // short labels, so five fit on any phone at any text size; the screens themselves carry the web's full titles
+    val tabs = listOf(Tab(HomeR, stringResource(R.string.tab_home), Icons.Outlined.Home), Tab(CoursesR, stringResource(R.string.tab_courses), Icons.AutoMirrored.Outlined.MenuBook),
+                      Tab(SavedR, stringResource(R.string.tab_saved), Icons.Outlined.BookmarkBorder), Tab(ProgressR, stringResource(R.string.tab_progress), Icons.AutoMirrored.Outlined.TrendingUp),
                       Tab(MeR, stringResource(R.string.tab_me), Icons.Outlined.AccountCircle))
     val entry by nav.currentBackStackEntryAsState(); val dest = entry?.destination
     LaunchedEffect(incoming) {
@@ -100,7 +104,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalMe provides me) { NavigationSuiteScaffold(navigationSuiteItems = {
         tabs.forEach { t ->
-            item(selected = dest?.hasRoute(t.route::class) == true, icon = { Icon(t.icon, null) }, label = { Text(t.label, maxLines = 1) },
+            item(selected = dest?.hasRoute(t.route::class) == true, icon = { Icon(t.icon, null) }, label = { Text(t.label, maxLines = 1, softWrap = false, autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(minFontSize = 9.sp, maxFontSize = 12.sp)) },
                  onClick = { nav.navigate(t.route) { popUpTo(nav.graph.findStartDestination().id) { saveState = true }; launchSingleTop = true; restoreState = true } })
         }
     }) {
@@ -176,9 +180,13 @@ val LocalMe = androidx.compose.runtime.staticCompositionLocalOf<Me?> { null }
 private fun StaffNote(me: Me, signOut: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current; val app = app()
     androidx.compose.material3.Scaffold { pad ->
-        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(pad).padding(24.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp)) {
+        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(pad).fillMaxWidth().padding(24.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
+                                                  horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+            Gap(48)
+            androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.ic_logo), null, androidx.compose.ui.Modifier.size(72.dp))
             Text(stringResource(R.string.staff_title), style = androidx.compose.material3.MaterialTheme.typography.headlineSmall)
-            Text(stringResource(R.string.staff_body, firstName(me.name), app.store.appName, app.store.server))
+            Text(stringResource(R.string.staff_body, firstName(me.name), app.store.appName, app.store.server), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.material3.Button(onClick = { runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, app.store.server.toUri())) } },
                                               modifier = androidx.compose.ui.Modifier.fillMaxWidth()) { Text(stringResource(R.string.open_in_browser)) }
             androidx.compose.material3.OutlinedButton(onClick = signOut, modifier = androidx.compose.ui.Modifier.fillMaxWidth()) { Text(stringResource(R.string.sign_out)) }

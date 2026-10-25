@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Zigora's mark on its plum tile, as on the web (logo.svg): for screens inside the app -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="64dp" android:height="64dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:fillColor="@color/plum" android:pathData="M16,0h32a16,16 0,0 1,16 16v32a16,16 0,0 1,-16 16h-32a16,16 0,0 1,-16 -16v-32a16,16 0,0 1,16 -16z" />
+    <path android:fillColor="@color/cream" android:pathData="M18.5,15h27a2.5,2.5 0,0 1,2.5 2.5v3a2.5,2.5 0,0 1,-2.5 2.5h-27a2.5,2.5 0,0 1,-2.5 -2.5v-3a2.5,2.5 0,0 1,2.5 -2.5z" />
+    <path android:fillColor="@color/coral" android:pathData="M38.5,23H48L25.5,41H16Z" />
+    <path android:fillColor="@color/cream" android:pathData="M18.5,41h27a2.5,2.5 0,0 1,2.5 2.5v3a2.5,2.5 0,0 1,-2.5 2.5h-27a2.5,2.5 0,0 1,-2.5 -2.5v-3a2.5,2.5 0,0 1,2.5 -2.5z" />
+</vector>

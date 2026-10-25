@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -189,24 +193,31 @@ fun HlItem(h: Highlight, where: String = "", focus: Boolean = false, onGo: (() -
     var editing by remember(focus) { mutableStateOf(focus) }
     var note by remember(h.id, h.note) { mutableStateOf(h.note) }
     var err by remember { mutableStateOf("") }
-    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Box(Modifier.width(4.dp).heightIn(min = 40.dp).background(HL_COLORS[h.color] ?: HL_COLORS.getValue("coral")))
-        Column(Modifier.weight(1f).padding(start = 10.dp)) {
-            if (onGo != null) TextButton(onClick = onGo, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text(h.text, maxLines = 4, overflow = TextOverflow.Ellipsis) }
-            else Text(h.text)
-            if (where.isNotEmpty()) Quiet(where)
-            h.explain?.let { x -> Md(x.text); FlagLink("topic", x.id, h.topic_id ?: topicId) } ?: onExplain?.let { TextButton(onClick = it) { Text(stringResource(R.string.explain_this)) } }
-            if (editing) {
-                OutlinedTextField(note, { if (it.length <= 2000) note = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.your_note)) })
-                if (err.isNotEmpty()) Quiet(err)
-                Row { TextButton(onClick = { scope.launch {
-                        try { onSaved(a.send("PATCH", "/me/highlights/${h.id}", buildJsonObject { put("note", note) }, Highlight.serializer())); editing = false } catch (e: Exception) { err = e.message.orEmpty() }
-                    } }) { Text(stringResource(R.string.save_note)) }
-                    TextButton(onClick = { note = h.note; editing = false }) { Text(stringResource(R.string.cancel)) } }
-            } else if (h.note.isNotEmpty()) TextButton(onClick = { editing = true }) { Text(h.note) }
-            else TextButton(onClick = { editing = true }) { Text(stringResource(R.string.add_a_note)) }
+    Panel {
+        Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(HL_COLORS[h.color] ?: HL_COLORS.getValue("coral"), RoundedCornerShape(2.dp)))
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("“${h.text}”", style = MaterialTheme.typography.bodyLarge, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                     modifier = if (onGo != null) Modifier.clickable(onClick = onGo) else Modifier)
+                if (where.isNotEmpty()) Text(where, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                h.explain?.let { x -> Column(Modifier.padding(top = 8.dp)) { Md(x.text); FlagLink("topic", x.id, h.topic_id ?: topicId) } }
+                if (editing) {
+                    OutlinedTextField(note, { if (it.length <= 2000) note = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text(stringResource(R.string.your_note)) })
+                    if (err.isNotEmpty()) Quiet(err)
+                    Row { TextButton(onClick = { scope.launch {
+                            try { onSaved(a.send("PATCH", "/me/highlights/${h.id}", buildJsonObject { put("note", note) }, Highlight.serializer())); editing = false } catch (e: Exception) { err = e.message.orEmpty() }
+                        } }) { Text(stringResource(R.string.save_note)) }
+                        TextButton(onClick = { note = h.note; editing = false }) { Text(stringResource(R.string.cancel)) } }
+                } else if (h.note.isNotEmpty()) Text(h.note, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp).clickable { editing = true })
+                if (!editing) Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { editing = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp)) {
+                        Text(stringResource(if (h.note.isEmpty()) R.string.add_a_note else R.string.edit_note)) }
+                    if (h.explain == null) onExplain?.let { TextButton(onClick = it) { Text(stringResource(R.string.explain_this)) } }
+                    androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                    IconButton(onClick = onDrop) { Icon(Icons.Outlined.Delete, stringResource(R.string.remove_highlight), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
         }
-        IconButton(onClick = onDrop) { Icon(Icons.Outlined.Delete, stringResource(R.string.remove_highlight)) }
     }
 }
 
