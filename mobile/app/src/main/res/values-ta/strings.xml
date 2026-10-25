@@ -49,6 +49,9 @@
     <string name="college_address_hint">எடுத்துக்காட்டாக learn.yourcollege.edu. இதை உங்கள் கல்லூரி தரும்.</string>
     <string name="correct">சரி</string>
     <string name="course_unavailable">இந்தப் பாடம் இப்போது கிடைக்கவில்லை</string>
+    <string name="crash_body">மன்னிக்கவும். செயலி எங்கே நின்றது என்பதையும், உங்கள் தொலைபேசி மாடல் மற்றும் Android பதிப்பையும் மட்டுமே அறிக்கை சொல்கிறது. அதைப் பகிர்வது சரிசெய்ய உதவும்.</string>
+    <string name="crash_share">அறிக்கையைப் பகிர்</string>
+    <string name="crash_title">Zigora எதிர்பாராமல் மூடப்பட்டது</string>
     <string name="create_account">கணக்கை உருவாக்கு</string>
     <string name="current_password">தற்போதைய கடவுச்சொல்</string>
     <string name="daily_email">புதியவற்றின் தினசரிச் சுருக்கத்தை எனக்கு மின்னஞ்சல் செய்</string>

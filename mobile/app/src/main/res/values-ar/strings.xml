@@ -49,6 +49,9 @@
     <string name="college_address_hint">مثل learn.yourcollege.edu. تعطيك كليتك هذا العنوان.</string>
     <string name="correct">صحيح</string>
     <string name="course_unavailable">هذا المقرر غير متاح الآن</string>
+    <string name="crash_body">نعتذر عن ذلك. يذكر التقرير فقط أين توقف التطبيق، مع طراز هاتفك وإصدار Android. مشاركته تساعد على إصلاحه.</string>
+    <string name="crash_share">شارك التقرير</string>
+    <string name="crash_title">أُغلق Zigora بشكل غير متوقع</string>
     <string name="create_account">إنشاء حساب</string>
     <string name="current_password">كلمة المرور الحالية</string>
     <string name="daily_email">أرسل لي ملخصًا يوميًا بالجديد</string>
