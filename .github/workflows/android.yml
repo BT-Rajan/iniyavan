@@ -56,7 +56,12 @@ jobs:
             echo "ok=false" >> "$GITHUB_OUTPUT"
             echo "::warning::No signing key yet: the APK is built for checking but not published. See mobile/README.md to add one."
           else
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/zigora.keystore"; echo "ok=true" >> "$GITHUB_OUTPUT"
+            # spaces and line breaks picked up when copying the text are dropped first
+            if ! printf '%s' "$KEYSTORE_B64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/zigora.keystore" 2>/dev/null || [ ! -s "$RUNNER_TEMP/zigora.keystore" ]; then
+              echo "::error::ANDROID_KEYSTORE_B64 is not the keystore as base64 text. Make it again with: base64 -w0 zigora.keystore > zigora.keystore.b64 (Mac: base64 -i zigora.keystore -o zigora.keystore.b64) and paste the whole file."
+              exit 1
+            fi
+            echo "ok=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build
