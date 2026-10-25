@@ -50,6 +50,9 @@
     <string name="college_address_hint">For example learn.yourcollege.edu. Your college gives you this.</string>
     <string name="correct">Correct</string>
     <string name="course_unavailable">This course is unavailable right now</string>
+    <string name="crash_body">Sorry about that. The report says only where the app stopped, with your phone model and Android version. Sharing it helps fix it.</string>
+    <string name="crash_share">Share the report</string>
+    <string name="crash_title">Zigora closed unexpectedly</string>
     <string name="create_account">Create an account</string>
     <string name="current_password">Current password</string>
     <string name="daily_email">Email me a daily summary of new ones</string>

@@ -76,6 +76,7 @@ fun ZigoraRoot(incoming: Incoming?, handled: () -> Unit) {
             user.must_change -> ChangePassword(forced = true) { me = user.copy(must_change = false).also { app.store.userJson = json.encodeToString(Me.serializer(), it) } }
             else -> Main(user, incoming, handled, wallpaper = { wallpaper = it; app.store.wallpaper = it }, theme = { theme = it; app.store.theme = it }) { app.store.signOut(); me = null }
         }
+        CrashNote()
     }
 }
 
@@ -183,4 +184,20 @@ private fun StaffNote(me: Me, signOut: () -> Unit) {
             androidx.compose.material3.OutlinedButton(onClick = signOut, modifier = androidx.compose.ui.Modifier.fillMaxWidth()) { Text(stringResource(R.string.sign_out)) }
         }
     }
+}
+
+/** after a crash, the next start offers the report to share (by mail, chat, anything); it stays on the phone otherwise */
+@Composable
+private fun CrashNote() {
+    val app = app(); val ctx = androidx.compose.ui.platform.LocalContext.current
+    var report by remember { mutableStateOf(runCatching { app.crashFile.takeIf { it.exists() }?.readText() }.getOrNull()) }
+    val text = report ?: return
+    val done = { runCatching { app.crashFile.delete() }; report = null }
+    androidx.compose.material3.AlertDialog(onDismissRequest = done, title = { Text(stringResource(R.string.crash_title)) }, text = { Text(stringResource(R.string.crash_body)) },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_SUBJECT, "Zigora crash report")
+                .putExtra(android.content.Intent.EXTRA_TEXT, text)
+            runCatching { ctx.startActivity(android.content.Intent.createChooser(send, null)) }; done()
+        }) { Text(stringResource(R.string.crash_share)) } },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = done) { Text(stringResource(R.string.not_now)) } })
 }

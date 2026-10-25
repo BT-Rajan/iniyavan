@@ -85,19 +85,23 @@ jobs:
 
       - name: Name the APK
         if: steps.v.outputs.skip != 'true'
-        run: cp app/build/outputs/apk/release/app-release.apk "zigora-${{ steps.v.outputs.name }}.apk"
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk "zigora-${{ steps.v.outputs.name }}.apk"
+          cp app/build/outputs/mapping/release/mapping.txt "zigora-${{ steps.v.outputs.name }}-mapping.txt"  # turns a crash report's short names back into code
 
       - uses: actions/upload-artifact@v4
         if: steps.v.outputs.skip != 'true'
         with:
           name: zigora-${{ steps.v.outputs.name }}
-          path: mobile/zigora-${{ steps.v.outputs.name }}.apk
+          path: |
+            mobile/zigora-${{ steps.v.outputs.name }}.apk
+            mobile/zigora-${{ steps.v.outputs.name }}-mapping.txt
           retention-days: 14
 
       - name: Publish
         if: steps.v.outputs.publish == 'true' && steps.key.outputs.ok == 'true'
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          gh release create "android-v${{ steps.v.outputs.name }}" "zigora-${{ steps.v.outputs.name }}.apk" --target "${{ github.sha }}" \
+          gh release create "android-v${{ steps.v.outputs.name }}" "zigora-${{ steps.v.outputs.name }}.apk" "zigora-${{ steps.v.outputs.name }}-mapping.txt" --target "${{ github.sha }}" \
             --title "Zigora for Android ${{ steps.v.outputs.name }}" \
             --notes "Zigora for Android ${{ steps.v.outputs.name }}, built from $(git rev-parse --short HEAD). Android 13 or later. Install it, or open the app's update note, to get this version."
