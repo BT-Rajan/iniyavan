@@ -1078,6 +1078,7 @@ NEEDS_OWN_KEY = "Add your own DeepSeek API key under AI key in the menu to use A
 def ai_status(u: User = Depends(me), s: Session = Depends(db)):
     return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered), "vision": vision_on(u, s), "ocr": ocr_ready()}
 class OwnKey(BaseModel): key: str
+KEY_TRIES = 10  # saving a key checks it with DeepSeek; at most this many tries an hour per person
 @app.get("/api/me/ai-key")
 def my_ai_key(u: User = Depends(me)):
     k = unseal(u.ai_key) if u.ai_key else ""
@@ -1085,6 +1086,9 @@ def my_ai_key(u: User = Depends(me)):
 @app.put("/api/me/ai-key")
 async def set_my_ai_key(b: OwnKey, u: User = Depends(me), s: Session = Depends(db)):
     if not u.self_registered: raise HTTPException(403, "Your account uses the key your admin saved. You do not need your own.")
+    if s.query(func.count(AuditLog.id)).filter(AuditLog.user_id == u.id, AuditLog.method == "PUT", AuditLog.path == "/api/me/ai-key",
+                                                AuditLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=1)).scalar() >= KEY_TRIES:
+        raise HTTPException(429, "Too many tries. Wait an hour, then save your key again.")  # each try asks DeepSeek, so this must not become a way to test stolen keys
     k = b.key.strip()
     if not 20 <= len(k) <= 200 or any(ch.isspace() for ch in k): raise HTTPException(400, "That does not look like a DeepSeek API key. Copy the whole key from your DeepSeek account.")
     try: await deepseek(k, setting(s, "model", "deepseek-chat"), [{"role": "user", "content": "Reply with the word OK."}], max_tokens=5, timeout=20)
