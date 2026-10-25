@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package app.zigora.ui
 
 import android.content.Context
@@ -111,7 +113,7 @@ fun PhotoScreen(shared: String, back: () -> Unit) {
         navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } }) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Quiet(stringResource(R.string.photo_lead))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {  // buttons go to a new line rather than squeeze their text
                 Button(onClick = { camera.launch(shotUri) }) { Icon(Icons.Outlined.CameraAlt, null); Text("  " + stringResource(R.string.take_photo)) }
                 FilledTonalButton(onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
                     Icon(Icons.Outlined.PhotoLibrary, null); Text("  " + stringResource(R.string.choose_photo)) }

@@ -20,7 +20,8 @@ class MainActivity : ComponentActivity() {
     private val incoming = mutableStateOf<Incoming?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val start = android.os.SystemClock.uptimeMillis(); val app = application as ZigoraApp
+        installSplashScreen().setKeepOnScreenCondition { !app.firstScreenReady.value && android.os.SystemClock.uptimeMillis() - start < 2_000 }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) incoming.value = read(intent)

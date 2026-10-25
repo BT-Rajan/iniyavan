@@ -9,6 +9,14 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Typography
+import app.zigora.R
 
 val Plum = Color(0xFF722F99)
 val Coral = Color(0xFFFF9292)
@@ -28,6 +36,18 @@ private val Dark = darkColorScheme(
     surfaceContainerHigh = Color(0xFF251D2E), onSurfaceVariant = Color(0xFFA79DB0), outlineVariant = Color(0xFF322839),
 )
 
+/** the web's heading face (Instrument Sans) for headings and titles; body text and labels in the phone's own font, as the web does.
+ *  One scale for every screen: screens pick a role from here and never set a size of their own. */
+private val Heading = FontFamily(Font(R.font.instrument_sans_600, FontWeight.SemiBold), Font(R.font.instrument_sans_700, FontWeight.Bold))
+private fun h(size: Int, line: Int, w: FontWeight = FontWeight.SemiBold) = TextStyle(fontFamily = Heading, fontWeight = w, fontSize = size.sp, lineHeight = line.sp, letterSpacing = (-0.01).em)
+private fun b(size: Int, line: Int, w: FontWeight = FontWeight.Normal, track: Double = 0.0) = TextStyle(fontWeight = w, fontSize = size.sp, lineHeight = line.sp, letterSpacing = track.em)
+val ZigoraType = Typography(
+    displaySmall = h(32, 40, FontWeight.Bold), headlineLarge = h(28, 36, FontWeight.Bold), headlineMedium = h(26, 32), headlineSmall = h(22, 28),
+    titleLarge = h(20, 26), titleMedium = h(17, 23), titleSmall = h(15, 20),
+    bodyLarge = b(16, 24), bodyMedium = b(14, 20), bodySmall = b(12, 16),
+    labelLarge = b(14, 20, FontWeight.Medium), labelMedium = b(12, 16, FontWeight.Medium, 0.01), labelSmall = b(11, 16, FontWeight.Medium, 0.02),
+)
+
 /** Material You: the phone's own wallpaper colours by default, or Zigora's plum when the student prefers it. Dark follows the system. */
 @Composable
 fun ZigoraTheme(wallpaper: Boolean, theme: String = "system", content: @Composable () -> Unit) {
@@ -38,5 +58,5 @@ fun ZigoraTheme(wallpaper: Boolean, theme: String = "system", content: @Composab
         dark -> Dark
         else -> Light
     }
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialTheme(colorScheme = scheme, typography = ZigoraType, content = content)
 }

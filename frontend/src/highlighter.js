@@ -11,7 +11,8 @@
     'box-shadow:0 8px 24px rgba(0,0,0,.3);font:600 13px system-ui,-apple-system,sans-serif}'+
     '.zg-hl-bar button{border:0;cursor:pointer;font:inherit;margin:0}.zg-hl-bar .zg-l{padding:0 2px 0 4px;opacity:.85}'+
     '.zg-hl-sw{width:24px;height:24px;border-radius:50%;padding:0;box-shadow:inset 0 0 0 2px rgba(255,255,255,.7)}.zg-hl-sw.on{box-shadow:0 0 0 2px #fff}'+
-    '.zg-hl-tx{background:transparent;color:#fff;padding:5px 8px;border-radius:6px}.zg-hl-tx:hover{background:rgba(255,255,255,.15)}'
+    '.zg-hl-tx{background:transparent;color:#fff;padding:5px 8px;border-radius:6px}.zg-hl-tx:hover{background:rgba(255,255,255,.15)}'+
+    '@media (pointer:coarse){.zg-hl-bar{gap:10px;padding:8px 10px;font-size:14px}.zg-hl-sw{width:34px;height:34px}.zg-hl-tx{padding:9px 10px}}'
   function walk(root){  // every text node under root (not inside scripts or styles), with where it starts in the joined text
     var w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:function(n){var p=n.parentNode;return p&&/^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA|TEMPLATE)$/.test(p.nodeName)?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT}})
     var nodes=[],at=0,n
@@ -36,6 +37,7 @@
     })
   }
   function find(map,h){var i=-1;if(h.prefix){i=map.text.indexOf(h.prefix+h.text);if(i>=0)i+=h.prefix.length}return i>=0?i:map.text.indexOf(h.text)}
+  var TOUCH=typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches
   function attach(root,opts){
     var list=(opts.list||[]).slice(),mode='',timer=null,doc=root.ownerDocument
     if(!doc.getElementById('zg-hl-style')){var st=doc.createElement('style');st.id='zg-hl-style';st.textContent=CSS;(doc.head||doc.body).appendChild(st)}
@@ -51,7 +53,10 @@
     function swatches(current,verb,pick){return Object.keys(COLORS).map(function(c){var b=button('zg-hl-sw'+(c===current?' on':''),'',verb+' '+c,function(){pick(c)});b.style.background=COLORS[c].replace(/,[.\d]+\)$/,',1)');return b})}
     function show(rect,kind,items){
       mode=kind;bar.innerHTML='';items.forEach(function(x){bar.appendChild(x)});bar.style.display='flex'
-      var top=rect.top-50;if(top<6)top=rect.bottom+8
+      // on a touch screen the phone's own Copy / Select all bar sits just above a selection and its handles just below: go under the handles
+      var top=TOUCH&&kind==='add'?rect.bottom+40:rect.top-50
+      if(TOUCH&&kind==='add'&&top+bar.offsetHeight>innerHeight-6)top=Math.max(6,rect.top-bar.offsetHeight-64)
+      if(top<6)top=rect.bottom+8
       bar.style.top=top+'px';bar.style.left=Math.max(6,Math.min(innerWidth-bar.offsetWidth-6,rect.left+rect.width/2-bar.offsetWidth/2))+'px'
     }
     function check(){

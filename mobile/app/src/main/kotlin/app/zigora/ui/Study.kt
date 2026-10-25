@@ -415,10 +415,8 @@ fun StudyTopicScreen(id: Int, back: () -> Unit, go: (Int) -> Unit, quiz: (StudyQ
                    else AiNote(x.ai_available, x.ai_left, x.ai_own_key)
             SectionTitle(tl("Check yourself"))
             AiNote(x.ai_available, x.ai_left, x.ai_own_key)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(enabled = busy.isEmpty() && !noAi, onClick = { make("mcq") }, modifier = Modifier.weight(1f)) { Text(if (busy == "mcq") tl("Writing questions…") else tl("5 quick questions")) }
-                OutlinedButton(enabled = busy.isEmpty() && !noAi, onClick = { make("quiz") }, modifier = Modifier.weight(1f)) { Text(if (busy == "quiz") tl("Writing the quiz…") else tl("Full quiz · 10")) }
-            }
+            Button(enabled = busy.isEmpty() && !noAi, onClick = { make("mcq") }, modifier = Modifier.fillMaxWidth()) { Text(if (busy == "mcq") tl("Writing questions…") else tl("5 quick questions")) }
+            OutlinedButton(enabled = busy.isEmpty() && !noAi, onClick = { make("quiz") }, modifier = Modifier.fillMaxWidth()) { Text(if (busy == "quiz") tl("Writing the quiz…") else tl("Full quiz · 10")) }
             Quiet(tl("Quick check: 5 practice MCQs with the answer right after each one; 4 right marks the topic completed. Full quiz: 10 questions scored at the end; pass it for ★★, score 90% for ★★★. New questions every time, and the topic comes back for review before you forget it."))
             if (x.attempts.isNotEmpty()) {
                 SectionTitle(tl("Your results here"))

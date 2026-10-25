@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package app.zigora.ui
 
 import androidx.compose.foundation.BorderStroke
@@ -77,7 +79,7 @@ fun StudyQuizScreen(id: Int, back: () -> Unit, again: ((String) -> Unit)? = null
                         Quiet(stringResource(if (review) R.string.review_done else if (mcq) R.string.done_answers_below else R.string.done_new_set) +
                               (if (r.summary.isNotEmpty()) " " + r.summary else "") + (r.next_review?.let { " $it." } ?: ""))
                         next?.let { (title, go) -> Button(onClick = go) { Text(stringResource(R.string.next_topic, title)) } }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {  // buttons go to a new line rather than squeeze their text
                             again?.let { OutlinedButton(onClick = { it(qz.kind) }) { Text(stringResource(if (mcq) R.string.new_questions else R.string.new_quiz)) } }
                             OutlinedButton(onClick = back) { Text(stringResource(if (review) R.string.done else R.string.back_to_topic)) }
                         }

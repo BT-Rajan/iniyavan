@@ -62,6 +62,7 @@
     <string name="done_answers_below">تم. الإجابات في الأسفل.</string>
     <string name="done_new_set">تم. مجموعة جديدة متاحة متى أردت.</string>
     <string name="doubt_privacy">تُرسل فقط أسماء برنامجك وفصلك ومقررك وموضوعك وهذه العبارة. ملاحظاتك لا تُرسل أبدًا.</string>
+    <string name="edit_note">تعديل الملاحظة</string>
     <string name="email">البريد الإلكتروني</string>
     <string name="enter_code">أدخل الرمز</string>
     <string name="err_offline">تعذّر الوصول إلى الخادم. تحقّق من اتصالك وحاول مرة أخرى.</string>
@@ -283,10 +284,13 @@
     <string name="study_again">ادرس مرة أخرى</string>
     <string name="submit_answers">إرسال الإجابات</string>
     <string name="tab_answer">نموذج إجابة</string>
+    <string name="tab_courses">المقررات</string>
     <string name="tab_explain">اشرح</string>
     <string name="tab_home">الرئيسية</string>
     <string name="tab_me">أنا</string>
     <string name="tab_notes">الملاحظات</string>
+    <string name="tab_progress">التقدّم</string>
+    <string name="tab_saved">المحفوظات</string>
     <string name="tab_search">بحث</string>
     <string name="take_photo">التقط صورة</string>
     <string name="takes_a_few_goes">لا بأس، الأمر يحتاج بضع محاولات.</string>

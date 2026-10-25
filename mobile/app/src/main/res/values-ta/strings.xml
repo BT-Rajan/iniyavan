@@ -62,6 +62,7 @@
     <string name="done_answers_below">முடிந்தது. விடைகள் கீழே உள்ளன.</string>
     <string name="done_new_set">முடிந்தது. நீங்கள் விரும்பும்போது புதிய தொகுப்பு கிடைக்கும்.</string>
     <string name="doubt_privacy">உங்கள் திட்டம், பருவம், பாடம், தலைப்பு ஆகியவற்றின் பெயர்களும் இந்தச் சொற்றொடரும் மட்டுமே அனுப்பப்படும். உங்கள் குறிப்புகள் ஒருபோதும் அனுப்பப்படாது.</string>
+    <string name="edit_note">குறிப்பைத் திருத்து</string>
     <string name="email">மின்னஞ்சல்</string>
     <string name="enter_code">குறியீட்டை உள்ளிடவும்</string>
     <string name="err_offline">சர்வரை அடைய முடியவில்லை. இணைப்பைச் சரிபார்த்து மீண்டும் முயலுங்கள்.</string>
@@ -283,10 +284,13 @@
     <string name="study_again">மீண்டும் படி</string>
     <string name="submit_answers">விடைகளைச் சமர்ப்பி</string>
     <string name="tab_answer">மாதிரி விடை</string>
+    <string name="tab_courses">பாடங்கள்</string>
     <string name="tab_explain">விளக்கு</string>
     <string name="tab_home">முகப்பு</string>
     <string name="tab_me">நான்</string>
     <string name="tab_notes">குறிப்புகள்</string>
+    <string name="tab_progress">முன்னேற்றம்</string>
+    <string name="tab_saved">சேமித்தவை</string>
     <string name="tab_search">தேடு</string>
     <string name="take_photo">புகைப்படம் எடு</string>
     <string name="takes_a_few_goes">பரவாயில்லை, சில முயற்சிகள் தேவைப்படும்.</string>

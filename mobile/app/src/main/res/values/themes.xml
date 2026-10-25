@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Zigora" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/splash_bg</item>
+        <item name="android:windowBackground">@color/window_bg</item>
     </style>
-    <!-- Android's own splash screen: the logo on the app's background, then the app -->
+    <!-- Android's own splash screen: Zigora's mark and name on plum, kept until the first screen has its data -->
     <style name="Theme.Zigora.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splash_bg</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="android:windowSplashScreenBrandingImage">@drawable/splash_brand</item>
         <item name="postSplashScreenTheme">@style/Theme.Zigora</item>
     </style>
 </resources>

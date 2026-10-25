@@ -113,9 +113,9 @@ class ScreensTest {
         signIn()
         rule.setContent { ZigoraRoot(null) {} }
         see("Engineering Chemistry"); rule.onNodeWithText("Saved").performClick()
-        see("Open any topic and tap the bookmark icon"); shot("13-saved")
-        rule.onNodeWithText("Highlights").performClick(); see("No highlights yet"); shot("14-highlights")
-        rule.onNodeWithText("My progress").performClick(); see("Study routine"); shot("15-progress")
+        see("Bookmarks"); shot("13-saved")
+        rule.onNodeWithText("Highlights").performClick(); see("All colours"); shot("14-highlights")
+        rule.onNode(hasText("Progress") and hasClickAction()).performClick(); see("Study routine"); shot("15-progress")
         rule.onNodeWithText("Set or change your study days").performClick(); see("Minutes a session"); shot("16-routine")
         rule.onNodeWithText("Save routine").performScrollTo().performClick()
         see("Study routine"); rule.onNode(hasText("Home") and hasClickAction()).performClick()
@@ -137,7 +137,7 @@ class ScreensTest {
     @Test fun ownCourse() {
         signIn()
         rule.setContent { ZigoraRoot(null) {} }
-        see("Your own courses"); rule.onNode(hasText("My courses") and hasClickAction()).performClick()
+        see("Your own courses"); rule.onNode(hasText("Courses") and hasClickAction()).performClick()
         rule.onNodeWithText("Build a course").performScrollTo().performClick()
         see("Thermodynamics notes"); shot("21-build")
         rule.onAllNodesWithText("Thermodynamics notes").onLast().performClick(); see("The zeroth law"); shot("22-own-course")

@@ -3,5 +3,6 @@
     <color name="plum">#FF722F99</color>
     <color name="coral">#FFFF9292</color>
     <color name="cream">#FFFEE7C8</color>
-    <color name="splash_bg">#FFFBF9FC</color>
+    <color name="splash_bg">#FF722F99</color>
+    <color name="window_bg">#FFFBF9FC</color>
 </resources>

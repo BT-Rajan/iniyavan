@@ -63,6 +63,7 @@
     <string name="done_answers_below">Done. The answers are below.</string>
     <string name="done_new_set">Done. A new set is there whenever you want one.</string>
     <string name="doubt_privacy">Only the names of your program, semester, course and topic and this phrase are sent. Your notes never are.</string>
+    <string name="edit_note">Edit note</string>
     <string name="email">Email</string>
     <string name="enter_code">Enter the code</string>
     <string name="err_offline">Can\'t reach the server. Check your connection and try again.</string>
@@ -284,10 +285,13 @@
     <string name="study_again">Study again</string>
     <string name="submit_answers">Submit answers</string>
     <string name="tab_answer">Sample answer</string>
+    <string name="tab_courses">Courses</string>
     <string name="tab_explain">Explain</string>
     <string name="tab_home">Home</string>
     <string name="tab_me">Me</string>
     <string name="tab_notes">Notes</string>
+    <string name="tab_progress">Progress</string>
+    <string name="tab_saved">Saved</string>
     <string name="tab_search">Search</string>
     <string name="take_photo">Take a photo</string>
     <string name="takes_a_few_goes">That\'s fine, it takes a few goes.</string>

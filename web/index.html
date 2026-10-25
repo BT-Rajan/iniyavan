@@ -40,6 +40,13 @@ header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 8
 .lang button[aria-pressed=true]{background:var(--s1);color:var(--tx);box-shadow:0 1px 3px rgba(0,0,0,.1)}
 .nav .btn{padding:10px 18px}
 @media (max-width:860px){.links{display:none}.nav .lang{margin-inline-start:auto}.nav .btn.open{display:none}}
+.mbtn{display:none;width:42px;height:42px;border-radius:12px;border:1px solid var(--line);background:var(--s1);color:var(--tx);cursor:pointer;align-items:center;justify-content:center;flex:none}
+.mbtn svg{width:22px;height:22px}
+.mnav{display:none;border-top:1px solid var(--line);background:var(--bg);padding:8px 20px 18px}
+.mnav a{display:block;padding:13px 4px;text-decoration:none;color:var(--tx);font-weight:500;font-size:16px;border-bottom:1px solid var(--line)}
+.mnav .btn{display:flex;justify-content:center;margin-top:14px;border-bottom:0;color:#fff}
+@media (max-width:860px){.mbtn{display:inline-flex}.nav{gap:12px}header.open .mnav{display:block}}
+@media (max-width:380px){.lang button{padding:6px 7px}}
 /* hero */
 .hero{position:relative;overflow:hidden;padding:72px 0 64px}
 .hero:before{content:"";position:absolute;inset:-40% -10% auto auto;width:720px;height:720px;background:radial-gradient(circle,rgba(255,146,146,.28),transparent 62%);pointer-events:none}
@@ -111,7 +118,10 @@ footer{padding:40px 0 50px;color:var(--mut);font-size:14px}.foot{display:flex;fl
   <nav class="links" aria-label="Sections"><a href="#how" data-i="nav_how">How it works</a><a href="#features" data-i="nav_features">Features</a><a href="#colleges" data-i="nav_colleges">For colleges</a><a href="#safety" data-i="nav_safety">Safety</a><a href="#android" data-i="nav_android">Android app</a></nav>
   <div class="lang" role="group" aria-label="Language"><button data-l="en">EN</button><button data-l="ar">عربي</button><button data-l="ta">தமிழ்</button></div>
   <a class="btn pri open" href="/app/" data-i="open">Open Zigora</a>
-</div></header>
+  <button class="mbtn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="mnav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+</div>
+<nav class="mnav" id="mnav" aria-label="Sections"><a href="#how" data-i="nav_how">How it works</a><a href="#features" data-i="nav_features">Features</a><a href="#colleges" data-i="nav_colleges">For colleges</a><a href="#safety" data-i="nav_safety">Safety</a><a href="#android" data-i="nav_android">Android app</a><a class="btn pri" href="/app/" data-i="open">Open Zigora</a></nav>
+</header>
 
 <main id="top">
 <section class="hero"><div class="wrap hgrid">

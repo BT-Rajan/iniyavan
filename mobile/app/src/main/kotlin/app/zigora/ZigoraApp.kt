@@ -13,6 +13,8 @@ class ZigoraApp : Application() {
     lateinit var api: Api
     /** bumps when the server signs the person out, so the screens go back to sign-in */
     val signedOut = MutableStateFlow(0)
+    /** the first screen has what it needs to show (the splash screen stays until then, or two seconds at most) */
+    val firstScreenReady = MutableStateFlow(false)
 
     override fun onCreate() {
         super.onCreate()

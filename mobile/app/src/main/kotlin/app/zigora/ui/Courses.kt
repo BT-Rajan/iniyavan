@@ -23,6 +23,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Quiz
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -50,7 +53,8 @@ fun CoursesScreen(me: Me, openSearch: () -> Unit, openStudy: () -> Unit, open: (
                 else CourseList(courses, open)
             }
             Gap(16)
-            RowLink(tl("Build a course"), tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews"), openStudy)
+            ListRow(tl("Build a course"), tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews"), onClick = openStudy,
+                    leading = { RowIcon(Icons.Outlined.AutoStories) })
         }
     }
 }
@@ -69,8 +73,9 @@ fun CourseScreen(id: Int, back: () -> Unit, openTopic: (Int) -> Unit, openQuiz: 
             Loaded(tree) {
                 if (c == null) { Problem(stringResource(R.string.course_unavailable)); return@Loaded }
                 val ts = c.units.flatMap { it.topics }; val k = ts.count { it.has_notes }
-                RowLink(if (k > 0) tl("Your notes in {k} of {length} topics", "k" to k, "length" to ts.size) else tl("Bring your own notes"),
-                        if (k > 0) tl("Add or update your material") else tl("Upload your PDF or Word notes. They are filed under this course's topics, for you only."), { openMaterial(c.id, c.name) })
+                ListRow(if (k > 0) tl("Your notes in {k} of {length} topics", "k" to k, "length" to ts.size) else tl("Bring your own notes"),
+                        if (k > 0) tl("Add or update your material") else tl("Upload your PDF or Word notes. They are filed under this course's topics, for you only."),
+                        onClick = { openMaterial(c.id, c.name) }, leading = { RowIcon(Icons.Outlined.UploadFile) })
                 if (c.tests.any { it.published && it.questions > 0 }) SectionTitle(tl("MCQ tests"))
                 Tests(c.tests, openQuiz)
                 c.units.forEach { un ->
@@ -91,30 +96,27 @@ private fun Tests(list: List<QuizRef>, open: (Int) -> Unit) {
     if (ready.isEmpty()) return
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         ready.forEach { q ->
-            RowLink(q.title, "${q.questions} " + tl("questions · pass {pass_percent}%", "pass_percent" to q.pass_percent) +
-                    (q.best?.let { tl(" · best {best}%", "best" to it) } ?: "") + (if (q.best != null && q.best >= q.pass_percent) "  ✓" else ""), { open(q.id) })
+            ListRow(q.title, "${q.questions} " + tl("questions · pass {pass_percent}%", "pass_percent" to q.pass_percent) +
+                    (q.best?.let { tl(" · best {best}%", "best" to it) } ?: "") + (if (q.best != null && q.best >= q.pass_percent) "  ✓" else ""), onClick = { open(q.id) }, leading = { RowIcon(Icons.Outlined.Quiz) })
         }
     }
 }
 
 @Composable
-fun TopicRow(t: TopicRef, open: () -> Unit) = ListItem(
-    modifier = Modifier.fillMaxWidth().clickableRounded(open),
-    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    leadingContent = {
+fun TopicRow(t: TopicRef, open: () -> Unit) = ListRow(t.title,
+    when {
+        t.overdue -> stringResource(R.string.teachers_date_passed)
+        t.learning_due_at != null && t.status != "completed" -> stringResource(R.string.learn_by, day(t.learning_due_at))
+        else -> ""
+    }, onClick = open,
+    leading = {
         when (t.status) {
             "completed" -> Icon(Icons.Filled.CheckCircle, stringResource(R.string.learned), tint = MaterialTheme.colorScheme.primary)
             "in_progress" -> Icon(Icons.Outlined.Timelapse, stringResource(R.string.started), tint = MaterialTheme.colorScheme.primary)
-            else -> Icon(Icons.Outlined.Circle, stringResource(R.string.not_started), tint = MaterialTheme.colorScheme.outlineVariant)
+            else -> Icon(Icons.Outlined.Circle, stringResource(R.string.not_started), tint = MaterialTheme.colorScheme.outline)
         }
     },
-    headlineContent = { Text(t.title) },
-    supportingContent = when {
-        t.overdue -> ({ Text(stringResource(R.string.teachers_date_passed)) })
-        t.learning_due_at != null && t.status != "completed" -> ({ Text(stringResource(R.string.learn_by, day(t.learning_due_at))) })
-        else -> null
-    },
-    trailingContent = if (t.bookmarked) ({ Icon(Icons.Filled.Bookmark, stringResource(R.string.bookmarked), tint = MaterialTheme.colorScheme.secondary) }) else null)
+    trailing = if (t.bookmarked) ({ Icon(Icons.Filled.Bookmark, stringResource(R.string.bookmarked), tint = MaterialTheme.colorScheme.primary) }) else null)
 
 /** a date from the server, in the phone's own language and calendar style */
 fun day(iso: String): String = runCatching {
