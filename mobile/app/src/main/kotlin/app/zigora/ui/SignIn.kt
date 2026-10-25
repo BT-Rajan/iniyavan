@@ -58,13 +58,15 @@ fun SignIn(done: (Me) -> Unit) {
     var msg by rememberSaveable { mutableStateOf("") }
 
     suspend fun check(): Boolean {
-        var s = server.trim().trimEnd('/')
-        if (s.isEmpty()) { msg = app.getString(R.string.need_address); return false }
-        if (!s.startsWith("http://") && !s.startsWith("https://")) s = "https://$s"
-        s = s.removeSuffix("/app")
-        app.store.server = s; server = s
-        return try { college = app.api.get("/config", Config.serializer()).name; editing = false; msg = ""; true }
-        catch (e: Exception) { msg = e.message.orEmpty(); false }
+        val typed = server.trim()
+        if (typed.isEmpty()) { msg = app.getString(R.string.need_address); return false }
+        // "learn.college.edu", "169.58.13.213:5252" or a copied link to the web app: https is tried first, then plain http
+        for (s in serverCandidates(typed)) {
+            app.store.server = s
+            try { college = app.api.get("/config", Config.serializer()).name; server = s; editing = false; msg = ""; return true }
+            catch (e: Exception) { msg = e.message.orEmpty() }
+        }
+        return false
     }
     fun go() = scope.launch {
         busy = true; msg = ""
@@ -145,4 +147,13 @@ fun ChangePassword(forced: Boolean, done: () -> Unit) {
             }) { Text(stringResource(R.string.save_password)) }
         }
     }
+}
+
+/** the server's root address for what someone typed: with no http(s):// both are tried, https first; any path (like /app/) is dropped */
+fun serverCandidates(typed: String): List<String> {
+    val t = typed.trim()
+    val withScheme = if (t.startsWith("http://", true) || t.startsWith("https://", true)) listOf(t) else listOf("https://$t", "http://$t")
+    return withScheme.mapNotNull { u ->
+        runCatching { java.net.URI(u) }.getOrNull()?.takeIf { !it.host.isNullOrEmpty() }?.let { "${it.scheme.lowercase()}://${it.host}" + if (it.port != -1) ":${it.port}" else "" }
+    }.distinct()
 }
