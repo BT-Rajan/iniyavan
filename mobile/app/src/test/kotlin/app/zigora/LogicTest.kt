@@ -5,6 +5,7 @@ import app.zigora.data.ProgramNode
 import app.zigora.data.SemesterNode
 import app.zigora.ui.coursesOf
 import app.zigora.ui.firstName
+import app.zigora.ui.serverCandidates
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -18,5 +19,12 @@ class LogicTest {
     @Test fun theGreetingUsesTheFirstName() {
         assertEquals("Meena", firstName("  Meena Kumar "))
         assertEquals("", firstName(""))
+    }
+    @Test fun aTypedAddressBecomesTheServersRoot() {
+        assertEquals(listOf("https://169.58.13.213:5252", "http://169.58.13.213:5252"), serverCandidates(" 169.58.13.213:5252 "))
+        assertEquals(listOf("http://169.58.13.213:5252"), serverCandidates("http://169.58.13.213:5252/app/#reset=x"))
+        assertEquals(listOf("https://learn.college.edu", "http://learn.college.edu"), serverCandidates("learn.college.edu/app"))
+        assertEquals(listOf("https://learn.college.edu"), serverCandidates("HTTPS://learn.college.edu/"))
+        assertEquals(emptyList<String>(), serverCandidates("http://"))
     }
 }
