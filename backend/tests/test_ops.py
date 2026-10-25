@@ -86,3 +86,9 @@ def test_screens_are_rechecked_built_files_cached_and_large_replies_compressed(e
     tid = env.c.get("/api/tree", headers=env.admin).json()[0]["semesters"][0]["courses"][0]["units"][0]["topics"][0]["id"]
     r = env.c.get(f"/api/topics/{tid}", headers={**env.admin, "Accept-Encoding": "gzip"})
     assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
+
+def test_the_home_page_is_at_the_root_and_the_app_under_app(env):
+    r = env.c.get("/"); assert r.status_code == 200 and 'href="/app/"' in r.text and "Zigora" in r.text and r.headers["cache-control"] == "no-cache"
+    assert "script-src 'self'" in r.headers["content-security-policy"] and env.c.get("/site.js").status_code == 200  # the page's script is a file, so the strict policy holds
+    for u in ("/manifest.json", "/app/manifest.json"):
+        m = env.c.get(u).json(); assert m["start_url"] == "/app/" and m["scope"] == "/app/" and m["icons"][0]["src"].startswith("/app/")

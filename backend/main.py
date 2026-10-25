@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from guardrails import GUARDRAILS, GUARD_VERSION, SUPPORT, checked, crisis, fence
@@ -316,7 +316,7 @@ async def secure_headers(request: Request, call_next):
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https": r.headers["Strict-Transport-Security"] = "max-age=31536000"
     p = request.url.path
     if not p.startswith("/api/") and "cache-control" not in r.headers:  # the screens: built files carry a hash in their name and never change;
-        r.headers["Cache-Control"] = "public, max-age=31536000, immutable" if p.startswith("/assets/") else "no-cache"  # the page, sw.js and icons are checked on every load, so an update shows at once
+        r.headers["Cache-Control"] = "public, max-age=31536000, immutable" if "/assets/" in p else "no-cache"  # the page, sw.js and icons are checked on every load, so an update shows at once
     return r
 
 @app.get("/api/config")
@@ -346,7 +346,7 @@ def send_mail(to, subject, body):
         c.send_message(m)
 def deliver_reset(email, name, raw):
     minutes = int(os.getenv("RESET_MINUTES") or 30)
-    try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{os.getenv('APP_URL').rstrip('/')}/#reset={raw}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n")
+    try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{os.getenv('APP_URL').rstrip('/')}/app/#reset={raw}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n")
     except Exception as e: log.warning("reset email failed: %s", type(e).__name__)
 def tok_hash(raw): return hashlib.sha256(raw.encode()).hexdigest()
 class ForgotIn(BaseModel): email: str
@@ -458,12 +458,13 @@ def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Sessi
     if p.sends >= OTP_MAX_SENDS: raise HTTPException(429, "Too many codes were requested for this email. Please try again tomorrow.")
     code = f"{secrets.randbelow(10 ** 6):06d}"; p.code_hash = otp_hash(email, code); p.attempts = 0; p.sends += 1; p.last_sent_at = now; p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit()
     bg.add_task(deliver_otp, email, p.name, code); return reply
-@app.get("/manifest.json")  # served dynamically so the installed app carries APP_NAME
+@app.get("/manifest.json")
+@app.get("/app/manifest.json")  # served dynamically so the installed app carries APP_NAME (the app lives under /app/)
 def manifest():
-    icons = [{"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-             {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-             {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
-    return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/", "scope": "/", "display": "standalone", "orientation": "portrait",
+    icons = [{"src": "/app/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+             {"src": "/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+             {"src": "/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
+    return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/app/", "scope": "/app/", "display": "standalone", "orientation": "portrait",
                          "background_color": "#f6f4f7", "theme_color": "#722f99", "icons": icons})
 
 def _addcol(table, col, typ):
@@ -4374,7 +4375,7 @@ def send_digests(now=None):  # once a local day, after DIGEST_HOUR: everyone who
                 if not new: continue
                 lines = "\n".join(f"- {i['text']}" + (f" ({i['sub']})" if i["sub"] else "") for i in new)
                 send_mail(u.email, f"{APP_NAME}: {len(new)} new {'notification' if len(new) == 1 else 'notifications'}",
-                          f"Hi {u.name},\n\nHere is what is new for you:\n\n{lines}\n\nOpen {APP_NAME}: {os.getenv('APP_URL', '').rstrip('/')}\n\nTo stop these emails, open the bell in the app and untick the daily summary.\n")
+                          f"Hi {u.name},\n\nHere is what is new for you:\n\n{lines}\n\nOpen {APP_NAME}: {os.getenv('APP_URL', '').rstrip('/')}/app/\n\nTo stop these emails, open the bell in the app and untick the daily summary.\n")
                 sent += 1
             except Exception as e: log.warning("Daily summary to user %s failed: %s", u.id, type(e).__name__)
     return sent
@@ -4394,4 +4395,10 @@ def version():
     except OSError: screens = None
     return {"server": SERVER_HEAD, "screens": screens, "match": bool(SERVER_HEAD and screens and SERVER_HEAD == screens),
             "hint": None if SERVER_HEAD and screens and SERVER_HEAD == screens else "The screens are older than the server code (or were never built). Run ./run.sh, or: cd frontend && npm ci && npm run build, then restart."}
-if os.path.isdir(dist): app.mount("/", StaticFiles(directory=dist, html=True), name="ui")
+# the site: the home page (web/) at the root, and the app itself under /app/
+web = os.path.join(os.path.dirname(__file__), "..", "web")
+if os.path.isdir(dist): app.mount("/app", StaticFiles(directory=dist, html=True), name="ui")
+if os.path.isdir(web): app.mount("/", StaticFiles(directory=web, html=True), name="web")
+else:
+    @app.get("/", include_in_schema=False)
+    def home(): return RedirectResponse("/app/")
