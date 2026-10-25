@@ -20,6 +20,9 @@ quiet "Version … is ready" note.
 
 ### One-time setup: the signing key
 
+The easy way: on your server, run `bash mobile/make-signing-key.sh`. It makes the key (Zigora, Zigora Intelligence, Chennai, Tamil Nadu, India),
+keeps it in `~/zigora-signing`, sends the four secrets below to GitHub with the GitHub CLI (`gh`), and starts a build. Or by hand:
+
 Releases need a signing key, kept in the repository's secrets. Every version must be signed with the same key, or phones refuse the update. Make it once,
 on your own computer, and keep a copy somewhere safe:
 
