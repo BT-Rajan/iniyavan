@@ -1,8 +1,8 @@
 """Safety rules for every AI request the app makes.
 
-They live here in code, not in Settings or the database, so no admin, teacher or student can change or remove them. main.deepseek(),
-the only place an AI request leaves the server, puts them first on every call, fences everything written by people as material rather
-than instructions, and withholds any reply that leaks them. Changing them is a code change, reviewed like any other.
+They live here in code, not in Settings or the database, so no admin, teacher or student can change or remove them. main.deepseek() and
+main.vision(), the only two places an AI request leaves the server (text to DeepSeek, a photo to Claude), put them first on every call, fence everything written by people as material rather
+than instructions, and withhold any reply that leaks them. Changing them is a code change, reviewed like any other.
 """
 import re
 

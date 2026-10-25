@@ -1,5 +1,5 @@
 from collections import defaultdict
-import base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, time, datetime as dt, httpx, jwt, nh3
+import anthropic, base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, time, datetime as dt, httpx, jwt, nh3
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -1043,7 +1043,7 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
 AI_DOWN = "AI unavailable. Try again later."
 def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
 async def deepseek(key, model, messages, max_tokens=None, timeout=45):
-    """The only way an AI request leaves the server. The built-in safety rules (guardrails.py) always go first, ahead of any task prompt an admin
+    """The only way a text request leaves the server (photos go through vision(), which does the same). The built-in safety rules (guardrails.py) always go first, ahead of any task prompt an admin
     can edit; what people wrote is fenced as material, not instructions; and a reply that leaks the rules is withheld."""
     sent = [{"role": "system", "content": GUARDRAILS}] + [{"role": m["role"], "content": fence(m["content"]) if m["role"] == "user" else m["content"]} for m in messages]
     async with httpx.AsyncClient(timeout=timeout) as c:
@@ -1052,13 +1052,31 @@ async def deepseek(key, model, messages, max_tokens=None, timeout=45):
     r.raise_for_status(); j = r.json(); text = j["choices"][0]["message"]["content"]
     if not text: raise ValueError("empty answer")
     return checked(text), j.get("usage", {}).get("total_tokens", 0)
+VISION_MODEL = "claude-opus-5-5"  # the default model for photos of diagrams; an admin can choose another under Settings
+def vision_key(s): return setting(s, "vision_key") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+def vision_on(u, s): return bool(vision_key(s)) and not u.self_registered  # the college's Claude key; self-registered people bring only a DeepSeek key
+REFUSED = "I can't help with that photo. Ask me about something you are studying."
+async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
+    """The only way a photo leaves the server: to Claude, which can see diagrams. Like deepseek(), the built-in safety rules come first,
+    what people wrote is fenced as material, and a reply that leaks the rules is withheld. Returns (text, tokens)."""
+    client = anthropic.AsyncAnthropic(api_key=key, max_retries=1, timeout=90)
+    r = await client.beta.messages.create(
+        model=model, max_tokens=max_tokens, system=GUARDRAILS + "\n\n" + system, output_config={"effort": "medium"},
+        betas=["server-side-fallback-2026-07-01"], fallbacks="default",  # a declined request is retried on a fallback model by the API itself
+        messages=[{"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.standard_b64encode(image_jpeg).decode()}},
+                                               {"type": "text", "text": fence(text)}]}])
+    if r.stop_reason == "refusal": return REFUSED, 0
+    out = "".join(b.text for b in r.content if b.type == "text").strip()
+    if not out: raise ValueError("empty answer")
+    return checked(out), (r.usage.input_tokens or 0) + (r.usage.output_tokens or 0)
 def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
     return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
 def key_for(u, s):  # self-registered people use their own key and never the shared one; everyone else uses the admin's
     return unseal(u.ai_key) if u.self_registered and u.ai_key else "" if u.self_registered else ai_key(s)
 NEEDS_OWN_KEY = "Add your own DeepSeek API key under AI key in the menu to use AI help."
 @app.get("/api/ai/status")
-def ai_status(u: User = Depends(me), s: Session = Depends(db)): return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered)}
+def ai_status(u: User = Depends(me), s: Session = Depends(db)):
+    return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered), "vision": vision_on(u, s), "ocr": ocr_ready()}
 class OwnKey(BaseModel): key: str
 @app.get("/api/me/ai-key")
 def my_ai_key(u: User = Depends(me)):
@@ -1077,17 +1095,24 @@ async def set_my_ai_key(b: OwnKey, u: User = Depends(me), s: Session = Depends(d
 @app.delete("/api/me/ai-key")
 def delete_my_ai_key(u: User = Depends(me), s: Session = Depends(db)):
     s.get(User, u.id).ai_key = None; s.commit(); return {"ok": True}
-class Cfg(BaseModel): deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False; self_registration: bool | None = None; allowed_domains: str | None = None
+class Cfg(BaseModel):
+    deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False; self_registration: bool | None = None; allowed_domains: str | None = None
+    vision_key: str | None = None; vision_model: str | None = None; remove_vision_key: bool = False
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
+    vk = vision_key(s)
     return {"mail_on": mail_on(), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
+            "vision_set": bool(vk), "vision_hint": ("…" + vk[-4:]) if vk else "", "vision_model": setting(s, "vision_model", VISION_MODEL), "ocr": ocr_ready(),
             "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count()}
 @app.put("/api/admin/settings")
 def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
     for k, v in (("deepseek_key", b.deepseek_key), ("model", b.model)):
         if v and v.strip() and not (k == "deepseek_key" and b.remove_key): s.merge(Setting(k=k, v=v.strip()))
+    if b.remove_vision_key: s.query(Setting).filter_by(k="vision_key").delete()  # photos of diagrams stop going to Claude; text from photos still works
+    for k, v in (("vision_key", b.vision_key), ("vision_model", b.vision_model)):
+        if v and v.strip() and not (k == "vision_key" and b.remove_vision_key): s.merge(Setting(k=k, v=v.strip()))
     if b.self_registration is not None: s.merge(Setting(k="self_registration", v="1" if b.self_registration else "0"))
     if b.allowed_domains is not None:
         doms = [d.lstrip("@") for d in re.split(r"[,\s]+", b.allowed_domains.lower()) if d]
@@ -1102,6 +1127,18 @@ async def test_ai(_: User = Depends(admin), s: Session = Depends(db)):
     except httpx.HTTPStatusError as e: return {"ok": False, "message": "DeepSeek rejected the request (" + str(e.response.status_code) + "). " + ("The key looks invalid." if e.response.status_code in (401, 403) else "Check the model name and your balance." if e.response.status_code in (400, 402, 404) else "Try again shortly.")}
     except Exception: return {"ok": False, "message": "No answer from DeepSeek. Check the server's internet access and try again."}
     return {"ok": True, "message": "The key works. Students can use AI now."}
+@app.post("/api/admin/vision/test")
+async def test_vision(_: User = Depends(admin), s: Session = Depends(db)):
+    key = vision_key(s)
+    if not key: return {"ok": False, "message": "No Claude key saved yet."}
+    from PIL import Image
+    buf = io.BytesIO(); Image.new("RGB", (16, 16), "white").save(buf, "JPEG")
+    try: await vision(key, setting(s, "vision_model", VISION_MODEL), "Reply with the word OK.", buf.getvalue(), "Reply with the word OK.", max_tokens=200)
+    except anthropic.AuthenticationError: return {"ok": False, "message": "Claude rejected the key. Check it and save it again."}
+    except anthropic.NotFoundError: return {"ok": False, "message": "Claude does not know that model name. Check it under Vision model."}
+    except anthropic.APIStatusError as e: return {"ok": False, "message": f"Claude answered with an error ({e.status_code})."}
+    except Exception: return {"ok": False, "message": "No answer from Claude. Check the server's internet access and try again."}
+    return {"ok": True, "message": "The key works. Students can ask about diagrams in photos now."}
 @app.post("/api/admin/mail/test")
 def test_mail(a: User = Depends(admin)):
     if not mail_on(): return {"ok": False, "message": "Email isn't set up. Add SMTP_HOST, SMTP_FROM and APP_URL to .env and restart."}
@@ -2762,6 +2799,9 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
  "doubt": ("You are a patient tutor inside a study app. A student marked a phrase they do not understand in one topic. You are told only the program, semester, course and topic names and the phrase itself, never the notes. "
            "Say what the phrase means in that course in at most 90 words: a plain definition first, then one tiny example. If the phrase could mean different things without the notes, say in one short line which meaning you assume. "
            "Use Markdown, plain short sentences, no greeting."),
+ "photo": ("A student photographed part of a textbook or question paper and has a question about it. You get the text read from the photo (it may have reading mistakes: "
+           "fix obvious ones silently) and, when they ask about a diagram, the photo itself. Answer their question clearly and briefly: at most 150 words, or numbered steps "
+           "when they ask you to solve something. Use Markdown and $...$ for maths. If the photo or text is too unclear to answer, say what is unclear and ask them to retake it."),
  "search": ("You are the search helper inside a study app for college students. The student typed a search about something they are studying and the app has no good match in its own notes, "
             "or they asked for a second opinion. Answer it as a clear, accurate tutor: start with a one-line definition, then explain the core idea simply, give one example, and end with 3 recap bullets. "
             "Use Markdown; show comparisons and families of related items as a table with every row on its own line. Fit the answer to the student's program and level when it is given. "
@@ -2778,6 +2818,7 @@ PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on 
                "simpler": ("Topic step: More simply", "Offered after a student says a quick check was not quite right: the idea again in plainer words."),
                "outline": ("Sample answer outline", "The skeleton of a full-marks answer, shown before the full sample answer."),
                "doubt": ("Doubt (a marked phrase)", "Used when a student marks a phrase they do not follow and asks the AI. Only the program, semester, course and topic names and the phrase are sent, never the notes."),
+               "photo": ("Ask from a photo", "Used when a student photographs a question, text or diagram and asks about it. With a diagram, the photo goes to Claude; otherwise only the text read from it goes to DeepSeek."),
                "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
 MAX_PROMPT = 4000
 def prompt_for(s, kind): return setting(s, "prompt_" + kind).strip() or PROMPTS[kind]
@@ -2884,7 +2925,7 @@ class FlagIn(BaseModel): source: str; id: int | None = None; topic_id: int | Non
 FLAG_DAILY = 20
 @app.post("/api/ai/flag")
 def flag_ai(b: FlagIn, u: User = Depends(me), s: Session = Depends(db)):
-    if b.source not in ("topic", "search"): raise HTTPException(400, "Unknown source")
+    if b.source not in ("topic", "search", "photo"): raise HTTPException(400, "Unknown source")
     if s.query(func.count(AIFlag.id)).filter(AIFlag.user_id == u.id, AIFlag.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= FLAG_DAILY:
         raise HTTPException(429, "Thanks, that's plenty of reports for today.")
     excerpt, kind, tid = (b.excerpt or "")[:600], (b.kind or "")[:10], None
@@ -2895,6 +2936,7 @@ def flag_ai(b: FlagIn, u: User = Depends(me), s: Session = Depends(db)):
         row = s.get(AICache, b.id) if b.id else None
         if row and row.topic_id == t.id: excerpt, kind = readable(row.kind, row.text)[:600], row.kind
         elif b.id: raise HTTPException(404, "That answer is no longer saved")
+    elif b.source == "photo": kind, b.id = "photo", None
     else:
         row = s.get(SearchAnswer, b.id) if b.id else None
         if row: excerpt, kind = row.text[:600], "search"
@@ -3006,6 +3048,53 @@ def egress_report(days: int = 30, _: User = Depends(admin), s: Session = Depends
     rows = s.query(AIEgress.kind, func.count(AIEgress.id), func.coalesce(func.sum(AIEgress.chars), 0)).filter(AIEgress.at >= since).group_by(AIEgress.kind).all()
     failed = dict(s.query(AIEgress.kind, func.count(AIEgress.id)).filter(AIEgress.at >= since, AIEgress.ok == False).group_by(AIEgress.kind).all())  # noqa: E712
     return {"days": days, "by_kind": [{"kind": k, "requests": n, "chars": int(c), "failed": failed.get(k, 0)} for k, n, c in sorted(rows, key=lambda r: -r[1])], "total": sum(r[1] for r in rows)}
+# ---- ask from a photo: the student snaps a question, a paragraph or a diagram in their book. The server reads the text (Tesseract, on this server);
+# ---- the student checks it and asks. Only that text goes to DeepSeek; a photo goes out only when they ask about a diagram, and then only to Claude. Photos are never stored.
+PHOTO_DAILY = int(os.getenv("AI_PHOTO_DAILY") or 20)  # photo questions a student can send to the AI per day
+MAX_PHOTO = 6 * 1024 * 1024
+def photo_jpeg(b64):  # the photo as a clean JPEG: decoded, checked to be an image, shrunk to at most 1568 px, metadata (like GPS) dropped
+    from PIL import Image, ImageOps
+    try:
+        raw = base64.b64decode((b64 or "").split(",", 1)[-1], validate=False)
+        if not raw or len(raw) > MAX_PHOTO: raise ValueError
+        im = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB"); im.thumbnail((1568, 1568))
+        out = io.BytesIO(); im.save(out, "JPEG", quality=85); return out.getvalue(), im
+    except Exception: raise HTTPException(400, "That photo could not be read. Take it again, or choose a JPEG or PNG under 6 MB.")
+class PhotoIn(BaseModel): image: str
+@app.post("/api/photo/read")
+def photo_read(b: PhotoIn, u: User = Depends(me)):
+    """Step one, all on this server: the text in the photo, for the student to check before asking."""
+    _, im = photo_jpeg(b.image)
+    if not ocr_ready(): return {"text": "", "ocr": False}
+    import pytesseract
+    try: text = pytesseract.image_to_string(im.convert("L"), lang=OCR_LANGS, timeout=60)
+    except Exception: text = ""
+    return {"text": re.sub(r"\n{3,}", "\n\n", text).strip()[:4000], "ocr": True}
+class PhotoAsk(BaseModel): question: str; text: str = ""; image: str | None = None; diagram: bool = False
+@app.post("/api/photo/ask")
+async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)):
+    q, text = " ".join((b.question or "").split())[:500], (b.text or "").strip()[:4000]
+    if not q: raise HTTPException(400, "Type your question about the photo")
+    if crisis(q) or crisis(text): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "support": True}
+    see = b.diagram and b.image and vision_on(u, s)
+    if not see and not text: raise HTTPException(400, "No text was read from the photo. Type what it says, or retake it closer and in good light.")
+    if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind.in_(("photo", "vision")), AIEgress.ok == True,  # noqa: E712
+                                                                    AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= PHOTO_DAILY:
+        raise HTTPException(429, f"You have used today's {PHOTO_DAILY} photo questions. Try again tomorrow.")
+    who = ""
+    if u.role == "student" and u.program_id:
+        pr = s.get(Program, u.program_id); who = f"Student's program: {pr.name if pr else ''}" + (f", {term_label(pr)} {u.semester}" if u.semester else "") + "\n"
+    msg = who + f"Text read from the photo:\n{text or '(none)'}\n\nThe student's question: {q}"
+    prompt = in_lang(u, prompt_for(s, "photo"))
+    if see:
+        jpeg, _ = photo_jpeg(b.image); size = len(prompt) + len(msg) + len(jpeg)
+        try: out, _t = await vision(vision_key(s), setting(s, "vision_model", VISION_MODEL), prompt, jpeg, msg)
+        except Exception as e:
+            egress(s, u, "vision", None, size, False); log.warning("Claude call failed: %s", type(e).__name__)
+            raise ai_down(u, "Claude did not answer. Check the Claude key and model under Settings." if isinstance(e, anthropic.APIStatusError) else "Claude did not answer.")
+        egress(s, u, "vision", None, size, True); return {"text": out, "via": "claude"}
+    out, _t = await ask_ai(u, s, key_or_fail(u, s), prompt, msg, max_tokens=900, kind="photo")
+    return {"text": out, "via": "deepseek"}
 @app.get("/api/me/recall")
 def recall(u: User = Depends(me), s: Session = Depends(db)):
     """'Remember this?': one curious question from a topic the student opened a few days ago, from its saved gist (never a new AI call). Changes daily."""

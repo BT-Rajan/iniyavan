@@ -20,7 +20,7 @@ export function fixTables(text){
 const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
 const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
-import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag} from 'lucide-react'
+import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -94,7 +94,7 @@ export default function App(){
     :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role}}>
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
-    {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find}/>}
+    {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
@@ -247,9 +247,10 @@ function Notifications({onOpen,page}){
       {d===null?<Skeleton/>:items.length?<Paged rows={items} render={x=><button key={x.key} className={'note'+(x.unread?' new':'')} onClick={()=>{setOpen(false);load();onOpen()}}><span>{srv(x.text)}</span>{x.sub&&<small>{srv(x.sub)}</small>}</button>}/>:<p className="known">{tl("You're all caught up.")}</p>}
       {d?.mail&&<label className="chk notemail"><input type="checkbox" checked={!!d.digest} onChange={e=>digest(e.target.checked)}/>{" "}{tl("Email me a daily summary of new ones")}</label>}</div>}</div>}
 // the search box under the header on every page: Enter opens Search with the query
-function GlobalSearch({onFind}){
+function GlobalSearch({onFind,onPhoto}){
   const [q,setQ]=useState('')
-  return <form className="gsearch" role="search" onSubmit={e=>{e.preventDefault();if(q.trim().length>=2)onFind(q.trim())}}><div className="search"><Search size={18}/><input type="search" aria-label={tl("Search topics")} placeholder={tl("Search topics, or ask a question")} value={q} maxLength={200} onChange={e=>setQ(e.target.value)}/></div></form>}
+  return <form className="gsearch" role="search" onSubmit={e=>{e.preventDefault();if(q.trim().length>=2)onFind(q.trim())}}><div className="search"><Search size={18}/><input type="search" aria-label={tl("Search topics")} placeholder={tl("Search topics, or ask a question")} value={q} maxLength={200} onChange={e=>setQ(e.target.value)}/>
+    {onPhoto&&<button type="button" className="ic sm camb" aria-label={tl("Ask from a photo")} title={tl("Ask from a photo")} onClick={onPhoto}><Camera size={18}/></button>}</div></form>}
 
 const ARCHIVE_WHAT=L({programs:'every semester or year, course, unit, topic and quiz in it',semesters:'every course, unit, topic and quiz in it',courses:'its units, topics and quizzes',units:'its topics and quizzes',topics:'this topic'})
 const ONE=L({programs:'program',semesters:'semester or year',courses:'course',units:'unit',topics:'topic'})
@@ -413,7 +414,7 @@ function StaffHome({user,toast,open}){
     {o?.courses>0&&<><h3 className="sec">{admin?tl("Courses"):tl("Your courses")}</h3><CourseReports toast={toast} onOpen={setRep}/></>}
   </div></>}
 // AI replies students flagged as looking wrong, on this person's topics (all of them for admins), never with who flagged them
-const FLAG_KIND={gist:'The gist',why:'Why?',example:'Example',exam:'Exam angle',check:'Quick check',simpler:'More simply',outline:'Answer outline',explain:'Explain',answer:'Sample answer',line:'Highlight explanation',search:'Search answer'}
+const FLAG_KIND={gist:'The gist',why:'Why?',example:'Example',exam:'Exam angle',check:'Quick check',simpler:'More simply',outline:'Answer outline',explain:'Explain',answer:'Sample answer',line:'Highlight explanation',search:'Search answer',photo:'Photo answer'}
 function FlagsPage({toast,back}){
   const confirm=useConfirm(),[t,setT]=useState(null)
   const {items,total,page,setPage,ready,reload}=usePaged(o=>`/flags?limit=${PAGE}&offset=${o}`,[],toast)
@@ -1079,6 +1080,42 @@ function TopicSteps({id,student}){
       {left.length>0&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}</div>}
       {busy==='simpler'&&<p className="known">{tl("Thinking…")}</p>}</>}
   </section>}
+// Ask from a photo: snap a question, a paragraph or a diagram in a book. The photo is shrunk in the browser, the server reads its text (nothing leaves),
+// the student checks the text and asks. Only that text goes to the AI, unless they say it is about a diagram: then the photo goes to Claude, which can see it
+const PHOTO_SIZE=1568
+const shrink=file=>new Promise((ok,bad)=>{const fail=()=>bad(new Error(tl("That file is not a photo we can read."))),rd=new FileReader()  // read as data: (the page's CSP allows data: images, not blob:)
+  rd.onerror=fail;rd.onload=()=>{const im=new Image()
+    im.onload=()=>{const k=Math.min(1,PHOTO_SIZE/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k)
+      c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',0.85))}  // a re-drawn JPEG carries no location or camera details
+    im.onerror=fail;im.src=rd.result};rd.readAsDataURL(file)})
+function PhotoAsk({toast}){
+  const [img,setImg]=useState(null),[text,setText]=useState(''),[reading,setReading]=useState(false),[q,setQ]=useState(''),[diagram,setDiagram]=useState(false)
+  const [busy,setBusy]=useState(false),[answers,setAnswers]=useState([]),[st,setSt]=useState({}),cam=useRef(),gal=useRef()
+  useEffect(()=>{api('/ai/status').then(setSt).catch(()=>{})},[])
+  const pick=async e=>{const f=e.target.files?.[0];e.target.value='';if(!f)return
+    try{const d=await shrink(f);setImg(d);setText('');setAnswers([]);setDiagram(false);setReading(true)
+      const r=await api('/photo/read',{method:'POST',body:{image:d}});setText(r.text)}catch(er){toast(er.message)}setReading(false)}
+  const ask=async(question=q)=>{if(!question.trim())return;setBusy(true)
+    try{const r=await api('/photo/ask',{method:'POST',body:{question,text,image:diagram?img:null,diagram}});setAnswers(a=>[{q:question,...r},...a]);setQ('')}catch(er){toast(er.message)}setBusy(false)}
+  const quick=diagram?[tl("What does the diagram show?"),tl("Explain the labelled parts")]:[tl("Explain this simply"),tl("Solve it step by step"),tl("What will the exam ask about this?")]
+  return <><Bar title={tl("Ask from a photo")} sub={tl("A question, a paragraph or a diagram from your book")}/><div className="main">
+    <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={pick}/><input ref={gal} type="file" accept="image/*" hidden onChange={pick}/>
+    <div className="two"><button className="btn" style={{marginTop:0}} onClick={()=>cam.current.click()}><Camera size={18}/>{" "}{img?tl("Retake"):tl("Take a photo")}</button>
+      <button className="btn ghost" style={{marginTop:0}} onClick={()=>gal.current.click()}><ImagePlus size={18}/>{" "}{tl("Choose a photo")}</button></div>
+    {!img&&<p className="known">{tl("Hold the phone flat over the page, in good light, with only the part you are asking about in the photo.")}</p>}
+    {img&&<><img className="photoprev" src={img} alt={tl("Your photo")}/>
+      <label htmlFor="ptext">{tl("What the photo says")}</label>
+      {reading?<Skeleton rows={2}/>:<textarea id="ptext" rows={5} value={text} onChange={e=>setText(e.target.value)} placeholder={st.ocr===false?tl("This server can't read photos yet. Type the question here."):tl("Nothing was read. Type the question here, or retake the photo closer.")}/>}
+      {!reading&&text&&<p className="known" style={{marginTop:4}}>{tl("Check it and fix anything misread before you ask.")}</p>}
+      {st.vision?<label className="chk"><input type="checkbox" checked={diagram} onChange={e=>setDiagram(e.target.checked)}/>{" "}{tl("My question is about a diagram or figure in the photo")}</label>
+        :<p className="known">{tl("For a diagram, only its labels are read. Say in your question what the diagram shows.")}</p>}
+      <label htmlFor="pq">{tl("Your question")}</label>
+      <div className="stepchips" style={{marginTop:0,marginBottom:8}}>{quick.map(x=><button key={x} className="stepchip" disabled={busy||reading} onClick={()=>ask(x)}>{x}</button>)}</div>
+      <form onSubmit={e=>{e.preventDefault();ask()}} className="pform"><input id="pq" value={q} maxLength={500} onChange={e=>setQ(e.target.value)} placeholder={tl("Or type your own question")}/>
+        <button className="btn" style={{marginTop:8}} disabled={busy||reading||!q.trim()}>{busy?tl("Thinking…"):tl("Ask")}</button></form>
+      <p className="known privacy">{diagram?tl("Your photo goes to Claude so it can look at the diagram. It is not stored."):tl("Your photo stays here: only the text above goes to the AI. Nothing is stored.")}</p>
+      {answers.map((a,i)=><div key={answers.length-i} className="gist panswer"><small className="steplab">{a.q}</small><Md>{a.text}</Md>{!a.support&&<FlagLink source="photo" excerpt={a.text}/>}</div>)}</>}
+  </div></>}
 // "This looks wrong?" under an AI reply: a student's private report, which the topic's teacher sees (never who sent it) and can have written again
 function FlagLink({source,id,topicId,excerpt}){
   const {role}=useContext(Ctx),[st,setSt]=useState(''),[why,setWhy]=useState(''),[err,setErr]=useState('')
@@ -1700,8 +1737,8 @@ function Branding({toast,onSaved}){
     <button className="btn" disabled={busy} onClick={()=>save({name,logo_url:logo||undefined})}>{tl("Save name and logo")}</button></>}
 function AiConfig({toast,onBrand}){
   const confirm=useConfirm()
-  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai')
-  const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model)});api('/admin/stats').then(setSt)};useEffect(load,[])
+  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState('')
+  const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model);setVmodel(c.vision_model)});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
   return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")]]} value={tab} onChange={setTab}/>
     {tab==='school'&&<Branding toast={toast} onSaved={onBrand}/>}{tab==='ai'&&<>
@@ -1710,6 +1747,13 @@ function AiConfig({toast,onBrand}){
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key,model}}).then(()=>setKey('')),'AI settings saved')}>{tl("Save")}</button>
     {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>{tl("Test the key")}</button>
       <button className="btn ghost" onClick={async()=>{if(await confirm({title:tl("Turn AI off for everyone?"),body:tl("Students will see “AI unavailable” until you save a key again."),ok:tl("Turn AI off"),danger:true}))run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}}>{tl("Remove the key (turn AI off)")}</button></>}
+    <h3 className="sec">{tl("Photos of diagrams (Claude)")}</h3>
+    <p className="known" style={{marginTop:0}}>{tl("Students can photograph a question, text or diagram and ask about it. The text in a photo is read on this server and only that text goes to DeepSeek. To let the AI look at diagrams, add a Claude API key: then, when a student says their question is about a diagram, the photo goes to Claude. Without a key, diagrams are read for their labels only.")}{" "}{cfg.ocr?'':tl("Reading text from photos needs Tesseract on this server (see Production first run in the README).")}</p>
+    <label>{tl("Claude API key")}</label><input type="password" value={vkey} onChange={e=>setVkey(e.target.value)} placeholder={cfg.vision_set?tl("Leave blank to keep the current key")+' ('+cfg.vision_hint+')':'sk-ant-…'}/>
+    <label>{tl("Vision model")}</label><input value={vmodel} onChange={e=>setVmodel(e.target.value)} placeholder="claude-opus-5-5"/>
+    <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{vision_key:vkey,vision_model:vmodel}}).then(()=>setVkey('')),'Claude settings saved')}>{tl("Save")}</button>
+    {cfg.vision_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/vision/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>{tl("Test the key")}</button>
+      <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{remove_vision_key:true}}),'Claude key removed')}>{tl("Remove the Claude key")}</button></>}
     <p className="known" style={{marginTop:20}}>{tl("One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {v} answers are saved so far, which has saved about {v2} tokens.",{v:(st.cached??0).toLocaleString(),v2:(st.tokens_saved??0).toLocaleString()})}</p>
     </>}{tab==='prompts'&&<PromptEditor toast={toast}/>}
     {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/>
