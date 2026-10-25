@@ -1,5 +1,5 @@
 from collections import defaultdict
-import anthropic, base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, time, datetime as dt, httpx, jwt, nh3
+import anthropic, asyncio, base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, time, datetime as dt, httpx, jwt, nh3
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, BackgroundTasks
@@ -235,6 +235,7 @@ class AIEgress(Base):  # one row for every request that left for the AI provider
     __tablename__ = "ai_egress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, index=True); kind = Column(String(20)); topic_id = Column(Integer, nullable=True)
     chars = Column(Integer, default=0); ok = Column(Boolean, default=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
+    tokens = Column(Integer, default=0); own = Column(Boolean, default=False)  # tokens the provider billed; own = paid with the person's own key, not the college's
 
 def _dk(p, salt, it): return hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), it).hex()
 def hp(p, iters=None):
@@ -585,7 +586,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0022_highlight_colors_and_digest", lambda c: [_addcol(*x)(c) for x in (("highlights", "color", "VARCHAR(10) NULL"), ("highlights", "note", "TEXT NULL"),
                                                                                      ("users", "digest", "TINYINT(1) NOT NULL DEFAULT 0"), ("users", "digest_at", "DATETIME NULL"))]),
               ("0023_users_lang", _addcol("users", "lang", "VARCHAR(5) NULL")),
-              ("0024_answer_authors", lambda c: [_addcol(t, "author_id", "INTEGER NULL")(c) for t in ("search_answers", "doubt_answers", "ai_cache")])]
+              ("0024_answer_authors", lambda c: [_addcol(t, "author_id", "INTEGER NULL")(c) for t in ("search_answers", "doubt_answers", "ai_cache")]),
+              ("0025_egress_tokens", lambda c: [_addcol("ai_egress", "tokens", "INTEGER NOT NULL DEFAULT 0")(c), _addcol("ai_egress", "own", "BOOLEAN NOT NULL DEFAULT 0")(c)])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -1111,18 +1113,24 @@ def delete_my_ai_key(u: User = Depends(me), s: Session = Depends(db)):
 class Cfg(BaseModel):
     deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False; self_registration: bool | None = None; allowed_domains: str | None = None
     vision_key: str | None = None; vision_model: str | None = None; remove_vision_key: bool = False
+    budget_deepseek: int | None = None; budget_claude: int | None = None  # tokens a month on the college's keys; 0 means no limit
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
     vk = vision_key(s)
     return {"mail_on": mail_on(), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
             "vision_set": bool(vk), "vision_hint": ("…" + vk[-4:]) if vk else "", "vision_model": setting(s, "vision_model", VISION_MODEL), "ocr": ocr_ready(),
+            "budget": {p: budget(s, p) for p in ("deepseek", "claude")},
             "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count()}
 @app.put("/api/admin/settings")
 def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
     for k, v in (("deepseek_key", b.deepseek_key), ("model", b.model)):
         if v and v.strip() and not (k == "deepseek_key" and b.remove_key): s.merge(Setting(k=k, v=v.strip()))
+    for p, v in (("deepseek", b.budget_deepseek), ("claude", b.budget_claude)):
+        if v is not None:
+            if not 0 <= v <= 10**12: raise HTTPException(400, "Enter a monthly allowance in tokens, or 0 for no limit")
+            s.merge(Setting(k="budget_" + p, v=str(v)))
     if b.remove_vision_key: s.query(Setting).filter_by(k="vision_key").delete()  # photos of diagrams stop going to Claude; text from photos still works
     for k, v in (("vision_key", b.vision_key), ("vision_model", b.vision_model)):
         if v and v.strip() and not (k == "vision_key" and b.remove_vision_key): s.merge(Setting(k=k, v=v.strip()))
@@ -2813,6 +2821,9 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
  "doubt": ("You are a patient tutor inside a study app. A student marked a phrase they do not understand in one topic. You are told only the program, semester, course and topic names and the phrase itself, never the notes. "
            "Say what the phrase means in that course in at most 90 words: a plain definition first, then one tiny example. If the phrase could mean different things without the notes, say in one short line which meaning you assume. "
            "Use Markdown, plain short sentences, no greeting."),
+ "translate": ("Translate these study notes for a student, keeping their meaning exact. Keep the format exactly: the same Markdown (headings, lists, tables, bold) "
+               "or, for HTML, every tag and attribute unchanged with only the text between tags translated. Keep formulas, equations, chemical symbols, units, numbers, "
+               "code and $...$ maths as they are. The first time a technical term appears, put the English term in brackets after it. Reply with the translation only."),
  "photo": ("A student photographed part of a textbook or question paper and has a question about it. You get the text read from the photo (it may have reading mistakes: "
            "fix obvious ones silently) and, when they ask about a diagram, the photo itself. Answer their question clearly and briefly: at most 150 words, or numbered steps "
            "when they ask you to solve something. Use Markdown and $...$ for maths. If the photo or text is too unclear to answer, say what is unclear and ask them to retake it."),
@@ -2832,6 +2843,7 @@ PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on 
                "simpler": ("Topic step: More simply", "Offered after a student says a quick check was not quite right: the idea again in plainer words."),
                "outline": ("Sample answer outline", "The skeleton of a full-marks answer, shown before the full sample answer."),
                "doubt": ("Doubt (a marked phrase)", "Used when a student marks a phrase they do not follow and asks the AI. Only the program, semester, course and topic names and the phrase are sent, never the notes."),
+               "translate": ("Notes in my language", "Translates a topic's notes into a student's language (Arabic or Tamil), once per topic and language; everyone shares the translation."),
                "photo": ("Ask from a photo", "Used when a student photographs a question, text or diagram and asks about it. With a diagram, the photo goes to Claude; otherwise only the text read from it goes to DeepSeek."),
                "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
 MAX_PROMPT = 4000
@@ -2865,14 +2877,31 @@ def my_profile(u: User = Depends(me), s: Session = Depends(db)):
     pr = s.get(Program, u.program_id) if u.program_id else None
     return {"name": u.name, "email": u.email, "role": u.role, "lang": u.lang or "en", "program": pr.name if pr else "", "semester": u.semester, "term": term_label(pr) if pr else "",
             "self_registered": bool(u.self_registered), **({"rewards": rewards(s, u.id)} if u.role == "student" else {})}
-def egress(s, u, kind, topic_id, chars, ok):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
-    try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok)); s.commit()
+def own_key(u): return bool(u.self_registered and u.ai_key)  # paying with their own DeepSeek key: outside the college's allowance
+def egress(s, u, kind, topic_id, chars, ok, tokens=0):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
+    try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok, tokens=tokens or 0, own=own_key(u) and kind != "vision")); s.commit()
     except Exception: s.rollback()
+# ---- the college's monthly AI allowance: tokens per provider, set by an admin. When one is used up, new AI requests on the college's key stop until
+# ---- the 1st; saved answers keep working, and people paying with their own key are not affected. Admins are warned at BUDGET_WARN of it.
+BUDGET_WARN = 0.8
+def month_start(): now = dt.datetime.utcnow(); return dt.datetime(now.year, now.month, 1)
+def budget(s, provider):  # {"limit": tokens or 0 for none, "used": tokens this month on the college's key}
+    q = s.query(func.coalesce(func.sum(AIEgress.tokens), 0)).filter(AIEgress.at >= month_start(), AIEgress.own == False)  # noqa: E712
+    q = q.filter(AIEgress.kind == "vision") if provider == "claude" else q.filter(AIEgress.kind != "vision")
+    try: limit = max(0, int(setting(s, "budget_" + provider) or 0))
+    except ValueError: limit = 0
+    return {"limit": limit, "used": int(q.scalar() or 0)}
+def budget_or_fail(u, s, provider):
+    b = budget(s, provider)
+    if b["limit"] and b["used"] >= b["limit"]:
+        raise HTTPException(503, "This month's AI allowance is used up. Saved answers still work, and new ones can be asked again from the 1st."
+                            + (f" (Admin: the {'Claude' if provider == 'claude' else 'DeepSeek'} allowance is set under Settings.)" if u.role == "admin" else ""))
 async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60, kind="other", topic_id=None):
     size = len(system) + len(msg)
+    if not own_key(u): budget_or_fail(u, s, "deepseek")
     try:
         out = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
-        egress(s, u, kind, topic_id, size, True); return out
+        egress(s, u, kind, topic_id, size, True, out[1]); return out
     except httpx.HTTPStatusError as e:
         egress(s, u, kind, topic_id, size, False)
         log.warning("DeepSeek answered %s", e.response.status_code)
@@ -3125,14 +3154,50 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
     msg = who + f"Text read from the photo:\n{text or '(none)'}\n\nThe student's question: {q}"
     prompt = in_lang(u, prompt_for(s, "photo"))
     if see:
-        jpeg, _ = photo_jpeg(b.image); size = len(prompt) + len(msg) + len(jpeg)
+        budget_or_fail(u, s, "claude"); jpeg, _ = photo_jpeg(b.image); size = len(prompt) + len(msg) + len(jpeg)
         try: out, _t = await vision(vision_key(s), setting(s, "vision_model", VISION_MODEL), prompt, jpeg, msg)
         except Exception as e:
             egress(s, u, "vision", None, size, False); log.warning("Claude call failed: %s", type(e).__name__)
             raise ai_down(u, "Claude did not answer. Check the Claude key and model under Settings." if isinstance(e, anthropic.APIStatusError) else "Claude did not answer.")
-        egress(s, u, "vision", None, size, True); return {"text": out, "via": "claude"}
+        egress(s, u, "vision", None, size, True, _t); return {"text": out, "via": "claude"}
     out, _t = await ask_ai(u, s, key_or_fail(u, s), prompt, msg, max_tokens=900, kind="photo")
     return {"text": out, "via": "deepseek"}
+@app.get("/api/admin/budget")
+def budget_status(_: User = Depends(admin), s: Session = Depends(db)):
+    out = {p: budget(s, p) for p in ("deepseek", "claude")}
+    for b in out.values(): b["share"] = round(b["used"] / b["limit"], 3) if b["limit"] else 0
+    return {**out, "warn_at": BUDGET_WARN}
+# ---- a topic's notes in the reader's language (Arabic or Tamil): translated once per topic and language, in parts, then kept and shared
+TRANSLATABLE = ("markdown", "html")
+def note_parts(text, fmt, size=3000):  # the notes cut at paragraph or block ends into parts of about `size` characters
+    pieces = re.findall(r".*?</(?:p|h[1-6]|li|ul|ol|table|div|blockquote|pre|section)>|.+$", text, re.S | re.I) if fmt == "html" else re.split(r"(\n\s*\n)", text)
+    parts, cur = [], ""
+    for p in pieces:
+        if cur and len(cur) + len(p) > size: parts.append(cur); cur = ""
+        cur += p
+    return [x for x in parts + [cur] if x.strip()]
+@app.get("/api/topics/{tid}/translation")
+async def translation(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s)
+    if (u.lang or "en") not in ("ar", "ta"): raise HTTPException(400, "Choose Arabic or Tamil as your language to see notes translated")
+    fmt = fmt_of(t)
+    if fmt not in TRANSLATABLE or not (t.content or "").strip(): raise HTTPException(400, "This topic's notes can't be translated")
+    prompt = in_lang(u, prompt_for(s, "translate")); ch = topic_hash(t, "translate", prompt); key = key_or_fail(u, s)
+    hit = s.query(AICache).filter_by(topic_id=tid, kind="translate", chash=ch).first()
+    if hit: hit.hits += 1; s.commit(); return {"content": hit.text, "format": fmt, "cached": True, "id": hit.id}
+    gate = asyncio.Semaphore(3)
+    async def one(part):
+        async with gate:
+            return (await ask_ai(u, s, key, prompt, f"Format: {'HTML' if fmt == 'html' else 'Markdown'}\n\n{part}", max_tokens=6000, timeout=120, kind="translate", topic_id=tid))
+    done = await asyncio.gather(*[one(p) for p in note_parts(t.content, fmt)])
+    text = ("" if fmt == "html" else "\n\n").join(x[0].strip() for x in done); tokens = sum(x[1] for x in done)
+    if fmt == "html": text = clean_html(text)  # the translation is cleaned like any uploaded HTML: no scripts, no styles
+    row = AICache(topic_id=tid, kind="translate", chash=ch, text=text, tokens=tokens)
+    try: s.add(row); s.commit()
+    except Exception: s.rollback(); row = None
+    return {"content": text, "format": fmt, "cached": False, "id": row.id if row else None}
 @app.get("/api/me/recall")
 def recall(u: User = Depends(me), s: Session = Depends(db)):
     """'Remember this?': one curious question from a topic the student opened a few days ago, from its saved gist (never a new AI call). Changes daily."""
