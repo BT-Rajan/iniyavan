@@ -18,14 +18,14 @@ def test_off_until_smtp_is_configured(env, monkeypatch):
 def test_same_answer_for_known_and_unknown_and_only_known_gets_mail(env, monkeypatch):
     box = setup(env, monkeypatch)
     a, b = forgot(env, "stu@x.com"), forgot(env, "nobody@x.com"); assert a.status_code == b.status_code == 200 and a.json() == b.json()
-    assert [m[0] for m in box] == ["stu@x.com"] and box[0][2].count("https://learn.test/#reset=") == 1
+    assert [m[0] for m in box] == ["stu@x.com"] and box[0][2].count("https://learn.test/app/#reset=") == 1
     with Session_() as s: assert all(len(r.token_hash) == 64 for r in s.query(PasswordReset)) and token_from(box) not in str([r.token_hash for r in s.query(PasswordReset)])
     with Session_() as s: s.query(User).filter_by(email="fac@x.com").update({"active": False}); s.commit()
     forgot(env, "fac@x.com"); assert len(box) == 1
 
 def test_link_always_uses_app_url_not_the_host_header(env, monkeypatch):
     box = setup(env, monkeypatch); forgot(env, "stu@x.com", headers={"Host": "evil.example", "X-Forwarded-Host": "evil.example"})
-    assert "evil.example" not in box[0][2] and "https://learn.test/#reset=" in box[0][2]
+    assert "evil.example" not in box[0][2] and "https://learn.test/app/#reset=" in box[0][2]
 
 def test_reset_changes_password_signs_out_old_sessions_and_link_is_single_use(env, monkeypatch):
     box = setup(env, monkeypatch); forgot(env, "stu@x.com"); forgot(env, "stu@x.com"); t2 = token_from(box)

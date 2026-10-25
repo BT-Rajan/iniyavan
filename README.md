@@ -227,6 +227,13 @@ The rule: study text goes out **once**, the answer is kept, and from then on the
 - **Still sent each time:** a new Quick check or Full quiz in a student-built course sends that topic's text again, because every request is meant to write different questions. Reducing that means generating a question bank once and drawing from it, which is not built yet.
 - **The outbound log:** every request that leaves is recorded in `ai_egress`: who, which kind, which topic, how many characters, and whether it was answered. Never the text. Admins read the totals at `GET /api/admin/egress?days=30`.
 
+## The home page and where the app lives
+The site's root (`/`) is the Zigora home page, a single static page in `web/` (`index.html`, `site.js`, fonts and the logo; no build step). It is in English, Arabic (right to left) and Tamil, and its buttons open the app, which now lives under **`/app/`**.
+- Edit the page's words in `web/index.html` (English) and `web/site.js` (Arabic and Tamil). It is served under the app's strict security policy, so it uses no outside fonts or scripts; keep it that way.
+- The app is built with base `/app/` (`frontend/vite.config.js`); the installed-app manifest, offline worker, password reset links and digest emails all point there. An installed app opens straight into `/app/`, and the home page removes the old offline worker the app used to register at the root.
+- `APP_URL` in `.env` stays the site's root (for example `https://learn.example.edu`); links add `/app/` themselves. Old bookmarks to the root now land on the home page, one tap from the app.
+- Without a `web/` folder, the root simply redirects to `/app/`.
+
 ## Notes in my language
 A student whose app is in Arabic or Tamil sees **Original | العربية/தமிழ்** above a topic's notes. The first time anyone asks, the notes are translated in parts (about 3000 characters each, three at a time) with the editable "Notes in my language" prompt: the format is kept (Markdown, or HTML tags unchanged and cleaned afterwards like any upload), formulas, symbols, units and numbers stay as they are, and a technical term gets its English name in brackets the first time. The translation is kept per topic and language and shared, so each costs tokens once; editing the notes or the prompt starts afresh. Highlighting works on the original, so the full-screen reader always opens the original. Interactive pages are not translated.
 
