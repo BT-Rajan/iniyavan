@@ -79,7 +79,7 @@ fun SignIn(done: (Me) -> Unit) {
         // "learn.college.edu", "169.58.13.213:5252" or a copied link to the web app: https is tried first, then plain http
         for (s in serverCandidates(typed)) {
             app.store.server = s
-            try { val c = app.api.get("/config", Config.serializer()); college = c.name; canRegister = c.self_registration; canReset = c.email_reset; server = s; editing = false; msg = ""; return true }
+            try { val c = app.api.get("/config", Config.serializer()); college = c.name; app.store.appName = c.name; canRegister = c.self_registration; canReset = c.email_reset; server = s; editing = false; msg = ""; return true }
             catch (e: Exception) { msg = e.message.orEmpty() }
         }
         return false

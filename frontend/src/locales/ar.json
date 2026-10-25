@@ -1746,5 +1746,19 @@
 "“{name}” is in {label} with {n}{v}.": "«{name}» موجود في {label} مع {n}{v}.",
 "“{title}” is a draft in {label} › {name}.": "«{title}» مسودة في {label} › {name}.",
 "…and {v} more.": "…و{v} أخرى.",
-"› {name} · {length} units": "› {name} · {length} وحدات"
+"› {name} · {length} units": "› {name} · {length} وحدات",
+"Their answer": "إجابته",
+"Your answer": "إجابتك",
+"Correct answer": "الإجابة الصحيحة",
+"Strong": "قوي",
+"Revisit": "راجِعه",
+"Material": "المادة",
+"Slice": "التقسيم",
+"Adding…": "جارٍ الإضافة…",
+"The AI is reading your material and slicing it. This can take a minute…": "يقرأ الذكاء الاصطناعي مادتك ويقسّمها. قد يستغرق ذلك دقيقة…",
+"Slicing by headings…": "جارٍ التقسيم حسب العناوين…",
+"Building your course…": "جارٍ بناء مقررك…",
+"★ topic completed · ★★ quiz passed · ★★★ mastered (90%+ in a quiz)": "★ اكتمل الموضوع · ★★ نجحت في الاختبار · ★★★ أتقنته (90% فأكثر في اختبار)",
+"Optional. For example: \"One topic per verse\", \"Keep the vocabulary table in one topic\", \"Units should follow the chapters\", \"Make topics very short\".": "اختياري. مثلًا: \"موضوع لكل آية\"، \"اجعل جدول المفردات في موضوع واحد\"، \"اجعل الوحدات تتبع الفصول\"، \"اجعل المواضيع قصيرة جدًا\".",
+" · sliced by headings": " · مقسّم حسب العناوين"
 }

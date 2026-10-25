@@ -78,7 +78,7 @@ suspend fun readPicked(ctx: android.content.Context, uri: Uri): Pair<String, Byt
 @Composable
 fun sourceLine(x: Source): String = when (x.status) {
     "reading" -> if (x.done > 0) stringResource(R.string.reading_scanned_n, x.done, x.pages) else stringResource(R.string.waiting_scanned, x.pages)
-    "failed" -> x.error
+    "failed" -> app.zigora.data.I18n.srv(x.error)
     else -> (if (x.kind == "scan") stringResource(R.string.scanned_read) + " · " else "") + stringResource(R.string.n_words, x.words) + (if (x.note.isNotEmpty()) " · ${x.note}" else "")
 }
 

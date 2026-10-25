@@ -29,7 +29,6 @@
     <string name="back_for_next_part">ارجع للجزء التالي:</string>
     <string name="back_to_sign_in">العودة إلى تسجيل الدخول</string>
     <string name="back_to_topic">العودة إلى الموضوع</string>
-    <string name="best_percent">الأفضل %1$d%%</string>
     <string name="bookmark">ضع إشارة مرجعية على هذا الموضوع</string>
     <string name="bookmark_removed">أُزيلت الإشارة المرجعية</string>
     <string name="bookmarked">تمت الإشارة المرجعية</string>
@@ -49,7 +48,6 @@
     <string name="college_address">عنوان Zigora الخاص بكليتك</string>
     <string name="college_address_hint">مثل learn.yourcollege.edu. تعطيك كليتك هذا العنوان.</string>
     <string name="correct">صحيح</string>
-    <string name="correct_is">الإجابة الصحيحة: %1$s</string>
     <string name="course_unavailable">هذا المقرر غير متاح الآن</string>
     <string name="create_account">إنشاء حساب</string>
     <string name="current_password">كلمة المرور الحالية</string>
@@ -73,7 +71,6 @@
     <string name="explained">مشروح</string>
     <string name="file_it">صنّفه</string>
     <string name="file_too_big">%1$s يتجاوز %2$s ميغابايت. قسّمه إلى ملفات أصغر.</string>
-    <string name="finish">إنهاء</string>
     <string name="five_quick">5 أسئلة سريعة</string>
     <string name="flag_thanks">شكرًا. سيلقي معلمك نظرة.</string>
     <string name="forgot_ask_admin">نسيت كلمة المرور؟ اطلب من المسؤول إعادة تعيينها.</string>
@@ -111,7 +108,6 @@
     <string name="last_saved_rebuild">آخر حفظ %1$s. الحفظ مرة أخرى يعيد بناء ملاحظاتك من هذه المواد، ويبقى تقدمك ونتائج اختباراتك.</string>
     <string name="learn_by">تعلّمه قبل %1$s</string>
     <string name="learned">مُتعلَّم</string>
-    <string name="left_blank">تُرك فارغًا</string>
     <string name="left_out">مستبعد</string>
     <string name="lite_note">مجانًا كل يوم: %1$d عمليات بحث بالذكاء الاصطناعي و%2$d دقيقة من التعلّم بالذكاء الاصطناعي. الإجابات المحفوظة لا تُحتسب أبدًا.</string>
     <string name="looks_wrong">هل يبدو هذا خاطئًا؟</string>
@@ -177,6 +173,7 @@
     <string name="notifications">الإشعارات</string>
     <string name="of_total_right">%1$d من %2$d صحيحة · %3$d%%</string>
     <string name="only_you_see">أنت فقط ترى هذا</string>
+    <string name="open_in_browser">افتح في المتصفح</string>
     <string name="open_interactive">افتح الصفحة التفاعلية</string>
     <string name="open_title">فتح %1$s</string>
     <string name="original">الأصل</string>
@@ -184,8 +181,6 @@
     <string name="own_key_note">تستخدم مفتاح DeepSeek الخاص بك، فلا يوجد حدّ يومي.</string>
     <string name="page_of">%1$d من %2$d</string>
     <string name="part_n_words">الجزء %1$d · %2$d كلمة</string>
-    <string name="pass_mark">درجة النجاح %1$d%%</string>
-    <string name="passed">ناجح (درجة النجاح %1$d%%)</string>
     <string name="password">كلمة المرور</string>
     <string name="password_rule">8 أحرف على الأقل</string>
     <string name="paste_hint">الصق ملاحظاتك. الأسطر التي تبدأ بـ # عناوين.</string>
@@ -205,7 +200,6 @@
     <string name="question_first">سؤال أولًا</string>
     <string name="question_is_wrong">هذا السؤال خاطئ</string>
     <string name="question_n">السؤال %1$d</string>
-    <string name="question_n_of">السؤال %1$d من %2$d</string>
     <string name="question_pattern">نمط الأسئلة</string>
     <string name="question_wont_come_back">شكرًا. لن يعود هذا السؤال في مراجعاتك.</string>
     <string name="read_full_screen">القراءة بملء الشاشة</string>
@@ -246,7 +240,6 @@
     <string name="scanned_read">ممسوح، قُرئ بالتعرّف على النص</string>
     <string name="scanned_reading_now">%1$s صفحات ممسوحة. تُقرأ الآن؛ يمكنك البقاء أو العودة لاحقًا.</string>
     <string name="scanned_still_reading">ما زالت صفحاتك الممسوحة قيد القراءة. تبدأ المطابقة بعد انتهائها.</string>
-    <string name="score_of">%1$d من %2$d · %3$d%%</string>
     <string name="search_hint">ابحث عن أي شيء في منهجك</string>
     <string name="searches_today">عمليات بحث اليوم: %1$d من %2$d</string>
     <string name="see_my_score">اعرض درجتي</string>
@@ -273,6 +266,8 @@
     <string name="signin_lead">تعلّم هادئ وفضولي</string>
     <string name="signing_in">جارٍ تسجيل الدخول…</string>
     <string name="six_digit_code">رمز من 6 أرقام</string>
+    <string name="staff_body">مرحبًا %1$s. يستخدم المعلمون والمسؤولون %2$s على الويب، حيث توجد المقررات والاختبارات والتقارير والإعدادات. افتحه في متصفحك على %3$s</string>
+    <string name="staff_title">التطبيق مخصّص للطلاب</string>
     <string name="started">بدأته</string>
     <string name="step_check">سؤال سريع</string>
     <string name="step_exam">زاوية الامتحان</string>
@@ -285,7 +280,6 @@
     <string name="study_again">ادرس مرة أخرى</string>
     <string name="submit_answers">إرسال الإجابات</string>
     <string name="tab_answer">نموذج إجابة</string>
-    <string name="tab_courses">المقررات</string>
     <string name="tab_explain">اشرح</string>
     <string name="tab_home">الرئيسية</string>
     <string name="tab_me">أنا</string>
@@ -330,7 +324,6 @@
     <string name="writing_quiz">جارٍ كتابة الاختبار القصير…</string>
     <string name="written_with_notes">كُتب باستخدام ملاحظاتك الخاصة</string>
     <string name="wrong">خطأ</string>
-    <string name="you_chose">اخترت: %1$s</string>
     <string name="you_marked_learned">علّمت هذا كمُتعلَّم</string>
     <string name="your_highlights">تظليلاتك</string>
     <string name="your_highlights_n">تظليلاتك (%1$d)</string>

@@ -594,7 +594,7 @@ function AttemptView({id,back,toast,role}){
     {!d.reveal&&d.questions.length>0&&<p className="known">{tl("You see which answers were right ({right} of {length}). This quiz does not show the correct answers.",{right:right,length:d.questions.length})}</p>}
     {d.questions.map((x,i)=><div className="qbox" key={x.id}><b>{tl("Question {v} ·",{v:i+1})}{" "}{x.ok?tl("Right"):tl("Wrong")}{x.area?' · '+x.area:''}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={tl("Picture for question {i}{v}",{i:i,v:1})}/>
       {x.options.map((o,k)=>{const mine=x.chosen_known&&x.chosen===k,key=d.reveal&&x.correct===k,cls=key||(mine&&x.ok)?' ok':mine?' bad':''
-        return <div key={k} className={'opt'+cls}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/>{(mine||key)&&<span className="otag">{[mine&&(staff?'Their answer':'Your answer'),key&&'Correct answer'].filter(Boolean).join(' · ')}</span>}</div>})}
+        return <div key={k} className={'opt'+cls}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/>{(mine||key)&&<span className="otag">{[mine&&(staff?tl('Their answer'):tl('Your answer')),key&&tl('Correct answer')].filter(Boolean).join(' · ')}</span>}</div>})}
       {x.chosen_known&&x.chosen==null&&<p className="known">{tl("Left blank.")}</p>}
       {x.explanation&&<div className="known"><Md>{x.explanation}</Md></div>}</div>)}</div></>}
 function MyAttempts({quiz,user,back,toast,role}){  // a person's attempts at one quiz; staff pass user to see a student's
@@ -757,7 +757,7 @@ function LearnCard({me,onContinue,onReview}){
     {me.next&&<button className="btn" onClick={()=>onContinue(me.next)}><Play size={16}/> {me.next.done?tl("Continue"):tl("Start")}: {me.next.topic}<small className="sub">{me.next.course}</small></button>}
     {me.reviews_due>0&&<button className="btn ghost" onClick={()=>onReview(me.review_courses[0].course_id)}><RotateCcw size={16}/>{" "}{tl("Look again at {n}",{n:pl(me.reviews_due,'topic')})}</button>}</div>}
 const STEPS=['Name','Material','Slice','Preview'],AREA_LABEL={strong:'Strong',getting_there:'Getting there',needs_study:'Revisit'}
-const Steps=({at})=><ol className="steps" aria-label={tl("Setup steps")}>{STEPS.map((s,i)=><li key={s} className={i<at?'done':i===at?'on':''} aria-current={i===at?'step':undefined}><span>{i<at?<Check size={14}/>:i+1}</span>{s}</li>)}</ol>
+const Steps=({at})=><ol className="steps" aria-label={tl("Setup steps")}>{STEPS.map((s,i)=><li key={s} className={i<at?'done':i===at?'on':''} aria-current={i===at?'step':undefined}><span>{i<at?<Check size={14}/>:i+1}</span>{tl(s)}</li>)}</ol>
 const NOTES_HINT='Optional. For example: "One topic per verse", "Keep the vocabulary table in one topic", "Units should follow the chapters", "Make topics very short".'
 function StudyHome({toast,start}){
   const [d,setD]=useState(null),[me,setMe]=useState(null),[open,setOpen]=useState(start&&start.id?start:null),[make,setMake]=useState(false),[title,setTitle]=useState(''),[busy,setBusy]=useState(false),[rev,setRev]=useState(null)
@@ -809,7 +809,7 @@ function StudyWizard({id,toast,back,done}){
   const words=c.sources.reduce((a,x)=>a+x.words,0)
   return <><Bar title={c.title} sub={tl("Set up · step {step}{v} of 4",{step:step,v:1})} back={back}/><div className="main">
     <Steps at={step}/>
-    {busy&&<div className="qbox" role="status" style={{marginTop:0}}><b>{busy}</b></div>}
+    {busy&&<div className="qbox" role="status" style={{marginTop:0}}><b>{tl(busy)}</b></div>}
     {step===1&&<>
       <h3 className="sec first">{tl("Add your material")}</h3><p className="known" style={{marginTop:0}}>{tl("PDF, Word (.docx), or .txt and .md files, up to {MAX_FILE_MB} MB each. Add several and they are joined in the order you add them. You can also paste text.",{MAX_FILE_MB:MAX_FILE_MB})}{c.ocr_available?tl(" Scanned PDFs are read with text recognition, a few seconds a page."):tl(" Scanned PDFs can't be read on this server yet.")}</p>
       <input ref={fileRef} type="file" hidden multiple accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={files}/>
@@ -820,20 +820,20 @@ function StudyWizard({id,toast,back,done}){
         <button className="btn" disabled={!!c.reading} onClick={()=>setStep(2)}>{c.reading?tl("Reading scanned pages…"):tl("Next: slice it into topics")}</button></>}</>}
     {step===2&&<>
       <h3 className="sec first">{tl("How should it be sliced?")}</h3><p className="known" style={{marginTop:0}}>{tl("The AI groups your {n} into units and the smallest topics that make sense on their own. It keeps your own words; it only decides where each topic starts and ends and what to call it.",{n:pl(c.paragraphs,'paragraph')})}</p>
-      <label htmlFor="nts">{tl("Notes for the AI")}</label><textarea id="nts" value={notes} onChange={e=>setNotes(e.target.value)} placeholder={NOTES_HINT}/>
+      <label htmlFor="nts">{tl("Notes for the AI")}</label><textarea id="nts" value={notes} onChange={e=>setNotes(e.target.value)} placeholder={tl(NOTES_HINT)}/>
       <AiNote o={c}/>
       <button className={'btn'+(c.ai_available&&c.ai_left!==0?'':' ghost')} disabled={!!busy||!c.ai_available||c.ai_left===0} onClick={()=>slice('ai')}><Sparkles size={16}/>{" "}{tl("Slice with AI")}</button>
       <button className={'btn'+(c.ai_available&&c.ai_left!==0?' ghost':'')} disabled={!!busy} onClick={()=>slice('headings')}>{tl("Slice by headings instead (no AI)")}</button>
       <button className="btn ghost" onClick={()=>setStep(1)}>{tl("Back to material")}</button></>}
     {step===3&&plan&&<>
-      <h3 className="sec first">{tl("Check the outline")}</h3><p className="known" style={{marginTop:0}}>{pl(plan.units.length,'unit')}{tl(", {n}{v}. Rename anything, merge a topic into the next one, or remove one you don't need. Not right? Change the notes and slice again.",{n:pl(flat.length,'topic'),v:c.sliced_by==='headings'?' · sliced by headings':''})}</p>
+      <h3 className="sec first">{tl("Check the outline")}</h3><p className="known" style={{marginTop:0}}>{pl(plan.units.length,'unit')}{tl(", {n}{v}. Rename anything, merge a topic into the next one, or remove one you don't need. Not right? Change the notes and slice again.",{n:pl(flat.length,'topic'),v:c.sliced_by==='headings'?tl(' · sliced by headings'):''})}</p>
       {plan.units.map((u,ui)=><section key={ui} className="qbox"><label className="sr" htmlFor={'u'+ui}>{tl("Unit {v} title",{v:ui+1})}</label><input id={'u'+ui} className="utitle" value={u.title} onChange={e=>rename(ui,null,e.target.value)}/>
         {u.topics.map((t,ti)=>{const last=ui===plan.units.length-1&&ti===u.topics.length-1
           return <div key={t.from} className="ptopic"><label className="sr" htmlFor={`t${ui}-${ti}`}>{tl("Topic title")}</label><input id={`t${ui}-${ti}`} value={t.title} onChange={e=>rename(ui,ti,e.target.value)}/>
             <small className="known">{t.summary?t.summary+' · ':''}{pl(t.words||0,'word')}</small><p className="excerpt">{t.excerpt}{t.excerpt&&t.excerpt.length>=280?'…':''}</p>
             <div className="acts"><button className="tool" onClick={async()=>{try{setPeek({title:t.title,...(await api(`/study/courses/${id}/preview?start=${t.from}&end=${t.to}`))})}catch(e){toast(e.message)}}}>{tl("Read it all")}</button>
               {!last&&<button className="tool" onClick={()=>merge(ui,ti)}>{tl("Merge with next")}</button>}{flat.length>1&&<button className="tool" onClick={()=>remove(ui,ti)}>{tl("Remove")}</button>}</div></div>})}</section>)}
-      <h3 className="sec">{tl("Slice it differently")}</h3><label htmlFor="nts2">{tl("Notes for the AI")}</label><textarea id="nts2" value={notes} onChange={e=>setNotes(e.target.value)} placeholder={NOTES_HINT}/>
+      <h3 className="sec">{tl("Slice it differently")}</h3><label htmlFor="nts2">{tl("Notes for the AI")}</label><textarea id="nts2" value={notes} onChange={e=>setNotes(e.target.value)} placeholder={tl(NOTES_HINT)}/>
       <div className="two"><button className="btn ghost" disabled={!!busy} onClick={()=>slice('ai')}><Sparkles size={16}/>{" "}{tl("Slice again with AI")}</button><button className="btn ghost" disabled={!!busy} onClick={()=>setStep(1)}>{tl("Change material")}</button></div>
       <button className="btn" disabled={!!busy} onClick={finish}><Check size={16}/>{" "}{tl("Finish: build my course")}</button>
       {dirty&&<button className="btn ghost" disabled={!!busy} onClick={async()=>{try{await savePlan();toast(tl("Outline saved"))}catch(e){toast(e.message)}}}>{tl("Save outline and finish later")}</button>}</>}
@@ -856,12 +856,12 @@ function StudyCourse({id,topic:first,toast,back,setup}){
     <div className="qbox" style={{marginTop:0}}><p className="known" style={{margin:0}}>{pl(all.length,'topic')}</p>
       {c.reviews_due>0&&<button className="btn ghost" onClick={async()=>{try{setRev(await api(`/study/courses/${id}/review`,{method:'POST'}))}catch(e){toast(e.message)}}}><RotateCcw size={16}/>{" "}{tl("Look again at {n}",{n:pl(c.reviews_due,'topic')})}</button>}
       {p&&p.quizzed>0&&<p className="known" style={{margin:'8px 0 0'}}>{tl("Quiz average {average}% over {n}.",{average:p.average,n:pl(p.quizzed,'topic')})}{p.summary&&' '+p.summary}</p>}
-      {next&&<button className={'btn'+(c.reviews_due?' ghost':'')} onClick={()=>setTopic(next.id)}><Play size={16}/> {done?tl("Continue"):tl("Start")}: {next.title}</button>}<p className="known" style={{margin:'8px 0 0'}}>{STAR_HELP}</p></div>
+      {next&&<button className={'btn'+(c.reviews_due?' ghost':'')} onClick={()=>setTopic(next.id)}><Play size={16}/> {done?tl("Continue"):tl("Start")}: {next.title}</button>}<p className="known" style={{margin:'8px 0 0'}}>{tl(STAR_HELP)}</p></div>
     {all.length>12&&<div className="search" style={{marginTop:14}}><Search size={18}/><input type="search" aria-label={tl("Find a topic")} placeholder={tl("Find a topic")} value={find} onChange={e=>setFind(e.target.value)}/></div>}
     <Paged rows={c.units.flatMap(u=>u.topics.filter(t=>has(find,t.title,t.summary)).map(t=>({u,t})))} render={({u,t},i,j,pg)=><Fragment key={t.id}>{(!j||pg[j-1].u!==u)&&<h3 className={'sec'+(i?'':' first')}>{u.title}</h3>}
       <button className="row rowbtn" onClick={()=>setTopic(t.id)}><div>{t.title}{t.due&&<span className="pill sm" style={{marginLeft:6}}>{tl("Review due")}</span>}<small>{t.summary||''}{t.best!=null?tl("{v}best quiz {best}%",{v:t.summary?' · ':'',best:t.best}):''}</small></div><ChevronRight size={18}/></button></Fragment>}/>
     {p&&p.areas.length>0&&<><h3 className="sec">{tl("From your quizzes")}</h3><p className="known" style={{marginTop:0}}>{tl("Your best quiz score in each topic, weakest first.")}</p>
-      {<Paged rows={p.areas} render={a=><button key={a.topic_id} className="row rowbtn" onClick={()=>setTopic(a.topic_id)}><div>{a.title}<span className={'pill sm '+(a.status==='strong'?'okp':a.status==='needs_study'?'off':'')} style={{marginLeft:6}}>{AREA_LABEL[a.status]}</span><small>{tl("Best quiz {percent}%",{percent:a.percent})}</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>}/>}</>}
+      {<Paged rows={p.areas} render={a=><button key={a.topic_id} className="row rowbtn" onClick={()=>setTopic(a.topic_id)}><div>{a.title}<span className={'pill sm '+(a.status==='strong'?'okp':a.status==='needs_study'?'off':'')} style={{marginLeft:6}}>{tl(AREA_LABEL[a.status])}</span><small>{tl("Best quiz {percent}%",{percent:a.percent})}</small><Bar2 v={a.percent}/></div><ChevronRight size={18}/></button>}/>}</>}
     {c.can_edit&&<><h3 className="sec">{tl("Course settings")}</h3>
       <label id="shr">{tl("Who can study it")}</label><div className="seg" role="group" aria-labelledby="shr" style={{gridTemplateColumns:'1fr 1fr',margin:'0 0 8px'}}>{[['private',tl("Only me")],['program',tl("My classmates")]].map(([k,l])=><button key={k} className={c.share===k?'on':''} aria-pressed={c.share===k} onClick={()=>c.share!==k&&share(k)}>{l}</button>)}</div>
       <p className="known" style={{marginTop:0}}>{c.share==='program'?tl("Students in your program can open it and take their own quizzes. Only you can change it."):tl("Private: only you can see it.")}</p>

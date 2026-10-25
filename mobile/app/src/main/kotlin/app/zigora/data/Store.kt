@@ -40,6 +40,11 @@ class Store(context: Context, private val sealer: Sealer = Keystore) {
         get() = prefs.getBoolean("wallpaper", true)
         set(v) = prefs.edit { putBoolean("wallpaper", v) }
 
+    /** the college's name for the app, as its server calls it (the web's header shows the same) */
+    var appName: String
+        get() = prefs.getString("app_name", null) ?: "Zigora"
+        set(v) = prefs.edit { putString("app_name", v) }
+
     /** Auto (the phone's setting), light or dark, as on the web */
     var theme: String
         get() = prefs.getString("theme", "system") ?: "system"

@@ -30,7 +30,6 @@
     <string name="back_for_next_part">Back for the next part:</string>
     <string name="back_to_sign_in">Back to sign in</string>
     <string name="back_to_topic">Back to the topic</string>
-    <string name="best_percent">best %1$d%%</string>
     <string name="bookmark">Bookmark this topic</string>
     <string name="bookmark_removed">Bookmark removed</string>
     <string name="bookmarked">Bookmarked</string>
@@ -50,7 +49,6 @@
     <string name="college_address">Your college\'s Zigora address</string>
     <string name="college_address_hint">For example learn.yourcollege.edu. Your college gives you this.</string>
     <string name="correct">Correct</string>
-    <string name="correct_is">Correct answer: %1$s</string>
     <string name="course_unavailable">This course is unavailable right now</string>
     <string name="create_account">Create an account</string>
     <string name="current_password">Current password</string>
@@ -74,7 +72,6 @@
     <string name="explained">Explained</string>
     <string name="file_it">File it</string>
     <string name="file_too_big">%1$s is over %2$s MB. Split it into smaller files.</string>
-    <string name="finish">Finish</string>
     <string name="five_quick">5 quick questions</string>
     <string name="flag_thanks">Thanks. Your teacher will take a look.</string>
     <string name="forgot_ask_admin">Forgot your password? Ask your admin to reset it.</string>
@@ -112,7 +109,6 @@
     <string name="last_saved_rebuild">Last saved %1$s. Saving again rebuilds your notes from this material; your progress and quiz results stay.</string>
     <string name="learn_by">Learn by %1$s</string>
     <string name="learned">Learned</string>
-    <string name="left_blank">Left blank</string>
     <string name="left_out">Left out</string>
     <string name="lite_note">Free each day: %1$d AI searches and %2$d minutes of learning with AI. Saved answers never count.</string>
     <string name="looks_wrong">This looks wrong?</string>
@@ -178,6 +174,7 @@
     <string name="notifications">Notifications</string>
     <string name="of_total_right">%1$d of %2$d right · %3$d%%</string>
     <string name="only_you_see">Only you see this</string>
+    <string name="open_in_browser">Open in the browser</string>
     <string name="open_interactive">Open the interactive page</string>
     <string name="open_title">Open %1$s</string>
     <string name="original">Original</string>
@@ -185,8 +182,6 @@
     <string name="own_key_note">You use your own DeepSeek key, so there is no daily limit.</string>
     <string name="page_of">%1$d of %2$d</string>
     <string name="part_n_words">Part %1$d · %2$d words</string>
-    <string name="pass_mark">Pass mark %1$d%%</string>
-    <string name="passed">Passed (pass mark %1$d%%)</string>
     <string name="password">Password</string>
     <string name="password_rule">At least 8 characters</string>
     <string name="paste_hint">Paste your notes. Lines starting with # are headings.</string>
@@ -206,7 +201,6 @@
     <string name="question_first">A question first</string>
     <string name="question_is_wrong">This question is wrong</string>
     <string name="question_n">Question %1$d</string>
-    <string name="question_n_of">Question %1$d of %2$d</string>
     <string name="question_pattern">Question pattern</string>
     <string name="question_wont_come_back">Thanks. That question won\'t come back in your reviews.</string>
     <string name="read_full_screen">Read in full screen</string>
@@ -247,7 +241,6 @@
     <string name="scanned_read">Scanned, read with text recognition</string>
     <string name="scanned_reading_now">%1$s is scanned pages. Reading them now; you can stay or come back later.</string>
     <string name="scanned_still_reading">Your scanned pages are still being read. Matching starts once they are done.</string>
-    <string name="score_of">%1$d of %2$d · %3$d%%</string>
     <string name="search_hint">Look up anything in your syllabus</string>
     <string name="searches_today">Searches today: %1$d of %2$d</string>
     <string name="see_my_score">See my score</string>
@@ -274,6 +267,8 @@
     <string name="signin_lead">Calm, curious learning</string>
     <string name="signing_in">Signing in…</string>
     <string name="six_digit_code">6-digit code</string>
+    <string name="staff_body">Hello %1$s. Teachers and admins use %2$s on the web, where courses, quizzes, reports and settings are. Open it in your browser at %3$s</string>
+    <string name="staff_title">The app is for students</string>
     <string name="started">Started</string>
     <string name="step_check">Quick check</string>
     <string name="step_exam">Exam angle</string>
@@ -286,7 +281,6 @@
     <string name="study_again">Study again</string>
     <string name="submit_answers">Submit answers</string>
     <string name="tab_answer">Sample answer</string>
-    <string name="tab_courses">Courses</string>
     <string name="tab_explain">Explain</string>
     <string name="tab_home">Home</string>
     <string name="tab_me">Me</string>
@@ -331,7 +325,6 @@
     <string name="writing_quiz">Writing the quiz…</string>
     <string name="written_with_notes">Written with your own notes</string>
     <string name="wrong">Wrong</string>
-    <string name="you_chose">You chose: %1$s</string>
     <string name="you_marked_learned">You marked this as learned</string>
     <string name="your_highlights">Your highlights</string>
     <string name="your_highlights_n">Your highlights (%1$d)</string>

@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CameraAlt
@@ -52,7 +53,7 @@ import java.net.URLEncoder
 /** The college's own topics first; the AI only when they don't cover it, and its answer is saved for everyone who asks the same. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(initial: String, openTopic: (Int) -> Unit, openPhoto: () -> Unit) {
+fun SearchScreen(initial: String, back: () -> Unit, openTopic: (Int) -> Unit, openPhoto: () -> Unit) {
     val a = api(); val scope = rememberCoroutineScope(); val kb = LocalSoftwareKeyboardController.current
     var q by rememberSaveable { mutableStateOf(initial) }
     var found by remember { mutableStateOf<SearchOut?>(null) }
@@ -73,7 +74,8 @@ fun SearchScreen(initial: String, openTopic: (Int) -> Unit, openPhoto: () -> Uni
         asking = false
     }
     LaunchedEffect(initial) { if (initial.isNotBlank()) look() else focus.requestFocus() }
-    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_search)) }, actions = {
+    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_search)) },
+        navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } }, actions = {
         IconButton(onClick = openPhoto) { Icon(Icons.Outlined.CameraAlt, stringResource(R.string.ask_photo)) } }) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true, placeholder = { Text(stringResource(R.string.search_hint)) },

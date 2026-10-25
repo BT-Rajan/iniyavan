@@ -1746,5 +1746,19 @@
 "“{name}” is in {label} with {n}{v}.": "“{name}” {label} இல் {n}{v} உடன் உள்ளது.",
 "“{title}” is a draft in {label} › {name}.": "“{title}” என்பது {label} › {name} இல் ஒரு வரைவு.",
 "…and {v} more.": "…மேலும் {v}.",
-"› {name} · {length} units": "› {name} · {length} அலகுகள்"
+"› {name} · {length} units": "› {name} · {length} அலகுகள்",
+"Their answer": "அவரது பதில்",
+"Your answer": "உங்கள் பதில்",
+"Correct answer": "சரியான பதில்",
+"Strong": "வலுவானது",
+"Revisit": "மீண்டும் பார்க்கவும்",
+"Material": "பாடப்பொருள்",
+"Slice": "பிரித்தல்",
+"Adding…": "சேர்க்கிறது…",
+"The AI is reading your material and slicing it. This can take a minute…": "AI உங்கள் பாடப்பொருளைப் படித்துப் பிரிக்கிறது. இதற்கு ஒரு நிமிடம் ஆகலாம்…",
+"Slicing by headings…": "தலைப்புகளின்படி பிரிக்கிறது…",
+"Building your course…": "உங்கள் பாடநெறியை உருவாக்குகிறது…",
+"★ topic completed · ★★ quiz passed · ★★★ mastered (90%+ in a quiz)": "★ தலைப்பு முடிந்தது · ★★ வினாடி வினாவில் தேர்ச்சி · ★★★ தேர்ச்சி பெற்றது (வினாடி வினாவில் 90%+)",
+"Optional. For example: \"One topic per verse\", \"Keep the vocabulary table in one topic\", \"Units should follow the chapters\", \"Make topics very short\".": "விருப்பத்தேர்வு. உதாரணமாக: \"ஒவ்வொரு வசனத்துக்கும் ஒரு தலைப்பு\", \"சொல்லகராதி அட்டவணையை ஒரே தலைப்பில் வைக்கவும்\", \"அலகுகள் அத்தியாயங்களைப் பின்பற்ற வேண்டும்\", \"தலைப்புகளை மிகச் சிறியதாக்கவும்\".",
+" · sliced by headings": " · தலைப்புகளின்படி பிரிக்கப்பட்டது"
 }

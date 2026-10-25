@@ -11,9 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
-import androidx.compose.material.icons.outlined.Quiz
 import androidx.compose.material.icons.outlined.Timelapse
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -22,6 +20,9 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -38,22 +39,25 @@ import kotlinx.serialization.builtins.ListSerializer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CoursesScreen(me: Me, open: (Int) -> Unit) {
+fun CoursesScreen(me: Me, openSearch: () -> Unit, openStudy: () -> Unit, open: (Int) -> Unit) {
     val tree = rememberLoad("tree") { get("/tree", ListSerializer(ProgramNode.serializer())) }
-    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_courses)) }) }) { pad ->
+    Scaffold(topBar = { TopAppBar(title = { Text(tl("My courses")) }, actions = {
+        IconButton(onClick = openSearch) { Icon(Icons.Outlined.Search, stringResource(R.string.tab_search)) } }) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp)) {
             Loaded(tree) { list ->
                 val courses = coursesOf(list)
                 if (courses.isEmpty()) Quiet(stringResource(if (me.self_registered && !me.placed) R.string.not_placed else R.string.not_enrolled))
                 else CourseList(courses, open)
             }
+            Gap(16)
+            RowLink(tl("Build a course"), tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews"), openStudy)
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CourseScreen(id: Int, back: () -> Unit, openTopic: (Int) -> Unit, openQuiz: (Int) -> Unit) {
+fun CourseScreen(id: Int, back: () -> Unit, openTopic: (Int) -> Unit, openQuiz: (Int) -> Unit, openMaterial: (Int, String) -> Unit, openRevision: (Int) -> Unit) {
     val tree = rememberLoad("tree", id) { get("/tree", ListSerializer(ProgramNode.serializer())) }
     val c = (tree.state as? Load.Ok)?.value?.let { coursesOf(it).firstOrNull { x -> x.id == id } }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
@@ -64,10 +68,15 @@ fun CourseScreen(id: Int, back: () -> Unit, openTopic: (Int) -> Unit, openQuiz: 
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             Loaded(tree) {
                 if (c == null) { Problem(stringResource(R.string.course_unavailable)); return@Loaded }
+                val ts = c.units.flatMap { it.topics }; val k = ts.count { it.has_notes }
+                RowLink(if (k > 0) tl("Your notes in {k} of {length} topics", "k" to k, "length" to ts.size) else tl("Bring your own notes"),
+                        if (k > 0) tl("Add or update your material") else tl("Upload your PDF or Word notes. They are filed under this course's topics, for you only."), { openMaterial(c.id, c.name) })
+                if (c.tests.any { it.published && it.questions > 0 }) SectionTitle(tl("MCQ tests"))
                 Tests(c.tests, openQuiz)
                 c.units.forEach { un ->
                     SectionTitle(un.name)
                     if (un.topics.isEmpty()) Quiet(stringResource(R.string.no_topics_yet))
+                    else TextButton(onClick = { openRevision(un.id) }) { Icon(Icons.Outlined.Description, null); Text("  " + tl("Revision sheet")) }
                     Paged(un.topics, key = un.id) { t -> TopicRow(t) { openTopic(t.id) } }
                     Tests(un.quizzes, openQuiz)
                 }
@@ -82,8 +91,8 @@ private fun Tests(list: List<QuizRef>, open: (Int) -> Unit) {
     if (ready.isEmpty()) return
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         ready.forEach { q ->
-            AssistChip(onClick = { open(q.id) }, leadingIcon = { Icon(Icons.Outlined.Quiz, null) },
-                label = { Text(q.title + (q.best?.let { " · " + stringResource(R.string.best_percent, it) } ?: "")) })
+            RowLink(q.title, "${q.questions} " + tl("questions · pass {pass_percent}%", "pass_percent" to q.pass_percent) +
+                    (q.best?.let { tl(" · best {best}%", "best" to it) } ?: "") + (if (q.best != null && q.best >= q.pass_percent) "  ✓" else ""), { open(q.id) })
         }
     }
 }
