@@ -1774,7 +1774,7 @@ function AiConfig({toast,onBrand}){
   const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({deepseek:'',claude:''})
   const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model);setVmodel(c.vision_model);setLim({deepseek:String(c.budget?.deepseek.limit||''),claude:String(c.budget?.claude.limit||'')})});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
-  return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")]]} value={tab} onChange={setTab}/>
+  return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")],['mail',tl("Email")]]} value={tab} onChange={setTab}/>
     {tab==='school'&&<Branding toast={toast} onSaved={onBrand}/>}{tab==='ai'&&<>
     <label>{tl("DeepSeek API key")}</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={cfg.key_set?tl("Leave blank to keep the current key"):tl("sk-…")}/>
     <label>{tl("Model")}</label><input value={model} onChange={e=>setModel(e.target.value)} placeholder="deepseek-chat"/>
@@ -1798,8 +1798,43 @@ function AiConfig({toast,onBrand}){
     <p className="known" style={{marginTop:20}}>{tl("One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {v} answers are saved so far, which has saved about {v2} tokens.",{v:(st.cached??0).toLocaleString(),v2:(st.tokens_saved??0).toLocaleString()})}</p>
     </>}{tab==='prompts'&&<PromptEditor toast={toast}/>}
     {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/>
-    <h3 className="sec">{tl("Password reset email")}</h3><p className="known">{cfg.mail_on?tl("On. People can reset their own password from the sign-in page."):tl("Off. The sign-in page tells people to ask an admin. To turn it on, set SMTP_HOST, SMTP_FROM and APP_URL in .env and restart (see .env.example).")}</p>
-    {cfg.mail_on&&<button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/mail/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>{tl("Send a test email to me")}</button>}</>}</div></>}
+    <h3 className="sec">{tl("Password reset email")}</h3><p className="known">{cfg.mail_on?tl("On. People can reset their own password from the sign-in page."):tl("Off. The sign-in page tells people to ask an admin. Set up a sender under Email to turn it on.")}</p>
+    {!cfg.mail_on&&<button className="btn ghost" onClick={()=>setTab('mail')}>{tl("Set up email")}</button>}</>}
+    {tab==='mail'&&<MailSettings toast={toast} onSaved={load}/>}</div></>}
+// Settings > Email: the Gmail account that sends password resets, registration codes and daily summaries (its App Password is stored sealed
+// and never shown again), the site address used in links, how sending is going, and a log of what was sent (who and when, never the text)
+function MailSettings({toast,onSaved}){
+  const [m,setM]=useState(null),[gmail,setGmail]=useState(''),[pw,setPw]=useState(''),[url,setUrl]=useState(''),[busy,setBusy]=useState(false),[failed,setFailed]=useState(false)
+  const confirm=useConfirm()
+  const take=r=>{setM(r);setGmail(r.gmail||'');setUrl(r.app_url_saved||'')}
+  const load=()=>api('/admin/mail').then(take).catch(e=>toast(e.message));useEffect(()=>{load()},[])
+  const log=usePaged(o=>`/admin/mail/log?limit=${PAGE}&offset=${o}`+(failed?'&failed=true':''),[failed],toast)
+  const save=async body=>{setBusy(true);try{take(await api('/admin/mail',{method:'PUT',body}));setPw('');toast(tl("Email settings saved"));onSaved&&onSaved()}catch(e){toast(srv(e.message))}setBusy(false)}
+  const test=async()=>{setBusy(true);try{const r=await api('/admin/mail/test',{method:'POST'});toast(srv(r.message))}catch(e){toast(e.message)}setBusy(false);load();log.reload()}
+  if(!m)return <Skeleton rows={3}/>
+  const h=m.health||{}
+  return <>
+    <div className="qbox" style={{marginTop:0}} role="status"><b>{m.on?tl("Email is on"):tl("Email is off")}</b>
+      <p className="known" style={{margin:'4px 0 0'}}>{m.on?(m.via==='gmail'?tl("Sent from {sender} through Gmail.",{sender:m.sender}):tl("Sent from {sender} through the mail server in .env.",{sender:m.sender}))
+        :!m.via?tl("Add a Gmail account below. Until then, password resets, registration codes and daily summaries are off."):tl("Add the site's address below: links in emails need it.")}</p></div>
+    <h3 className="sec">{tl("Gmail sender")}</h3>
+    <p className="known">{tl("Use a Gmail account for the college, such as zigora.college@gmail.com. Turn on 2-Step Verification for it, then make an App Password: Google Account > Security > 2-Step Verification > App passwords. Paste the 16 letters here; spaces don't matter.")}</p>
+    <label>{tl("Gmail address")}</label><input type="email" value={gmail} onChange={e=>setGmail(e.target.value)} placeholder="zigora.college@gmail.com" autoComplete="off"/>
+    <label>{tl("App Password")}</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder={m.gmail_saved?tl("Saved. Leave blank to keep it"):tl("16 letters, like abcd efgh ijkl mnop")} autoComplete="new-password"/>
+    <label>{tl("Site address for links in emails")}</label><input value={url} onChange={e=>setUrl(e.target.value)} placeholder={m.env_app_url||"https://learn.yourcollege.edu"}/>
+    <p className="known" style={{marginTop:4}}>{m.env_app_url&&!url?tl("Using {url} from .env.",{url:m.env_app_url}):tl("The address students open, such as https://learn.yourcollege.edu.")}</p>
+    <div className="two"><button className="btn" disabled={busy} onClick={()=>save({gmail,app_url:url,...(pw.trim()?{app_password:pw}:{})})}>{tl("Save")}</button>
+      <button className="btn ghost" disabled={busy||!m.on} onClick={test}>{tl("Send a test email to me")}</button></div>
+    {m.gmail_saved&&<button className="tool" onClick={async()=>{if(await confirm({title:tl("Remove the Gmail sender?"),body:m.env_server?tl("Email goes back to the mail server set in .env."):tl("Password resets, registration codes and daily summaries stop until a sender is added again."),ok:tl("Remove"),danger:true}))save({remove_gmail:true})}}>{tl("Remove the Gmail sender")}</button>}
+    {(h.ok_at||h.fail_at)&&<><h3 className="sec">{tl("How sending is going")}</h3><div className="qbox" style={{marginTop:0}}>
+      <p className="known" style={{margin:0}}>{tl("Last sent")}: {h.ok_at?when(h.ok_at):tl('never')}</p>
+      {h.fails_in_a_row>0&&<><p style={{margin:'6px 0 0',color:'var(--bad, #b3261e)'}}><b>{tl("{n} failed in a row",{n:h.fails_in_a_row})}</b> · {when(h.fail_at)}</p><p className="known" style={{margin:'4px 0 0'}}>{h.fail_message}</p></>}</div></>}
+    <h3 className="sec">{tl("Emails sent")}</h3>
+    <label className="chk"><input type="checkbox" checked={failed} onChange={e=>setFailed(e.target.checked)}/>{" "}{tl("Only the ones that failed")}</label>
+    {!log.ready?<Skeleton rows={2}/>:!log.items.length?<p className="known">{failed?tl("None failed."):tl("Nothing sent yet.")}</p>
+      :log.items.map(x=><div key={x.id} className="row"><div>{tl(x.label)} · {x.to}<small>{when(x.at)}{x.ok?'':' · '+x.error}</small></div><span className="chip" style={x.ok?{}:{color:'var(--bad, #b3261e)'}}>{x.ok?tl("Sent"):tl("Failed")}</span></div>)}
+    <Pager page={log.page} total={log.total} onPage={log.setPage}/>
+    <p className="known">{tl("Only who and when is kept, for 90 days. Never the text: emails carry reset links and codes.")}</p></>}
 
 // an activity-log row in words: whole phrases (with the item and its number filled in), so each language can order them its own way
 const describe=(m,p)=>{const s=p.replace(/^\/api\//,'').split('/'),id=s.find(x=>/^\d+$/.test(x)),n=s.filter(x=>!/^\d+$/.test(x)),last=n[n.length-1],noun=n[0]==='admin'?n[1]:n[0],what=tl((noun||'').replace(/s$/,''))
