@@ -320,7 +320,7 @@ async def secure_headers(request: Request, call_next):
     return r
 
 @app.get("/api/config")
-def config(s: Session = Depends(db)): return {"self_registration": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on()}
+def config(s: Session = Depends(db)): return {"self_registration": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on(s)}
 class Branding(BaseModel): name: str | None = None; logo_url: str | None = None; remove_logo: bool = False
 LOGO_URL = re.compile(r"/api/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)")
 @app.put("/api/admin/branding")
@@ -335,24 +335,79 @@ def put_branding(b: Branding, _: User = Depends(admin), s: Session = Depends(db)
         if not LOGO_URL.fullmatch(b.logo_url): raise HTTPException(400, "Upload the logo image first, then save")
         s.merge(Setting(k="logo_url", v=b.logo_url))
     s.commit(); return {"ok": True}
-# ---- forgot password by email (needs SMTP_HOST, SMTP_FROM and APP_URL in .env) ----
-def mail_on(): return bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM") and os.getenv("APP_URL"))  # APP_URL is fixed so a forged Host header can't poison reset links
-def send_mail(to, subject, body):
-    m = EmailMessage(); m["From"], m["To"], m["Subject"] = os.getenv("SMTP_FROM"), to, subject; m.set_content(body)
-    host, port, mode = os.getenv("SMTP_HOST"), int(os.getenv("SMTP_PORT") or 587), (os.getenv("SMTP_TLS") or "starttls").lower()
-    with (smtplib.SMTP_SSL(host, port, timeout=20) if mode == "ssl" else smtplib.SMTP(host, port, timeout=20)) as c:
-        if mode == "starttls": c.starttls()
-        if os.getenv("SMTP_USER"): c.login(os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD") or "")
-        c.send_message(m)
+# ---- email: password resets, registration codes and daily summaries ----
+# The sender is set up in the app (Settings > Email) with a Gmail address and a Google App Password, sealed like the students' AI keys.
+# A server set up before that keeps working from SMTP_* in .env; a Gmail account saved in the app takes over from it.
+# Links in emails use the site address saved in the app, or APP_URL from .env: never the request's Host header, so a forged
+# request can't make a reset link point somewhere else.
+from email.utils import formataddr
+GMAIL_HOST, GMAIL_PORT = "smtp.gmail.com", 587
+class MailLog(Base):  # what was sent, to whom and whether it went: never the text, which can hold a reset link or a code
+    __tablename__ = "mail_log"
+    id = Column(Integer, primary_key=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
+    kind = Column(String(20)); to = Column(String(190)); ok = Column(Boolean, default=True); error = Column(String(300), nullable=True)
+MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test"}
+class MailError(Exception): pass  # a message written for the admin
+def site_url(s): return (setting(s, "app_url") or os.getenv("APP_URL") or "").rstrip("/")
+def mail_conf(s):
+    """How mail goes out: {"via", "host", "port", "tls", "user", "password", "sender"}, or None when nothing is set up."""
+    gm, pw = setting(s, "mail_gmail"), unseal(setting(s, "mail_gmail_pw"))
+    if gm and pw: return {"via": "gmail", "host": GMAIL_HOST, "port": GMAIL_PORT, "tls": "starttls", "user": gm, "password": pw, "sender": gm}
+    if os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM"):
+        return {"via": "server", "host": os.getenv("SMTP_HOST"), "port": int(os.getenv("SMTP_PORT") or 587), "tls": (os.getenv("SMTP_TLS") or "starttls").lower(),
+                "user": os.getenv("SMTP_USER") or "", "password": os.getenv("SMTP_PASSWORD") or "", "sender": os.getenv("SMTP_FROM")}
+    return None
+def mail_on(s=None):  # a sender and a site address for the links: without both, the app offers no email features at all
+    if s is None:
+        with Session_() as s2: return mail_on(s2)
+    return bool(mail_conf(s) and site_url(s))
+def mail_html(name, body, link):  # the same words as the text part, with the link as a button; inline styles, because mail apps drop style sheets
+    paras = "".join(f'<p style="margin:0 0 14px">{htmllib.escape(x).replace(chr(10), "<br>")}</p>' for x in body.strip().split("\n\n") if not (link and x.strip() == link))
+    button = (f'<p style="margin:6px 0 20px"><a href="{htmllib.escape(link)}" style="background:#722f99;color:#fff;text-decoration:none;padding:12px 20px;'
+              f'border-radius:999px;font-weight:600;display:inline-block">Open {htmllib.escape(name)}</a></p>') if link else ""
+    return (f'<div style="font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#1e1626;max-width:560px;margin:0 auto;padding:24px">'
+            f'<p style="margin:0 0 20px;font-weight:700;font-size:18px;color:#722f99">{htmllib.escape(name)}</p>{paras}{button}</div>')
+def gmail_login_help(e):
+    return ("Gmail did not accept the sign-in (" + (getattr(e, "smtp_error", b"") or b"").decode(errors="replace").strip()[:120] + "). Usually: the account's own password was "
+            "entered instead of a 16-letter App Password (Google Account > Security > 2-Step Verification > App passwords); 2-Step Verification is off, so App "
+            "Passwords aren't available; or Google flagged this server's sign-in: look for a security alert in that Gmail inbox.")
+def send_mail(to, subject, body, kind="mail", link=None):
+    """Sends one email (plain text with an HTML copy) and records how it went. Raises MailError with a message for the admin."""
+    with Session_() as s:
+        c, name = mail_conf(s), setting(s, "app_name", APP_NAME)
+        if not c: raise MailError("No sender is set up. Add a Gmail account under Settings > Email.")
+        m = EmailMessage(); m["From"] = formataddr((name, c["sender"])) if c["via"] == "gmail" else c["sender"]; m["To"], m["Subject"] = to, subject
+        m.set_content(body); m.add_alternative(mail_html(name, body, link), subtype="html")
+        try:
+            with (smtplib.SMTP_SSL(c["host"], c["port"], timeout=20) if c["tls"] == "ssl" else smtplib.SMTP(c["host"], c["port"], timeout=20)) as srv:
+                if c["tls"] == "starttls": srv.starttls()
+                if c["user"]: srv.login(c["user"], c["password"])
+                srv.send_message(m)
+        except smtplib.SMTPAuthenticationError as e: err = gmail_login_help(e) if c["via"] == "gmail" else "The mail server did not accept the sign-in. Check SMTP_USER and SMTP_PASSWORD."
+        except smtplib.SMTPRecipientsRefused: err = f"The mail server refused the address {to}."
+        except smtplib.SMTPException as e: err = f"The mail server refused the email: {str(e)[:160]}"
+        except OSError as e: err = f"Could not reach {c['host']}:{c['port']} ({type(e).__name__}). Check the server's internet access."
+        else: err = None
+        now = dt.datetime.utcnow()
+        try:
+            s.add(MailLog(kind=kind[:20], to=to[:190], ok=err is None, error=err and err[:300]))
+            if err is None: s.merge(Setting(k="mail_ok_at", v=now.isoformat())); s.merge(Setting(k="mail_fails", v="0"))
+            else:
+                s.merge(Setting(k="mail_fail_at", v=now.isoformat())); s.merge(Setting(k="mail_fail_msg", v=err[:300]))
+                s.merge(Setting(k="mail_fails", v=str(int(setting(s, "mail_fails", "0") or 0) + 1)))
+            s.commit()
+        except Exception: s.rollback()  # the record must never stop an email
+        if err: log.warning("%s email to user failed: %s", kind, err[:80]); raise MailError(err)
 def deliver_reset(email, name, raw):
     minutes = int(os.getenv("RESET_MINUTES") or 30)
-    try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{os.getenv('APP_URL').rstrip('/')}/app/#reset={raw}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n")
-    except Exception as e: log.warning("reset email failed: %s", type(e).__name__)
+    with Session_() as s: link = f"{site_url(s)}/app/#reset={raw}"
+    try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{link}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n", kind="reset", link=link)
+    except MailError: pass  # recorded in the email log for the admin; the person sees the same answer either way
 def tok_hash(raw): return hashlib.sha256(raw.encode()).hexdigest()
 class ForgotIn(BaseModel): email: str
 @app.post("/api/forgot")
 def forgot(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
-    if not mail_on(): raise HTTPException(503, "Reset by email isn't set up here. Ask your admin to reset your password.")
+    if not mail_on(s): raise HTTPException(503, "Reset by email isn't set up here. Ask your admin to reset your password.")
     ip, email, now = client_ip(request), b.email.strip().lower()[:190], dt.datetime.utcnow(); hour = now - dt.timedelta(hours=1)
     if s.query(func.count(PasswordReset.id)).filter(PasswordReset.ip == ip, PasswordReset.created_at >= hour).scalar() >= 20: raise HTTPException(429, "Too many requests. Please try again in an hour.")
     u = s.query(User).filter_by(email=email).first(); u = u if u and u.active else None
@@ -388,15 +443,15 @@ def unseal(v):
     except (InvalidToken, ValueError, TypeError): return ""
 OTP_MINUTES, OTP_MAX_TRIES, OTP_MAX_SENDS, OTP_COOLDOWN = 10, 5, 8, 30
 def otp_hash(email, code): return hmac.new(SECRET.encode(), f"{email}|{code}".encode(), hashlib.sha256).hexdigest()
-def reg_open(s): return setting(s, "self_registration") == "1" and mail_on()
+def reg_open(s): return setting(s, "self_registration") == "1" and mail_on(s)
 def allowed_domains(s): return [d for d in re.split(r"[,\s]+", setting(s, "allowed_domains").lower()) if d]
 PHONE = re.compile(r"\+?[0-9][0-9 ()\-]{5,24}[0-9]")
 IDNUM = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ./_\-]{0,58}[A-Za-z0-9]|[A-Za-z0-9]")
 def deliver_otp(email, name, code, exists=False):
     try:
-        if exists: send_mail(email, f"Your {APP_NAME} account", f"Hi {name},\n\nSomeone tried to register {email} on {APP_NAME}, but that email already has an account. If it was you, sign in, or use \"Forgot your password?\" on the sign-in page. If it was not you, ignore this message.")
-        else: send_mail(email, f"Your {APP_NAME} verification code: {code}", f"Hi {name},\n\nYour verification code is {code}. It works for {OTP_MINUTES} minutes. Enter it in the app to finish creating your {APP_NAME} account.\n\nIf you did not ask for this, ignore this message; no account is created without the code.")
-    except Exception as e: log.warning("registration email failed: %s", type(e).__name__)
+        if exists: send_mail(email, f"Your {APP_NAME} account", kind="account", body=f"Hi {name},\n\nSomeone tried to register {email} on {APP_NAME}, but that email already has an account. If it was you, sign in, or use \"Forgot your password?\" on the sign-in page. If it was not you, ignore this message.")
+        else: send_mail(email, f"Your {APP_NAME} verification code: {code}", kind="code", body=f"Hi {name},\n\nYour verification code is {code}. It works for {OTP_MINUTES} minutes. Enter it in the app to finish creating your {APP_NAME} account.\n\nIf you did not ask for this, ignore this message; no account is created without the code.")
+    except MailError: pass  # recorded in the email log
 class RegisterIn(BaseModel): name: str; institution: str; id_number: str; email: str; phone: str; password: str
 def clean_registration(b, s):
     name, inst, idn, email, phone = " ".join(b.name.split()), " ".join(b.institution.split()), " ".join(b.id_number.split()), b.email.strip().lower(), b.phone.strip()
@@ -602,7 +657,8 @@ def applied_migrations():
 def boot():
     require_secret()
     upgrade_schema()
-    if mail_on(): spawn(digest_loop)  # daily summaries by email, for those who ask
+    spawn(digest_loop)  # daily summaries by email, for those who ask (it checks each time whether email is set up)
+    with Session_() as s: s.query(MailLog).filter(MailLog.at < dt.datetime.utcnow() - dt.timedelta(days=90)).delete(); s.commit()
     with Session_() as s: s.query(PasswordReset).filter(PasswordReset.created_at < dt.datetime.utcnow() - dt.timedelta(days=2)).delete(); s.commit()
     with Session_() as s: s.query(PendingRegistration).filter(PendingRegistration.created_at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
     with Session_() as s: s.query(AuditLog).filter(AuditLog.at < dt.datetime.utcnow() - dt.timedelta(days=400)).delete(); s.commit()
@@ -1119,7 +1175,7 @@ class Cfg(BaseModel):
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
     vk = vision_key(s)
-    return {"mail_on": mail_on(), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
+    return {"mail_on": mail_on(s), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
             "vision_set": bool(vk), "vision_hint": ("…" + vk[-4:]) if vk else "", "vision_model": setting(s, "vision_model", VISION_MODEL), "ocr": ocr_ready(),
             "budget": {p: budget(s, p) for p in ("deepseek", "claude")},
             "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count()}
@@ -1161,12 +1217,51 @@ async def test_vision(_: User = Depends(admin), s: Session = Depends(db)):
     except anthropic.APIStatusError as e: return {"ok": False, "message": f"Claude answered with an error ({e.status_code})."}
     except Exception: return {"ok": False, "message": "No answer from Claude. Check the server's internet access and try again."}
     return {"ok": True, "message": "The key works. Students can ask about diagrams in photos now."}
+# ---- Settings > Email: the Gmail sender, the site address for links, how sending is going, and what was sent ----
+APP_PW_JUNK = re.compile(r"[\s\u200b\u200c\u200d\u2060\ufeff]+")  # Google shows App Passwords as "abcd efgh ijkl mnop"; copying can bring invisible characters too
+class MailIn(BaseModel): gmail: str | None = None; app_password: str | None = None; app_url: str | None = None; remove_gmail: bool = False
+def mail_state(s):
+    c = mail_conf(s); fails = int(setting(s, "mail_fails", "0") or 0)
+    return {"on": mail_on(s), "via": c["via"] if c else None, "sender": c["sender"] if c else "", "gmail": setting(s, "mail_gmail"), "gmail_saved": bool(setting(s, "mail_gmail_pw")),
+            "env_server": bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_FROM")), "app_url": site_url(s), "app_url_saved": setting(s, "app_url"), "env_app_url": os.getenv("APP_URL", ""),
+            "health": {"ok_at": (setting(s, "mail_ok_at") or None) and setting(s, "mail_ok_at") + "Z", "fail_at": (setting(s, "mail_fail_at") or None) and setting(s, "mail_fail_at") + "Z",
+                       "fail_message": setting(s, "mail_fail_msg") if fails else "", "fails_in_a_row": fails}}
+@app.get("/api/admin/mail")
+def get_mail(_: User = Depends(admin), s: Session = Depends(db)): return mail_state(s)
+@app.put("/api/admin/mail")
+def put_mail(b: MailIn, _: User = Depends(admin), s: Session = Depends(db)):
+    if b.remove_gmail:
+        for k in ("mail_gmail", "mail_gmail_pw"): s.query(Setting).filter_by(k=k).delete()
+    if b.gmail is not None and not b.remove_gmail:
+        g = b.gmail.strip().lower()
+        if g and not EMAIL.match(g): raise HTTPException(400, "Enter the Gmail address that sends the emails, such as zigora.college@gmail.com")
+        s.merge(Setting(k="mail_gmail", v=g))
+    if b.app_password and not b.remove_gmail:
+        pw = APP_PW_JUNK.sub("", b.app_password)
+        if not re.fullmatch(r"[A-Za-z]{16}", pw):
+            raise HTTPException(400, f"A Gmail App Password is 16 letters (yours has {len(pw)} characters after removing spaces). Make one under Google Account > Security > 2-Step Verification > App passwords, and paste it as it is.")
+        s.merge(Setting(k="mail_gmail_pw", v=seal(pw)))
+    if b.app_password or b.remove_gmail or b.gmail is not None:  # a new sender starts with a clean record, so an old failure streak doesn't hang over it
+        for k in ("mail_fails", "mail_fail_at", "mail_fail_msg"): s.query(Setting).filter_by(k=k).delete()
+    if b.app_url is not None:
+        u = b.app_url.strip().rstrip("/")
+        u = re.sub(r"/app$", "", u)
+        if u and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d{1,5})?", u): raise HTTPException(400, "Enter the site's address only, such as https://learn.yourcollege.edu or http://169.58.13.213:5252")
+        if u: s.merge(Setting(k="app_url", v=u))
+        else: s.query(Setting).filter_by(k="app_url").delete()  # back to APP_URL from .env
+    s.commit(); return mail_state(s)
 @app.post("/api/admin/mail/test")
-def test_mail(a: User = Depends(admin)):
-    if not mail_on(): return {"ok": False, "message": "Email isn't set up. Add SMTP_HOST, SMTP_FROM and APP_URL to .env and restart."}
-    try: send_mail(a.email, f"{APP_NAME} test email", "This is a test. Password reset emails can be sent from this server.")
-    except Exception as e: return {"ok": False, "message": "Could not send: " + type(e).__name__ + ": " + str(e)[:150]}
-    return {"ok": True, "message": "Test email sent to " + a.email}
+def test_mail(a: User = Depends(admin), s: Session = Depends(db)):
+    if not mail_conf(s): return {"ok": False, "message": "No sender yet. Save a Gmail address and its App Password first."}
+    if not site_url(s): return {"ok": False, "message": "Add the site's address first: links in emails need it."}
+    try: send_mail(a.email, f"{APP_NAME} test email", "This is a test from your Zigora server. Password reset emails, registration codes and daily summaries can be sent.", kind="test", link=site_url(s) + "/app/")
+    except MailError as e: return {"ok": False, "message": str(e)}
+    return {"ok": True, "message": "Test email sent to " + a.email + ". Check the inbox (and spam)."}
+@app.get("/api/admin/mail/log")
+def mail_log(limit: int = 10, offset: int = 0, failed: bool = False, _: User = Depends(admin), s: Session = Depends(db)):
+    q = s.query(MailLog).filter(MailLog.ok == False) if failed else s.query(MailLog)  # noqa: E712
+    total = q.count(); rows = q.order_by(MailLog.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    return {"total": total, "items": [{"id": r.id, "at": r.at.isoformat() + "Z", "kind": r.kind, "label": MAIL_KINDS.get(r.kind, r.kind), "to": r.to, "ok": bool(r.ok), "error": r.error or ""} for r in rows]}
 def live_topic_ids(s, cids):  # the one rule for "a topic students can read": published, not archived, not in an archived unit, in one of these courses
     off_units = s.query(Unit.id).filter(Unit.archived_at.isnot(None))
     return s.query(Topic.id).filter(Topic.course_id.in_(cids or [0]), Topic.published.isnot(False), Topic.archived_at.is_(None), or_(Topic.unit_id.is_(None), Topic.unit_id.notin_(off_units)))
@@ -4348,7 +4443,7 @@ def notes_for(u, s):  # [{key, text, sub}]: staff get what needs attention, stud
 @app.get("/api/me/notifications")
 def my_notifications(u: User = Depends(me), s: Session = Depends(db)):
     items = notes_for(u, s); seen = {k for (k,) in s.query(NoteSeen.key).filter(NoteSeen.user_id == u.id, NoteSeen.key.in_([i["key"] for i in items] or [""]))}
-    return {"items": [{**i, "unread": i["key"] not in seen} for i in items], "digest": bool(u.digest), "mail": mail_on()}
+    return {"items": [{**i, "unread": i["key"] not in seen} for i in items], "digest": bool(u.digest), "mail": mail_on(s)}
 class SeenIn(BaseModel): keys: list[str]
 @app.post("/api/me/notifications/seen")
 def notes_seen(b: SeenIn, u: User = Depends(me), s: Session = Depends(db)):
@@ -4360,13 +4455,14 @@ def notes_seen(b: SeenIn, u: User = Depends(me), s: Session = Depends(db)):
 class DigestIn(BaseModel): digest: bool
 @app.put("/api/me/notifications/settings")
 def notes_settings(b: DigestIn, u: User = Depends(me), s: Session = Depends(db)):
-    if b.digest and not mail_on(): raise HTTPException(400, "Email is not set up on this server yet")
+    if b.digest and not mail_on(s): raise HTTPException(400, "Email is not set up on this server yet")
     u.digest = b.digest; s.commit(); return {"digest": u.digest}
 DIGEST_HOUR = int(os.getenv("DIGEST_HOUR") or 7)  # the local hour (see DAY_OFFSET_MINUTES) after which the daily summary goes out
 def send_digests(now=None):  # once a local day, after DIGEST_HOUR: everyone who asked gets their unseen notifications by email (nothing if there are none)
     now = now or dt.datetime.utcnow(); sent = 0
     if not mail_on() or (now + dt.timedelta(minutes=DAY_OFFSET)).hour < DIGEST_HOUR: return 0
     with Session_() as s:
+        link = site_url(s) + "/app/"
         for u in s.query(User).filter(User.digest == True, User.active == True):  # noqa: E712
             if u.digest_at and local_day(u.digest_at) >= local_day(now): continue
             u.digest_at = now; s.commit()  # marked first, so a failing mail server can't make it send twice
@@ -4375,7 +4471,7 @@ def send_digests(now=None):  # once a local day, after DIGEST_HOUR: everyone who
                 if not new: continue
                 lines = "\n".join(f"- {i['text']}" + (f" ({i['sub']})" if i["sub"] else "") for i in new)
                 send_mail(u.email, f"{APP_NAME}: {len(new)} new {'notification' if len(new) == 1 else 'notifications'}",
-                          f"Hi {u.name},\n\nHere is what is new for you:\n\n{lines}\n\nOpen {APP_NAME}: {os.getenv('APP_URL', '').rstrip('/')}/app/\n\nTo stop these emails, open the bell in the app and untick the daily summary.\n")
+                          f"Hi {u.name},\n\nHere is what is new for you:\n\n{lines}\n\nOpen {APP_NAME}: {link}\n\nTo stop these emails, open the bell in the app and untick the daily summary.\n", kind="digest", link=link)
                 sent += 1
             except Exception as e: log.warning("Daily summary to user %s failed: %s", u.id, type(e).__name__)
     return sent

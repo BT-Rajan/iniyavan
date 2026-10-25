@@ -278,16 +278,21 @@ The **Activity log** can be searched by person or action and filtered by action 
 ## AI (one key for everyone)
 An admin saves a DeepSeek key under **AI config** (or sets `DEEPSEEK_API_KEY` in `.env` as a fallback). That single key serves every student. With a key, the Explain and Sample answer buttons work, and each answer is saved and reused for all students. Without a key, or if the key is removed, students see "AI unavailable. Try again later." and the buttons are hidden, saved answers included, until a key is added again. If DeepSeek errors, times out or rejects the key, students see the same message and can try again, while admins also get the likely cause. **Test the key** checks it with a tiny request, and **Remove the key** turns AI off for everyone. `GET /api/ai/status` tells the app whether AI is on.
 
-## Forgot password (email)
-Set `SMTP_HOST`, `SMTP_FROM` and `APP_URL` in `.env` (plus `SMTP_PORT`, `SMTP_TLS`, `SMTP_USER`, `SMTP_PASSWORD` as your mail server needs; see `.env.example`) and restart. The sign-in page then shows **Forgot password?**: the person enters their email and gets a link that works once, for 30 minutes (`RESET_MINUTES`). Choosing a new password signs them in, ends every older session and link, and lifts any sign-in lockout. Details that matter:
-- The answer is the same whether or not the email has an account, so the form can't be used to find out who is registered, and disabled accounts get no mail.
-- Links always point at `APP_URL`, never at the request's Host header, so a forged header can't redirect a reset link. The token sits after `#` so it never reaches server logs, and only a hash of it is stored.
+## Email (password resets, registration codes, daily summaries)
+Set it up in the app: **Settings > Email**. Enter a Gmail account for the college and a Google **App Password** for it (Google Account > Security > 2-Step Verification > App passwords: 16 letters; spaces are ignored), and the site's address for links (for example `https://learn.yourcollege.edu`). **Send a test email to me** checks it.
+- The App Password is stored sealed with the server's key and never shown again. The screen shows how sending is going (last success, failures in a row with the reason, such as Gmail refusing the sign-in) and a list of emails sent: who and when, kept 90 days, never the text, because emails carry reset links and codes.
+- Emails are plain text with a simple HTML copy whose link is a button. They come from the institution's name (Settings > Institution) at the Gmail address.
+- Servers set up earlier keep working from `.env` (`SMTP_HOST`, `SMTP_FROM`, `APP_URL`, plus `SMTP_PORT`, `SMTP_TLS`, `SMTP_USER`, `SMTP_PASSWORD`); a Gmail account saved in the app takes over from them, and removing it goes back to them. The site address saved in the app likewise takes over from `APP_URL`.
+
+With email on, the sign-in page shows **Forgot password?**: the person enters their email and gets a link that works once, for 30 minutes (`RESET_MINUTES`). Choosing a new password signs them in, ends every older session and link, and lifts any sign-in lockout. Details that matter:
+- The answer is the same whether or not the email has an account, so the form can't be used to find out who is registered, and disabled accounts get no mail. A failed send is recorded for the admin; the person sees the same answer.
+- Links always use the saved site address (or `APP_URL`), never the request's Host header, so a forged header can't redirect a reset link. The token sits after `#` so it never reaches server logs, and only a hash of it is stored.
 - Limits: 3 emails an hour per account and 20 requests an hour per address.
-- Without SMTP settings the sign-in page says "Ask your admin to reset it", and the admin Reset button still works. **AI & email** (admin) shows whether email is on and can send a test email to you.
+- Without email the sign-in page says "Ask your admin to reset it", and the admin Reset button still works.
 
 ## Self-registration
 
-Off by default. Turn it on under Settings > Self-registration. It also needs email set up (`SMTP_HOST`, `SMTP_FROM`, `APP_URL`, see the forgot-password section); without that it stays closed.
+Off by default. Turn it on under Settings > Self-registration. It also needs email set up (Settings > Email, see the email section); without that it stays closed.
 
 - The sign-in page shows "Create an account". People give full name, institution, ID number, email, phone and a password.
 - A 6-digit code is emailed (valid 10 minutes, 5 tries, resend after 30 seconds, at most 8 codes per email). **No account exists until the code is verified.** Then they are signed in as students.

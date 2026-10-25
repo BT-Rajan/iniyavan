@@ -8,7 +8,7 @@ GOOD = dict(name="Asha  Devi", institution="Karkathar College", id_number="21CS0
 @pytest.fixture
 def reg(env, monkeypatch):
     for k, v in (("SMTP_HOST", "smtp.test"), ("SMTP_FROM", "no@test"), ("APP_URL", "https://app.test")): monkeypatch.setenv(k, v)
-    sent = []; monkeypatch.setattr(main, "send_mail", lambda to, subj, body: sent.append((to, subj, body)))
+    sent = []; monkeypatch.setattr(main, "send_mail", lambda to, subj, body, **k: sent.append((to, subj, body)))
     env.c.put("/api/admin/settings", headers=env.admin, json={"self_registration": True}); env.sent = sent
     env.start = lambda **o: env.c.post("/api/register/start", json={**GOOD, **o})
     env.code = lambda: re.search(r"\b(\d{6})\b", sent[-1][2]).group(1)

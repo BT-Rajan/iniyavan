@@ -3,7 +3,7 @@ from main import Session_, User, PasswordReset, LoginFail
 
 class Mailbox(list): pass
 def setup(env, monkeypatch, on=True):
-    box = Mailbox(); monkeypatch.setattr(main, "send_mail", lambda to, subject, body: box.append((to, subject, body)))
+    box = Mailbox(); monkeypatch.setattr(main, "send_mail", lambda to, subject, body, **k: box.append((to, subject, body)))
     for k, v in dict(SMTP_HOST="smtp.test", SMTP_FROM="noreply@test", APP_URL="https://learn.test").items():
         monkeypatch.setenv(k, v) if on else monkeypatch.delenv(k, raising=False)
     return box

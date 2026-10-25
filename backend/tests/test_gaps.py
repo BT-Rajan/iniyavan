@@ -67,8 +67,8 @@ def test_notifications_remember_what_was_seen_and_send_a_daily_summary(env, monk
     env.add_user("new2@x.com")  # the count changes, so it is new again
     assert any(i["unread"] for i in env.c.get("/api/me/notifications", headers=env.admin).json()["items"])
     assert env.c.put("/api/me/notifications/settings", headers=env.admin, json={"digest": True}).status_code == 400  # no email set up
-    monkeypatch.setattr(main, "mail_on", lambda: True); sent = []
-    monkeypatch.setattr(main, "send_mail", lambda to, subj, body: sent.append((to, subj, body)))
+    monkeypatch.setattr(main, "mail_on", lambda s=None: True); sent = []
+    monkeypatch.setattr(main, "send_mail", lambda to, subj, body, **k: sent.append((to, subj, body)))
     assert env.c.put("/api/me/notifications/settings", headers=env.admin, json={"digest": True}).json() == {"digest": True}
     morning = dt.datetime(2026, 10, 24, 3, 0)  # 08:30 in India
     assert main.send_digests(morning) == 1 and sent[0][0] == "admin@x.com" and "new" in sent[0][1]
