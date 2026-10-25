@@ -33,9 +33,13 @@ class Api(private val store: Store, private val onSignedOut: () -> Unit) {
         json.decodeFromJsonElement(de, call(method, path, body))
     suspend fun raw(method: String, path: String, body: JsonElement? = null): JsonElement = call(method, path, body)
 
-    private suspend fun call(method: String, path: String, body: JsonElement?): JsonElement = withContext(Dispatchers.IO) {
+    /** a file sent as it is (study material), like the web's upload */
+    suspend fun upload(path: String, bytes: ByteArray): JsonElement = call("POST", path, null, bytes)
+
+    private suspend fun call(method: String, path: String, body: JsonElement?, bytes: ByteArray? = null): JsonElement = withContext(Dispatchers.IO) {
         if (base.isEmpty()) throw ApiError(I18n.str(app.zigora.R.string.need_address), 0)
         val rb = when {
+            bytes != null -> bytes.toRequestBody("application/octet-stream".toMediaType())
             body != null -> body.toString().toRequestBody(JSON)
             method == "GET" || method == "DELETE" -> null
             else -> "{}".toRequestBody(JSON)

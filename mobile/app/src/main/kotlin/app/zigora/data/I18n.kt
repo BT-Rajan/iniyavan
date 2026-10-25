@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /** The web app's way of showing what the server says in the reader's language (i18n.js srv): an exact sentence first, then the known
  *  shapes, with numbers and names carried into the translation. Anything else is shown as it came. Same files as the web. */
+@android.annotation.SuppressLint("StaticFieldLeak") // the application context only, which lives as long as the app
 object I18n {
     private var ctx: Context? = null
     private val dicts = HashMap<String, Map<String, String>>()

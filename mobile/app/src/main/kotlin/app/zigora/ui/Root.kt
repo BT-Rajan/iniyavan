@@ -29,6 +29,8 @@ import app.zigora.R
 import app.zigora.data.Me
 import app.zigora.data.json
 import kotlinx.serialization.Serializable
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.put
 
 @Serializable object HomeR
 @Serializable object CoursesR
@@ -39,6 +41,9 @@ import kotlinx.serialization.Serializable
 @Serializable data class QuizR(val id: Int)
 @Serializable data class PhotoR(val uri: String = "")
 @Serializable object NotesR
+@Serializable data class ReaderR(val id: Int)
+@Serializable data class StudyQuizR(val id: Int, val topic: Int = 0)
+@Serializable data class MaterialR(val cid: Int, val name: String = "")
 @Serializable object PasswordR
 @Serializable object KeyR
 
@@ -74,7 +79,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
         }
         handled()
     }
-    NavigationSuiteScaffold(navigationSuiteItems = {
+    androidx.compose.runtime.CompositionLocalProvider(LocalMe provides me) { NavigationSuiteScaffold(navigationSuiteItems = {
         tabs.forEach { t ->
             item(selected = dest?.hasRoute(t.route::class) == true, icon = { Icon(t.icon, null) }, label = { Text(stringResource(t.label)) },
                  onClick = { nav.navigate(t.route) { popUpTo(nav.graph.findStartDestination().id) { saveState = true }; launchSingleTop = true; restoreState = true } })
@@ -90,10 +95,24 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
             composable<PasswordR> { ChangePassword(forced = false, back = { nav.popBackStack() }) { nav.popBackStack() } }
             composable<KeyR> { MyKeyScreen { nav.popBackStack() } }
             composable<CourseR> { CourseScreen(it.toRoute<CourseR>().id, back = { nav.popBackStack() }, openTopic = open, openQuiz = { q -> nav.navigate(QuizR(q)) }) }
-            composable<TopicR> { TopicScreen(it.toRoute<TopicR>().id, me, back = { nav.popBackStack() }, jump = { id -> nav.navigate(TopicR(id)) { popUpTo<TopicR> { inclusive = true } } }) }
+            composable<TopicR> { TopicScreen(it.toRoute<TopicR>().id, me, back = { nav.popBackStack() }, jump = { id -> nav.navigate(TopicR(id)) { popUpTo<TopicR> { inclusive = true } } },
+                                             openReader = { id -> nav.navigate(ReaderR(id)) }, openPractice = { q -> nav.navigate(StudyQuizR(q, it.toRoute<TopicR>().id)) },
+                                             openMaterial = { cid, name -> nav.navigate(MaterialR(cid, name)) }) }
+            composable<ReaderR> { e -> val id = e.toRoute<ReaderR>().id
+                val t = rememberLoad("reader", id) { get("/topics/$id", app.zigora.data.TopicFull.serializer()) }
+                Loaded(t) { ReaderScreen(it) { nav.popBackStack() } } }
+            composable<StudyQuizR> { e -> val r = e.toRoute<StudyQuizR>(); val a = api(); val scope = androidx.compose.runtime.rememberCoroutineScope()
+                StudyQuizScreen(r.id, back = { nav.popBackStack() }, again = if (r.topic == 0) null else ({ kind -> scope.launch {
+                    runCatching { a.send("POST", "/topics/${r.topic}/practice", kotlinx.serialization.json.buildJsonObject { put("kind", kind) }, app.zigora.data.StudyQuiz.serializer()).id }
+                        .onSuccess { q -> nav.navigate(StudyQuizR(q, r.topic)) { popUpTo<StudyQuizR> { inclusive = true } } } } })) }
+            composable<MaterialR> { e -> val r = e.toRoute<MaterialR>(); MyMaterialScreen(r.cid, r.name) { nav.popBackStack() } }
             composable<QuizR> { QuizScreen(it.toRoute<QuizR>().id) { nav.popBackStack() } }
             composable<PhotoR> { PhotoScreen(it.toRoute<PhotoR>().uri) { nav.popBackStack() } }
             composable<NotesR> { NotificationsScreen(back = { nav.popBackStack() }, openTopic = open) }
         }
     }
+    }
 }
+
+/** who is signed in, for parts that differ by role (only students flag an AI answer, as on the web) */
+val LocalMe = androidx.compose.runtime.staticCompositionLocalOf<Me?> { null }

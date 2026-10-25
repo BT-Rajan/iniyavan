@@ -1,12 +1,12 @@
 name: Android
 # Builds the app in mobile/. On main, and once a day, a new version is published as a GitHub release (tag android-v1.0.N, N = the number of
-# commits that changed mobile/) when there isn't one yet; the Zigora server picks the newest release up for its home page and the app itself.
+# commits that changed mobile/ or the web files the app packs in) when there isn't one yet; the Zigora server picks the newest release up for its home page and the app itself.
 on:
   push:
     branches: [main]
-    paths: ["mobile/**", ".github/workflows/android.yml"]
+    paths: ["mobile/**", ".github/workflows/android.yml", "frontend/src/reader.jsx", "frontend/src/content.jsx", "frontend/src/highlighter.js", "frontend/src/styles.css", "frontend/src/locales/**", "frontend/reader.html", "frontend/vite.reader.config.js", "frontend/package-lock.json"]
   pull_request:
-    paths: ["mobile/**", ".github/workflows/android.yml"]
+    paths: ["mobile/**", ".github/workflows/android.yml", "frontend/src/reader.jsx", "frontend/src/content.jsx", "frontend/src/highlighter.js", "frontend/src/styles.css", "frontend/src/locales/**", "frontend/reader.html", "frontend/vite.reader.config.js", "frontend/package-lock.json"]
   schedule:
     - cron: "17 3 * * *"  # once a day (03:17 UTC): publishes the app if a change has not been released yet
   workflow_dispatch:
@@ -26,13 +26,13 @@ jobs:
         working-directory: mobile
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }  # the version counts the commits that changed mobile/
+        with: { fetch-depth: 0 }  # the version counts the commits that changed the app
 
       - name: Version
         id: v
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          n=$(git rev-list --count HEAD -- .)
+          n=$(git rev-list --count HEAD -- . ../frontend/src/reader.jsx ../frontend/src/content.jsx ../frontend/src/highlighter.js ../frontend/src/styles.css ../frontend/src/locales ../frontend/reader.html ../frontend/vite.reader.config.js)
           echo "code=$n" >> "$GITHUB_OUTPUT"; echo "name=1.0.$n" >> "$GITHUB_OUTPUT"
           publish=false
           if [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
@@ -40,6 +40,14 @@ jobs:
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "schedule" ] && [ "$publish" = "false" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; fi
+
+      - uses: actions/setup-node@v4
+        if: steps.v.outputs.skip != 'true'
+        with: { node-version: "20", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Reader page
+        if: steps.v.outputs.skip != 'true'
+        working-directory: frontend
+        run: npm ci && npm run build:reader  # the app shows topic content with the web's own renderer
 
       - uses: actions/setup-java@v4
         if: steps.v.outputs.skip != 'true'

@@ -472,3 +472,7 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 .nlang .seg button{border:0;background:transparent;color:var(--mut);font-weight:600;font-size:14px;padding:6px 14px;border-radius:99px;margin:0;width:auto}
 .nlang .seg button.on{background:var(--s1);color:var(--tx);box-shadow:0 1px 3px rgba(0,0,0,.12)}.nlang .known{margin:6px 0 0;font-size:13px}.nlang .flagl{margin:0}
 .budwarn{border-inline-start:4px solid var(--warn,#d9a400)}
+/* the reader page inside the Android app (reader.jsx): the app draws the card, so the text sits on its surface in the phone's own font */
+.zgr{background:transparent;border:0;padding:0;border-radius:0}
+html:has(.zgr),html:has(.zgr) body{background:transparent!important;margin:0;padding:0;min-height:0!important;font-family:system-ui,sans-serif!important}
+html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:inherit!important}html:has(.zgr) .katex,html:has(.zgr) .katex *{font-family:KaTeX_Main,'Times New Roman',serif!important}
