@@ -1,6 +1,9 @@
 // the page's own words in English, Arabic and Tamil; Arabic reads right to left. The choice is remembered on this device and shared with the app.
 var T={
-ar:{nav_how:"كيف يعمل",nav_features:"المزايا",nav_colleges:"للكليات",nav_safety:"الأمان",open:"افتح زيغورا",
+ar:{nav_android:"تطبيق أندرويد",and_k:"تطبيق أندرويد",and_h:"زيغورا، مصمم لأندرويد",and_p:"تطبيق أصلي لأندرويد 13 وما بعده. الخطوات الهادئة نفسها، مع ما يجيده هاتفك أصلًا.",
+and_f1h:"ألوان هاتفك",and_f1p:"يأخذ Material You ألوانه من خلفية هاتفك، والوضع الداكن يتبع هاتفك.",and_f2h:"صوّر واسأل",and_f2p:"التقط صورة لسؤال أو رسم توضيحي، أو شاركها من أي تطبيق.",
+and_f3h:"ابحث من أي مكان",and_f3p:"حدّد كلمة في أي تطبيق واختر زيغورا للبحث في منهجك.",and_f4h:"بلغتك",and_f4p:"العربية أو الإنجليزية أو التاميلية، تُضبط لزيغورا وحده من إعدادات هاتفك.",
+and_dl:"نزّل لأندرويد",and_soon:"تطبيق أندرويد في الطريق. عُد قريبًا.",and_addr:"عندما يطلب التطبيق عنوان كليتك، اكتب:",and_ver:"الإصدار {v} · {mb} ميغابايت",and_when:"صدر في {d} · أندرويد 13 وما بعده",nav_how:"كيف يعمل",nav_features:"المزايا",nav_colleges:"للكليات",nav_safety:"الأمان",open:"افتح زيغورا",
 h1:"تعلّم منهجك في <em>خطوات قصيرة ومثيرة للفضول</em>.",lead:"تحوّل زيغورا ملاحظات الكلية إلى خلاصة في 30 ثانية، وسؤال جيد، وبضع خطوات صغيرة تختارها. بالعربية والإنجليزية والتاميلية. بلا سلاسل أيام، وبلا ضغط.",
 cta_colleges:"أحضرها إلى كليتك",made:"صُممت لطلاب <b>الهند</b> و<b>الكويت</b>",eyebrow:"🇮🇳 الهند · 🇰🇼 الكويت",how_k:"كيف يعمل",how_h:"الملاحظات مرجع. والتعلّم يحدث في خطوات صغيرة.",how_p:"يأخذ الطلاب ما يحتاجونه حين يحتاجونه. كل إجابة بضعة أسطر وتنتهي بشيء يستحق التفكير.",
 s1_h:"افتح موضوعًا",s1_p:"خلاصة من ثلاث نقاط وسؤال مثير للفضول يأتيان أولًا. والملاحظات الكاملة على بُعد نقرة.",s2_h:"تعمّق كما تشاء",s2_p:"لماذا؟ مثال، زاوية الامتحان، سؤال سريع: كلٌّ في بضعة أسطر. ظلّل أي فقرة لترى معناها.",s3_h:"يعود بلطف",s3_p:"«هل تتذكر هذا؟» يعيد سؤالًا من أيام مضت، ويتكيّف التطبيق بهدوء مع طريقة تعلّم كل طالب.",
@@ -19,7 +22,10 @@ l3_h:"تقارير بلا مراقبة",l3_p:"تقدّم المقررات ونت
 sf_k:"آمن للشباب",sf_h:"حواجز أمان مدمجة، لا مضافة",g1_h:"قواعد لا يمكن إيقافها",g1_p:"كل طلب إلى الذكاء الاصطناعي يبدأ بقواعد أمان في الشيفرة: الدراسة فقط، ومحتوى آمن، والملاحظات مادة لا تعليمات.",
 g2_h:"الرعاية أولًا",g2_p:"إذا كتب طالب ما يبدو أزمة، يحصل على رد لطيف يدلّه على من يستطيع المساعدة، دون أي طلب للذكاء الاصطناعي.",g3_h:"يخرج أقل",g3_p:"نص الدراسة يُرسل مرة ويُحفظ. والاستفسارات ترسل الأسماء وعبارة فقط. ومفاتيح الطلاب مشفّرة ولا تُعرض.",
 cta_h:"قدّم تعلّمًا هادئًا ومثيرًا للفضول لطلابك",cta_p:"لديك حساب؟ افتح زيغورا. تدير كلية في الهند أو الكويت؟ شغّله على خادمك.",signup:"سجّل الدخول أو أنشئ حسابًا",foot:"تعلّم هادئ ومثير للفضول · الهند والكويت"},
-ta:{nav_how:"எப்படி வேலை செய்கிறது",nav_features:"அம்சங்கள்",nav_colleges:"கல்லூரிகளுக்கு",nav_safety:"பாதுகாப்பு",open:"ஜிகோராவைத் திற",
+ta:{nav_android:"ஆண்ட்ராய்டு செயலி",and_k:"ஆண்ட்ராய்டு செயலி",and_h:"ஆண்ட்ராய்டுக்காக உருவான ஜிகோரா",and_p:"ஆண்ட்ராய்டு 13 மற்றும் அதற்குப் பிந்தைய பதிப்புகளுக்கான நேட்டிவ் செயலி. அதே அமைதியான படிகள், உங்கள் போன் ஏற்கெனவே சிறப்பாகச் செய்வதுடன்.",
+and_f1h:"உங்கள் போனின் நிறங்கள்",and_f1p:"Material You உங்கள் வால்பேப்பரின் நிறங்களை எடுக்கிறது; டார்க் மோட் உங்கள் போனைப் பின்பற்றுகிறது.",and_f2h:"படம் எடுத்துக் கேளுங்கள்",and_f2p:"ஒரு கேள்வி அல்லது வரைபடத்தைப் படம் எடுங்கள், அல்லது எந்தச் செயலியிலிருந்தும் பகிருங்கள்.",
+and_f3h:"எங்கிருந்தும் தேடுங்கள்",and_f3p:"எந்தச் செயலியிலும் ஒரு சொல்லைத் தேர்ந்தெடுத்து, உங்கள் பாடத்திட்டத்தில் தேட ஜிகோராவைத் தேர்ந்தெடுங்கள்.",and_f4h:"உங்கள் மொழியில்",and_f4p:"தமிழ், ஆங்கிலம் அல்லது அரபு; உங்கள் போன் அமைப்புகளில் ஜிகோராவுக்கு மட்டும் அமைக்கலாம்.",
+and_dl:"ஆண்ட்ராய்டுக்குப் பதிவிறக்கு",and_soon:"ஆண்ட்ராய்டு செயலி விரைவில் வருகிறது. பிறகு பாருங்கள்.",and_addr:"செயலி உங்கள் கல்லூரியின் முகவரியைக் கேட்கும்போது, இதைத் தட்டச்சு செய்யுங்கள்:",and_ver:"பதிப்பு {v} · {mb} MB",and_when:"{d} அன்று வெளியானது · ஆண்ட்ராய்டு 13 மற்றும் பிந்தையவை",nav_how:"எப்படி வேலை செய்கிறது",nav_features:"அம்சங்கள்",nav_colleges:"கல்லூரிகளுக்கு",nav_safety:"பாதுகாப்பு",open:"ஜிகோராவைத் திற",
 h1:"உங்கள் பாடத்திட்டத்தை <em>சிறிய, ஆர்வமூட்டும் படிகளில்</em> கற்றுக்கொள்ளுங்கள்.",lead:"கல்லூரிக் குறிப்புகளை 30 விநாடிச் சுருக்கம், ஒரு நல்ல கேள்வி, நீங்கள் தேர்ந்தெடுக்கும் சில சிறிய படிகளாக ஜிகோரா மாற்றுகிறது. ஆங்கிலம், தமிழ், அரபு மொழிகளில். தொடர் நாள் கணக்கு இல்லை, அழுத்தம் இல்லை.",
 cta_colleges:"உங்கள் கல்லூரிக்குக் கொண்டு வாருங்கள்",made:"<b>இந்தியா</b>, <b>குவைத்</b> மாணவர்களுக்காக உருவாக்கப்பட்டது",eyebrow:"🇮🇳 இந்தியா · 🇰🇼 குவைத்",how_k:"எப்படி வேலை செய்கிறது",how_h:"குறிப்புகள் ஆதாரம். கற்றல் சிறிய படிகளில் நடக்கிறது.",how_p:"மாணவர்கள் தேவையானதைத் தேவைப்படும்போது எடுத்துக்கொள்கிறார்கள். ஒவ்வொரு விடையும் சில வரிகள், சிந்திக்கத் தூண்டும் ஒன்றுடன் முடியும்.",
 s1_h:"ஒரு தலைப்பைத் திறங்கள்",s1_p:"மூன்று புள்ளிச் சுருக்கமும் ஒரு ஆர்வமூட்டும் கேள்வியும் முதலில் வரும். முழுக் குறிப்புகள் ஒரு தட்டலில்.",s2_h:"விரும்பும் அளவு ஆழமாகச் செல்லுங்கள்",s2_p:"ஏன்?, உதாரணம், தேர்வுக் கோணம், விரைவுச் சோதனை: ஒவ்வொன்றும் சில வரிகள். எந்தப் பத்தியையும் சிறப்பித்தால் அதன் பொருள் தெரியும்.",
@@ -43,10 +49,18 @@ var EN={};document.querySelectorAll('[data-i]').forEach(function(e){var k=e.getA
 function setLang(l){var d=l==='en'?EN:T[l]||EN;document.documentElement.lang=l;document.documentElement.dir=l==='ar'?'rtl':'ltr'
   document.querySelectorAll('[data-i]').forEach(function(e){var v=d[e.getAttribute('data-i')]||EN[e.getAttribute('data-i')];if(e.hasAttribute('data-html'))e.innerHTML=v;else e.textContent=v})
   document.querySelectorAll('.lang button').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-l')===l))})
-  try{localStorage.lang=l}catch(x){}}
+  try{localStorage.lang=l}catch(x){}android(l)}
+// the Android app: the newest version, which the server looks up on GitHub once a day
+var EX={and_ver:'Version {v} · {mb} MB',and_when:'Released {d} · Android 13 and later'},rel=null
+function android(l){var dl=document.getElementById('dl');if(!dl)return;document.getElementById('here').textContent=location.origin
+  if(!rel||!rel.version||!rel.url){dl.setAttribute('data-state','none');return}
+  var d=(l==='en'?EX:T[l])||EX,day=rel.date?new Date(rel.date).toLocaleDateString(l==='ar'?'ar':l==='ta'?'ta-IN':'en-GB',{day:'numeric',month:'long',year:'numeric'}):''
+  document.getElementById('apk').href=rel.url;document.getElementById('apkver').textContent=d.and_ver.replace('{v}',rel.version).replace('{mb}',rel.size?(rel.size/1048576).toFixed(1):'?')
+  document.getElementById('apkwhen').textContent=day?d.and_when.replace('{d}',day):'';dl.setAttribute('data-state','has')}
 document.querySelectorAll('.lang button').forEach(function(b){b.addEventListener('click',function(){setLang(b.getAttribute('data-l'))})})
 var start='en';try{start=localStorage.lang||((navigator.language||'').slice(0,2))}catch(x){}setLang(['ar','ta'].indexOf(start)>=0?start:'en')
 document.getElementById('yr').textContent=new Date().getFullYear()
+fetch('/api/app/android').then(function(r){return r.ok?r.json():null}).then(function(r){rel=r;android(document.documentElement.lang)}).catch(function(){})
 // someone already signed in on this device: "Open Zigora" becomes the main way in; an installed app opens straight into the app
 try{if(localStorage.t)document.querySelectorAll('[data-i=signup]').forEach(function(a){a.style.display='none'})}catch(x){}
 if(matchMedia('(display-mode: standalone)').matches)location.replace('/app/')

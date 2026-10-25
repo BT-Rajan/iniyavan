@@ -4395,6 +4395,36 @@ def version():
     except OSError: screens = None
     return {"server": SERVER_HEAD, "screens": screens, "match": bool(SERVER_HEAD and screens and SERVER_HEAD == screens),
             "hint": None if SERVER_HEAD and screens and SERVER_HEAD == screens else "The screens are older than the server code (or were never built). Run ./run.sh, or: cd frontend && npm ci && npm run build, then restart."}
+# ---- the Android app: GitHub Actions builds it in mobile/ and publishes each version as a release tagged android-v<version>. The server looks
+# ---- once a day for the newest one, so the home page and the app itself can offer it (version, date and the download link) ----
+ANDROID_REPO = os.getenv("ANDROID_REPO", "BT-Rajan/iniyavan")  # owner/name of the GitHub repository whose releases carry the APK; empty turns this off
+ANDROID_CHECK = 24 * 3600; ANDROID_RETRY = 3600  # seconds between checks, and before trying again after GitHub could not be reached
+android_seen = {"at": 0.0, "release": None}
+def android_release(now=None):
+    """The newest published APK as {version, code, date, url, size}, or None. Asks GitHub at most once a day (once an hour after a failure)."""
+    now = now or time.time()
+    if not ANDROID_REPO: return None
+    if now - android_seen["at"] < (ANDROID_CHECK if android_seen["release"] else ANDROID_RETRY): return android_seen["release"]
+    android_seen["at"] = now
+    try:
+        r = httpx.get(f"https://api.github.com/repos/{ANDROID_REPO}/releases", params={"per_page": 20}, timeout=10,
+                      headers={"Accept": "application/vnd.github+json", "User-Agent": "zigora-server"})
+        r.raise_for_status()
+        for rel in r.json():
+            tag = rel.get("tag_name") or ""
+            apk = next((x for x in rel.get("assets") or [] if (x.get("name") or "").endswith(".apk")), None)
+            if rel.get("draft") or rel.get("prerelease") or not tag.startswith("android-v") or not apk: continue
+            ver = tag[len("android-v"):]
+            code = ver.rsplit(".", 1)[-1]
+            android_seen["release"] = {"version": ver, "code": int(code) if code.isdigit() else None, "date": rel.get("published_at"),
+                                       "url": apk.get("browser_download_url"), "size": apk.get("size")}
+            break
+    except Exception as e: log.warning("Could not check GitHub for the Android app: %s", type(e).__name__)  # the last answer stays
+    return android_seen["release"]
+@app.get("/api/app/android")
+async def android_latest():  # public: the home page shows it before anyone signs in
+    rel = await run_in_threadpool(android_release)
+    return JSONResponse(rel or {"version": None}, headers={"Cache-Control": "public, max-age=3600"})
 # the site: the home page (web/) at the root, and the app itself under /app/
 web = os.path.join(os.path.dirname(__file__), "..", "web")
 if os.path.isdir(dist): app.mount("/app", StaticFiles(directory=dist, html=True), name="ui")
