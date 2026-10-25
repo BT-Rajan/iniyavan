@@ -227,6 +227,9 @@ The rule: study text goes out **once**, the answer is kept, and from then on the
 - **Still sent each time:** a new Quick check or Full quiz in a student-built course sends that topic's text again, because every request is meant to write different questions. Reducing that means generating a question bank once and drawing from it, which is not built yet.
 - **The outbound log:** every request that leaves is recorded in `ai_egress`: who, which kind, which topic, how many characters, and whether it was answered. Never the text. Admins read the totals at `GET /api/admin/egress?days=30`.
 
+## Android app (mobile/)
+A native Android app for students (Android 13 and later) lives in `mobile/`; see `mobile/README.md`. GitHub Actions builds it and publishes each new version as a release; the server checks for the newest once a day and the home page offers it for download with its version and date. Releases need a signing key in the repository's secrets (one-time setup in `mobile/README.md`).
+
 ## The home page and where the app lives
 The site's root (`/`) is the Zigora home page, a single static page in `web/` (`index.html`, `site.js`, fonts and the logo; no build step). It is in English, Arabic (right to left) and Tamil, and its buttons open the app, which now lives under **`/app/`**.
 - Edit the page's words in `web/index.html` (English) and `web/site.js` (Arabic and Tamil). It is served under the app's strict security policy, so it uses no outside fonts or scripts; keep it that way.

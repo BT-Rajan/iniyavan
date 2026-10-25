@@ -89,6 +89,13 @@ section{padding:84px 0}.sec-h{max-width:680px;margin:0 0 42px}.sec-h.c{margin-in
 .two{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start}.list{display:grid;gap:14px;margin:0;padding:0;list-style:none}
 .list li{display:grid;grid-template-columns:28px 1fr;gap:12px}.list li b{display:block}.list li span{color:var(--mut)}.tick{width:28px;height:28px;border-radius:9px;background:var(--accbg);color:var(--plum);display:grid;place-items:center;font-weight:700}
 @media (prefers-color-scheme:dark){.tick{color:#d9b8ee}}@media (max-width:860px){.two{grid-template-columns:1fr;gap:28px}}
+/* android */
+.droid{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center}.droid .feats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:24px 0 0;padding:0;list-style:none}
+.droid .feats li{background:var(--s1);border:1px solid var(--line);border-radius:14px;padding:14px 16px}.droid .feats b{display:block;margin-bottom:2px}.droid .feats span{color:var(--mut);font-size:14px}
+.dl{background:var(--s2);border-radius:28px;padding:34px;text-align:center}.dl .btn{justify-content:center}.dl .ver{margin:14px 0 0;font-weight:600}.dl .when{margin:2px 0 0;color:var(--mut);font-size:14px}
+.dl .addr{margin:22px 0 0;padding-top:18px;border-top:1px solid var(--line);color:var(--mut);font-size:14px}.dl .addr code{display:inline-block;margin-top:6px;background:var(--s1);border:1px solid var(--line);border-radius:10px;padding:6px 10px;color:var(--tx);font-size:15px;direction:ltr}
+.dl .soon{color:var(--mut);margin:0}.dl[data-state=none] .has,.dl[data-state=has] .soon{display:none}
+@media (max-width:860px){.droid{grid-template-columns:1fr}.droid .feats{grid-template-columns:1fr}}
 /* cta */
 .cta{background:linear-gradient(135deg,var(--plum) 0%,#8c3fb6 55%,var(--coral) 140%);color:#fff;border-radius:28px;padding:60px 40px;text-align:center}
 .cta h2{color:#fff;margin-top:0}.cta p{color:rgba(255,255,255,.85);font-size:18px;max-width:620px;margin:0 auto 26px}.cta .ctas{justify-content:center}
@@ -101,7 +108,7 @@ footer{padding:40px 0 50px;color:var(--mut);font-size:14px}.foot{display:flex;fl
 <body>
 <header><div class="wrap nav">
   <a class="brand" href="#top"><img src="logo.svg" alt="">Zigora</a>
-  <nav class="links" aria-label="Sections"><a href="#how" data-i="nav_how">How it works</a><a href="#features" data-i="nav_features">Features</a><a href="#colleges" data-i="nav_colleges">For colleges</a><a href="#safety" data-i="nav_safety">Safety</a></nav>
+  <nav class="links" aria-label="Sections"><a href="#how" data-i="nav_how">How it works</a><a href="#features" data-i="nav_features">Features</a><a href="#colleges" data-i="nav_colleges">For colleges</a><a href="#safety" data-i="nav_safety">Safety</a><a href="#android" data-i="nav_android">Android app</a></nav>
   <div class="lang" role="group" aria-label="Language"><button data-l="en">EN</button><button data-l="ar">عربي</button><button data-l="ta">தமிழ்</button></div>
   <a class="btn pri open" href="/app/" data-i="open">Open Zigora</a>
 </div></header>
@@ -182,6 +189,26 @@ footer{padding:40px 0 50px;color:var(--mut);font-size:14px}.foot{display:flex;fl
     <div class="card reveal"><div class="ic">🛡️</div><h3 data-i="g1_h">Rules nobody can switch off</h3><p data-i="g1_p">Every AI request starts with safety rules that live in code: study only, safe content, and notes treated as material, never as instructions.</p></div>
     <div class="card reveal"><div class="ic">💜</div><h3 data-i="g2_h">Care comes first</h3><p data-i="g2_p">If a student writes something that sounds like a crisis, they get a kind reply pointing to people who can help, without any AI call.</p></div>
     <div class="card reveal"><div class="ic">🔒</div><h3 data-i="g3_h">Less goes out</h3><p data-i="g3_p">Study text is sent once and kept. Doubts send names and a phrase, not notes. Students' own keys are encrypted and never shown.</p></div>
+  </div>
+</div></section>
+
+<section id="android" style="padding-top:20px"><div class="wrap droid">
+  <div class="reveal">
+    <div class="sec-h" style="margin-bottom:0"><span class="eyebrow" data-i="and_k">Android app</span>
+      <h2 data-i="and_h">Zigora, made for Android</h2>
+      <p data-i="and_p">A native app for Android 13 and later. The same calm steps, with what your phone already does well.</p></div>
+    <ul class="feats">
+      <li><b data-i="and_f1h">Your phone's colours</b><span data-i="and_f1p">Material You picks up your wallpaper; dark mode follows your phone.</span></li>
+      <li><b data-i="and_f2h">Snap and ask</b><span data-i="and_f2p">Take a photo of a question or a diagram, or share one from any app.</span></li>
+      <li><b data-i="and_f3h">Look it up anywhere</b><span data-i="and_f3p">Select a word in any app and choose Zigora to search your syllabus.</span></li>
+      <li><b data-i="and_f4h">In your language</b><span data-i="and_f4p">English, Arabic or Tamil, set for Zigora alone in your phone's settings.</span></li>
+    </ul>
+  </div>
+  <div class="dl reveal" data-state="none" id="dl">
+    <div class="has"><a class="btn pri" id="apk" href="#" data-i="and_dl">Download for Android</a>
+      <p class="ver" id="apkver"></p><p class="when" id="apkwhen"></p></div>
+    <p class="soon" data-i="and_soon">The Android app is on its way. Check back soon.</p>
+    <p class="addr"><span data-i="and_addr">When the app asks for your college's address, type:</span><br><code id="here"></code></p>
   </div>
 </div></section>
 

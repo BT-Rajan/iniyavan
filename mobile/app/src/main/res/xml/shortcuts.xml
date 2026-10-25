@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="search" android:enabled="true" android:icon="@drawable/ic_shortcut_search"
+        android:shortcutShortLabel="@string/shortcut_search" android:shortcutLongLabel="@string/shortcut_search_long">
+        <intent android:action="app.zigora.SEARCH" android:targetPackage="app.zigora" android:targetClass="app.zigora.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="photo" android:enabled="true" android:icon="@drawable/ic_shortcut_photo"
+        android:shortcutShortLabel="@string/shortcut_photo" android:shortcutLongLabel="@string/shortcut_photo_long">
+        <intent android:action="app.zigora.PHOTO" android:targetPackage="app.zigora" android:targetClass="app.zigora.MainActivity" />
+    </shortcut>
+</shortcuts>
