@@ -4623,6 +4623,15 @@ def android_release(now=None):
             break
     except Exception as e: log.warning("Could not check GitHub for the Android app: %s", type(e).__name__)  # the last answer stays
     return android_seen["release"]
+@app.post("/api/app/android/refresh")
+async def android_refresh(request: Request):
+    """Look at GitHub again now. Only the server itself asks (run.sh, once a deploy's new release is out): from this machine, or with the key
+    only .env can give (for a server bound to its public address). At most once a minute."""
+    key = hashlib.sha256(f"android-refresh:{SECRET}".encode()).hexdigest()
+    local = (request.client.host if request.client else "") in ("127.0.0.1", "::1")
+    if not local and not hmac.compare_digest(request.headers.get("x-refresh-key", ""), key): raise HTTPException(403, "Only the server itself can ask for this")
+    if time.time() - android_seen["at"] >= 60: android_seen["at"] = 0.0
+    return JSONResponse(await run_in_threadpool(android_release) or {"version": None})
 @app.get("/api/app/android")
 async def android_latest():  # public: the home page shows it before anyone signs in
     rel = await run_in_threadpool(android_release)

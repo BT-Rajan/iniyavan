@@ -38,3 +38,21 @@ def test_when_github_cannot_be_reached_the_last_answer_stays(env, monkeypatch):
     calls = []; monkeypatch.setattr(main.httpx, "get", lambda url, **k: calls.append(1) or Res(REL))
     main.android_release(5000.0 + main.ANDROID_RETRY - 1); assert calls == []  # after a failure it waits an hour, not a day
     main.android_release(5000.0 + main.ANDROID_RETRY + 1); assert calls == [1]
+
+def test_the_server_itself_can_ask_again_after_a_deploy(env, monkeypatch):
+    main.android_seen.update(at=-1e12, release=None)
+    old = [dict(REL[2], tag_name="android-v1.0.6")]; new = [dict(REL[2], tag_name="android-v1.0.9")] + old
+    seen = [old]; monkeypatch.setattr(main.httpx, "get", lambda url, **k: Res(seen[0]))
+    assert env.c.get("/api/app/android").json()["code"] == 6
+    seen[0] = new; assert env.c.get("/api/app/android").json()["code"] == 6  # kept for the day
+    main.android_seen["at"] -= 120  # the last look was a couple of minutes ago
+    monkeypatch.setattr(main.httpx, "get", lambda url, **k: Res(seen[0]))
+    from starlette.testclient import TestClient
+    local = TestClient(main.app, client=("127.0.0.1", 50000))
+    assert local.post("/api/app/android/refresh").json()["code"] == 9 and env.c.get("/api/app/android").json()["code"] == 9
+    calls = []; monkeypatch.setattr(main.httpx, "get", lambda url, **k: calls.append(1) or Res(seen[0]))
+    local.post("/api/app/android/refresh"); assert calls == []  # at most once a minute
+    assert env.c.post("/api/app/android/refresh").status_code == 403  # nobody else
+    import hashlib; key = hashlib.sha256(f"android-refresh:{main.SECRET}".encode()).hexdigest()
+    assert env.c.post("/api/app/android/refresh", headers={"X-Refresh-Key": key}).status_code == 200  # a server bound to its public address, from run.sh
+    assert env.c.post("/api/app/android/refresh", headers={"X-Refresh-Key": "x" * 64}).status_code == 403

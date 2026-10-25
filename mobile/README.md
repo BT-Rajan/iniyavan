@@ -16,7 +16,9 @@ language, colours, daily note, version and update). Teachers and admins keep usi
 `.github/workflows/android.yml` builds the app on every change to `mobile/` or to the web files it packs in (the reader page and the translations). On `main`, and once a day, it publishes a GitHub release tagged
 `android-v1.0.N` (N = the number of commits that changed the app) with `zigora-1.0.N.apk`, unless that version is already out. The Zigora server checks
 GitHub for the newest release once a day (`GET /api/app/android`); the home page shows its version, date and a download button, and the app shows a
-quiet "Version … is ready" note.
+quiet "Version … is ready" note. A deploy with `run.sh` doesn't wait for that daily look: it waits in the background (up to 20 minutes) for
+the release that commit makes to appear on GitHub, then has the server show it at once (`mobile/show-release.sh`; notes in
+`/tmp/zigora-android-release.log`). The version number comes from `mobile/version.sh`, which the workflow uses too.
 
 ### One-time setup: the signing key
 
