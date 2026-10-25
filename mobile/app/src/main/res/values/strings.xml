@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- the same words as the web app; change all three languages (values, values-ar, values-ta) together -->
 <resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="about">About</string>
     <string name="about_app">About the app</string>
     <string name="about_diagram">It\'s about a diagram</string>
     <string name="about_diagram_hint">Sends the photo itself, so the AI can see the drawing</string>
+    <string name="about_text_1">A study companion for engineering students. Your admin adds programs, semesters, courses, units and topics along with the question pattern and answer guideline. Open a topic to get a clear explanation and a sample answer that follows the guideline.</string>
+    <string name="about_text_2">The app remembers which topics you have read. Explanations and sample answers are generated once with DeepSeek and shared, so they open instantly.</string>
+    <string name="account">Account</string>
     <string name="ai_help">AI help</string>
     <string name="ai_unavailable">AI unavailable. Try again later.</string>
     <string name="answer_guideline">Answer guideline</string>
@@ -16,14 +20,18 @@
     <string name="ask_photo">Ask from a photo</string>
     <string name="asked_admin">Asked your admin</string>
     <string name="back">Back</string>
+    <string name="back_to_sign_in">Back to sign in</string>
     <string name="best_percent">best %1$d%%</string>
     <string name="bookmark">Bookmark this topic</string>
     <string name="bookmark_removed">Bookmark removed</string>
     <string name="bookmarked">Bookmarked</string>
     <string name="cancel">Cancel</string>
     <string name="change">Change</string>
+    <string name="change_my_details">Change my details</string>
+    <string name="change_password">Change password</string>
     <string name="channel_reminders">Daily note</string>
     <string name="channel_reminders_about">One quiet note a day about a teacher\'s date coming up or a new test</string>
+    <string name="checking_key">Checking the key…</string>
     <string name="choose_password">Choose your own password</string>
     <string name="choose_password_lead">Your account was given a temporary password. Pick one only you know.</string>
     <string name="choose_photo">Choose a photo</string>
@@ -36,23 +44,40 @@
     <string name="create_account">Create an account</string>
     <string name="create_account_hint">Register on your college\'s Zigora site and confirm your email with the code we send. Then sign in here.</string>
     <string name="current_password">Current password</string>
+    <string name="daily_email">Email me a daily summary of new ones</string>
     <string name="daily_note">A quiet daily note</string>
     <string name="daily_note_hint">Once a day, only when a teacher\'s date is coming up or there is a new test</string>
     <string name="deepseek_key">DeepSeek API key</string>
     <string name="email">Email</string>
+    <string name="enter_code">Enter the code</string>
+    <string name="err_offline">Can\'t reach the server. Check your connection and try again.</string>
+    <string name="err_unexpected">The server sent something unexpected. Is this the right address?</string>
     <string name="examiners_look_for">Examiners look for: %1$s</string>
     <string name="explain_differently">Explain it a different way</string>
     <string name="explain_it">Explain it to me</string>
     <string name="explain_more_simply">Explain it more simply</string>
     <string name="finish">Finish</string>
+    <string name="forgot_ask_admin">Forgot your password? Ask your admin to reset it.</string>
+    <string name="forgot_lead">Enter your account email and we will send a link to choose a new one.</string>
+    <string name="forgot_password_q">Forgot password?</string>
+    <string name="forgot_title">Forgot your password?</string>
+    <string name="full_name">Full name</string>
     <string name="full_sample_answer">Show the full sample answer</string>
     <string name="good_afternoon">Good afternoon, %1$s</string>
     <string name="good_evening">Good evening, %1$s</string>
     <string name="good_morning">Good morning, %1$s</string>
     <string name="i_had_it">I had it</string>
+    <string name="id_number">ID number</string>
+    <string name="id_number_hint">Roll or employee number</string>
     <string name="in_your_topics">In your topics</string>
+    <string name="institution">Institution</string>
     <string name="interactive_note">This topic is an interactive page.</string>
     <string name="ive_learned_this">I\'ve learned this</string>
+    <string name="key_explain">Optional. Without a key you are on Lite: a free daily allowance of AI on your college\'s key. With your own DeepSeek key there is no daily limit, and usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.</string>
+    <string name="key_off">No key yet: you are on Lite</string>
+    <string name="key_on">AI is on · key %1$s</string>
+    <string name="key_placeholder">sk-…</string>
+    <string name="key_replace">Paste a new key to replace the current one</string>
     <string name="language">Language</string>
     <string name="language_hint">For the app and for AI answers</string>
     <string name="learn_by">Learn by %1$s</string>
@@ -64,11 +89,14 @@
     <string name="marks">Marks: %1$s</string>
     <string name="minutes_today">Minutes today: %1$d of %2$d</string>
     <string name="most_used">Your answers others used most</string>
+    <string name="my_ai_key">My AI key</string>
     <string name="my_courses">My courses</string>
     <string name="my_language">My language</string>
     <string name="n_learned" tools:ignore="PluralsCandidate">%1$d learned</string>
     <string name="n_opened" tools:ignore="PluralsCandidate">%1$d opened</string>
     <string name="need_address">Type your college\'s Zigora address</string>
+    <string name="new_code_coming">A new code is on its way</string>
+    <string name="new_code_in">Send a new code in %1$ss</string>
     <string name="new_label">New</string>
     <string name="new_password">New password</string>
     <string name="next">Next</string>
@@ -100,6 +128,7 @@
     <string name="passed">Passed (pass mark %1$d%%)</string>
     <string name="password">Password</string>
     <string name="password_rule">At least 8 characters</string>
+    <string name="phone">Phone</string>
     <string name="photo_lead">Snap a question, a paragraph or a diagram in your book. The text is read on your college\'s server first, so you can check it before you ask.</string>
     <string name="photo_unreadable">That photo could not be read. Try another.</string>
     <string name="plan_lite">Lite</string>
@@ -112,8 +141,14 @@
     <string name="question_n_of">Question %1$d of %2$d</string>
     <string name="question_pattern">Question pattern</string>
     <string name="reading_photo">Reading the text in the photo…</string>
+    <string name="register_lead">We will email you a code to confirm your address.</string>
+    <string name="register_password_note">At least 8 characters. AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more.</string>
     <string name="remember_this">Remember this?</string>
     <string name="remove_bookmark">Remove bookmark</string>
+    <string name="remove_key">Remove key</string>
+    <string name="remove_key_body">You go back to Lite: the free daily allowance.</string>
+    <string name="remove_key_q">Remove your key?</string>
+    <string name="remove_my_key">Remove my key</string>
     <string name="rewards">Rewards</string>
     <string name="rewards_how">When the answers you found are used %1$s times by others, you get %2$s points. Nothing to share: it happens on its own.</string>
     <string name="save_key">Save key</string>
@@ -122,7 +157,10 @@
     <string name="score_of">%1$d of %2$d · %3$d%%</string>
     <string name="search_hint">Look up anything in your syllabus</string>
     <string name="searches_today">Searches today: %1$d of %2$d</string>
+    <string name="send_me_code">Send me a code</string>
+    <string name="send_new_code">Send a new code</string>
     <string name="send_request">Send request</string>
+    <string name="send_reset_link">Send reset link</string>
     <string name="server_n">Server: %1$s</string>
     <string name="settings">Settings</string>
     <string name="shortcut_photo">Photo</string>
@@ -135,9 +173,11 @@
     <string name="sign_in">Sign in</string>
     <string name="sign_out">Sign out</string>
     <string name="sign_out_q">Sign out of Zigora on this phone?</string>
+    <string name="signed_in_as">Signed in as %1$s (%2$s).</string>
     <string name="signin_help">Forgot your password? Reset it on your college\'s Zigora website.</string>
     <string name="signin_lead">Calm, curious learning</string>
     <string name="signing_in">Signing in…</string>
+    <string name="six_digit_code">6-digit code</string>
     <string name="started">Started</string>
     <string name="step_check">Quick check</string>
     <string name="step_exam">Exam angle</string>
@@ -158,6 +198,10 @@
     <string name="text_in_photo">Text in the photo</string>
     <string name="text_in_photo_hint">Fix anything that was read wrong</string>
     <string name="the_gist">The gist</string>
+    <string name="theme">Theme</string>
+    <string name="theme_auto">Auto</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
     <string name="think_then_tap">Think, then tap for the answer</string>
     <string name="thinking">Thinking…</string>
     <string name="toward_next" tools:ignore="PluralsCandidate">%1$d of %2$d toward the next points</string>
@@ -168,7 +212,9 @@
     <string name="update">Update</string>
     <string name="update_ready">Version %1$s is ready</string>
     <string name="update_tap">Tap to download the new version</string>
+    <string name="use_institution_email">Use your institution email (%1$s).</string>
     <string name="use_own_key">Use my own AI key</string>
+    <string name="verify_create">Verify and create my account</string>
     <string name="version_n">Version %1$s</string>
     <string name="wallpaper_colours">Colours from my wallpaper</string>
     <string name="wallpaper_colours_hint">Off: Zigora\'s own purple</string>

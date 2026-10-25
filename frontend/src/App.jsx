@@ -151,7 +151,7 @@ function Register({onIn,toast,msg,appName,logo,back}){
     <label htmlFor="re">{tl("Email")}</label><input id="re" type="email" autoComplete="email" value={f.email} onChange={set('email')}/>
     <label htmlFor="rp">{tl("Phone")}</label><input id="rp" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} placeholder="+91 98765 43210"/>
     <label htmlFor="rw">{tl("Password")}</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} onKeyDown={e=>e.key==='Enter'&&ok&&start()}/>
-    <p className="known">{tl("At least 8 characters. AI help on this account uses your own DeepSeek API key, which you add after signing in.")}</p>
+    <p className="known">{tl("At least 8 characters. AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more.")}</p>
     <button className="btn" disabled={b||!ok} onClick={start}>{tl("Send me a code")}</button><button className="btn ghost" onClick={back}>{tl("Back to sign in")}</button><Toast msg={msg}/></div>}
 
 function MyAiKey({toast}){
@@ -160,7 +160,7 @@ function MyAiKey({toast}){
   const load=()=>api('/me/ai-key').then(setD).catch(e=>toast(e.message));useEffect(()=>{load()},[])
   const save=async()=>{setB(true);try{await api('/me/ai-key',{method:'PUT',body:{key}});setKey('');toast(tl("Key saved. AI help is on."));load()}catch(e){toast(e.message)}setB(false)}
   const del=async()=>{if(!await confirm({title:tl("Remove your key?"),body:tl("You go back to Lite: the free daily allowance."),ok:tl("Remove key"),danger:true}))return;try{await api('/me/ai-key',{method:'DELETE'});toast(tl("Key removed"));load()}catch(e){toast(e.message)}}
-  return <><Bar title={tl("My AI key")} sub={d?.key_set?tl("AI is on · key {key_hint}",{key_hint:d.key_hint}):tl("AI is off · no key yet")}/><div className="main">
+  return <><Bar title={tl("My AI key")} sub={d?.key_set?tl("AI is on · key {key_hint}",{key_hint:d.key_hint}):tl("No key yet: you are on Lite")}/><div className="main">
     <p className="known">{tl("Optional. Without a key you are on Lite: a free daily allowance of AI on your college's key. With your own DeepSeek key there is no daily limit, and usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.")}</p>
     <label htmlFor="k">{tl("DeepSeek API key")}</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?tl("Paste a new key to replace the current one"):tl("sk-…")}/>
     <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?tl("Checking the key…"):tl("Save key")}</button>

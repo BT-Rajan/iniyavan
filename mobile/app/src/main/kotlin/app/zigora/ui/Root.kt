@@ -39,18 +39,21 @@ import kotlinx.serialization.Serializable
 @Serializable data class QuizR(val id: Int)
 @Serializable data class PhotoR(val uri: String = "")
 @Serializable object NotesR
+@Serializable object PasswordR
+@Serializable object KeyR
 
 @Composable
 fun ZigoraRoot(incoming: Incoming?, handled: () -> Unit) {
     val app = app(); val out by app.signedOut.collectAsState()
     var wallpaper by remember { mutableStateOf(app.store.wallpaper) }
+    var theme by remember { mutableStateOf(app.store.theme) }
     var me by remember(out) { mutableStateOf(app.store.userJson?.let { runCatching { json.decodeFromString(Me.serializer(), it) }.getOrNull() }.takeIf { app.store.token != null }) }
-    ZigoraTheme(wallpaper) {
+    ZigoraTheme(wallpaper, theme) {
         val user = me
         when {
             user == null -> SignIn { m -> app.store.userJson = json.encodeToString(Me.serializer(), m); me = m }
             user.must_change -> ChangePassword(forced = true) { me = user.copy(must_change = false).also { app.store.userJson = json.encodeToString(Me.serializer(), it) } }
-            else -> Main(user, incoming, handled, wallpaper = { wallpaper = it; app.store.wallpaper = it }) { app.store.signOut(); me = null }
+            else -> Main(user, incoming, handled, wallpaper = { wallpaper = it; app.store.wallpaper = it }, theme = { theme = it; app.store.theme = it }) { app.store.signOut(); me = null }
         }
     }
 }
@@ -58,7 +61,7 @@ fun ZigoraRoot(incoming: Incoming?, handled: () -> Unit) {
 private data class Tab(val route: Any, val label: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector)
 
 @Composable
-private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (Boolean) -> Unit, signOut: () -> Unit) {
+private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (Boolean) -> Unit, theme: (String) -> Unit, signOut: () -> Unit) {
     val nav = rememberNavController()
     val tabs = listOf(Tab(HomeR, R.string.tab_home, Icons.Outlined.Home), Tab(CoursesR, R.string.tab_courses, Icons.AutoMirrored.Outlined.MenuBook),
                       Tab(SearchR(), R.string.tab_search, Icons.Outlined.Search), Tab(MeR, R.string.tab_me, Icons.Outlined.AccountCircle))
@@ -83,7 +86,9 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
                                            openNotes = { nav.navigate(NotesR) }, openPhoto = { nav.navigate(PhotoR()) }) }
             composable<CoursesR> { CoursesScreen(me) { nav.navigate(CourseR(it)) } }
             composable<SearchR> { SearchScreen(it.toRoute<SearchR>().q, openTopic = open, openPhoto = { nav.navigate(PhotoR()) }) }
-            composable<MeR> { ProfileScreen(me, wallpaper, signOut) }
+            composable<MeR> { ProfileScreen(me, wallpaper, theme, signOut, openPassword = { nav.navigate(PasswordR) }, openKey = { nav.navigate(KeyR) }) }
+            composable<PasswordR> { ChangePassword(forced = false, back = { nav.popBackStack() }) { nav.popBackStack() } }
+            composable<KeyR> { MyKeyScreen { nav.popBackStack() } }
             composable<CourseR> { CourseScreen(it.toRoute<CourseR>().id, back = { nav.popBackStack() }, openTopic = open, openQuiz = { q -> nav.navigate(QuizR(q)) }) }
             composable<TopicR> { TopicScreen(it.toRoute<TopicR>().id, me, back = { nav.popBackStack() }, jump = { id -> nav.navigate(TopicR(id)) { popUpTo<TopicR> { inclusive = true } } }) }
             composable<QuizR> { QuizScreen(it.toRoute<QuizR>().id) { nav.popBackStack() } }

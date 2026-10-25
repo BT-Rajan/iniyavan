@@ -40,6 +40,11 @@ class Store(context: Context, private val sealer: Sealer = Keystore) {
         get() = prefs.getBoolean("wallpaper", true)
         set(v) = prefs.edit { putBoolean("wallpaper", v) }
 
+    /** Auto (the phone's setting), light or dark, as on the web */
+    var theme: String
+        get() = prefs.getString("theme", "system") ?: "system"
+        set(v) = prefs.edit { putString("theme", v) }
+
     /** the reminder keys already shown, so each deadline is mentioned once */
     var notified: Set<String>
         get() = prefs.getStringSet("notified", emptySet()).orEmpty()

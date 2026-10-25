@@ -103,3 +103,9 @@ tasks.withType<Test>().configureEach {
     providers.gradleProperty("robolectricRepo").orNull?.let { systemProperty("robolectric.dependency.repo.url", it) }
     outputs.upToDateWhen { !screens }
 }
+
+// The web app's dictionaries (locales/ar.json, ta.json) and the shapes of the server's sentences (srv.json) are packed into the app as they are,
+// so server messages read the same in Arabic and Tamil on the phone as on the web. One source: frontend/src/locales.
+androidComponents {
+    onVariants { v -> v.sources.assets?.addStaticSourceDirectory(rootDir.resolve("../frontend/src/locales").canonicalPath) }
+}

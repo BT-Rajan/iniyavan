@@ -34,7 +34,7 @@ class Api(private val store: Store, private val onSignedOut: () -> Unit) {
     suspend fun raw(method: String, path: String, body: JsonElement? = null): JsonElement = call(method, path, body)
 
     private suspend fun call(method: String, path: String, body: JsonElement?): JsonElement = withContext(Dispatchers.IO) {
-        if (base.isEmpty()) throw ApiError("Add your college's Zigora address first", 0)
+        if (base.isEmpty()) throw ApiError(I18n.str(app.zigora.R.string.need_address), 0)
         val rb = when {
             body != null -> body.toString().toRequestBody(JSON)
             method == "GET" || method == "DELETE" -> null
@@ -43,16 +43,16 @@ class Api(private val store: Store, private val onSignedOut: () -> Unit) {
         val req = Request.Builder().url("$base/api$path").method(method, rb).header("Accept", "application/json")
             .apply { store.token?.let { header("Authorization", "Bearer $it") } }.build()
         val res = try { http.newCall(req).execute() } catch (e: IOException) {
-            throw ApiError("Can't reach the server. Check your connection and try again.", 0)
+            throw ApiError(I18n.str(app.zigora.R.string.err_offline), 0)
         }
         res.use {
             val text = it.body.string()
             val parsed = runCatching { json.parseToJsonElement(text) }.getOrNull()
             if (!it.isSuccessful) {
                 if (it.code == 401 && store.token != null && path != "/login") { store.signOut(); onSignedOut() }
-                throw ApiError(detail(parsed) ?: "Something went wrong (${it.code}). Try again.", it.code)
+                throw ApiError(I18n.srv(detail(parsed)).ifEmpty { I18n.t("Something went wrong") + " (${it.code})" }, it.code)
             }
-            parsed ?: throw ApiError("The server sent something unexpected. Is this the right address?", it.code)
+            parsed ?: throw ApiError(I18n.str(app.zigora.R.string.err_unexpected), it.code)
         }
     }
 

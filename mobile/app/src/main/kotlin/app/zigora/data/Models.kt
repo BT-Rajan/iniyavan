@@ -7,6 +7,8 @@ import kotlinx.serialization.json.JsonObject
 
 @Serializable data class Config(val name: String = "Zigora", val self_registration: Boolean = false, val email_reset: Boolean = false, val version: String? = null)
 @Serializable data class Me(val id: Int, val name: String, val role: String, val must_change: Boolean = false, val self_registered: Boolean = false, val placed: Boolean = true, val lang: String = "en")
+@Serializable data class Msg(val message: String = "", val ok: Boolean = true)
+@Serializable data class RegStatus(val open: Boolean = false, val domains: List<String> = emptyList())
 @Serializable data class LoginOut(val token: String, val user: Me)
 
 @Serializable data class QuizRef(val id: Int, val title: String, val published: Boolean = true, val questions: Int = 0, val best: Int? = null, val pass_percent: Int = 50)
@@ -54,5 +56,6 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class Profile(val name: String, val email: String, val role: String, val lang: String = "en", val program: String = "", val semester: Int? = null, val term: String = "",
                                  val self_registered: Boolean = false, val ai: AiPlan? = null, val rewards: Rewards? = null)
 @Serializable data class Note(val key: String, val text: String, val sub: String = "", val unread: Boolean = false)
-@Serializable data class Notes(val items: List<Note> = emptyList())
+@Serializable data class Notes(val items: List<Note> = emptyList(), val digest: Boolean = false, val mail: Boolean = false)
+@Serializable data class KeyState(val own_key: Boolean = false, val key_set: Boolean = false, val key_hint: String = "")
 @Serializable data class AndroidRelease(val version: String? = null, val code: Int? = null, val date: String? = null, val url: String? = null)
