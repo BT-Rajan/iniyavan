@@ -93,7 +93,7 @@ export default function App(){
     :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
     :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role}}>
-    <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('password')} onOut={signOut} onNote={()=>go('home')} page={page}/>
+    <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
@@ -104,7 +104,7 @@ export default function App(){
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
-    {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity toast={toast}/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('learn')}/>}{page==='about'&&<About user={user}/>}
+    {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity toast={toast}/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('profile')}/>}{page==='profile'&&<Profile toast={toast} onPassword={()=>go('password')} onKey={()=>go('aikey')}/>}{page==='about'&&<About user={user}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label={tl("Main menu")}>
         <div className="dhead"><button className={'homebtn'+(page==='home'?' on':'')} aria-label={tl("{name}, home",{name:name})} aria-current={page==='home'?'page':undefined} onClick={()=>go('home')}><Logo src={logo} size={36}/><span><b>{name}</b><small>{user.name}, {tl(cap(user.role)).toLowerCase()}</small></span></button><button className="ic" aria-label={tl("Close menu")} onClick={()=>setOpen(false)}><X/></button></div>
@@ -226,7 +226,7 @@ function TopBar({user,lang,pickLang,theme,pickTheme,onMenu,onHome,onAccount,onOu
     <Notifications onOpen={onNote} page={page}/>
     <LangSwitch lang={lang} pick={pickLang}/>
     <button className="ic" aria-label={tl("Theme: {themeLabel}. Switch to {v}",{themeLabel:themeLabel,v:nextTheme[2]})} title={tl("Theme: {themeLabel}",{themeLabel:themeLabel})} onClick={()=>pickTheme(nextTheme[0])}><ThemeIcon size={19}/></button>
-    <button className={'who'+(page==='password'?' on':'')} onClick={onAccount} title={tl("Change password")}><span className="av" aria-hidden="true">{initials(user.name)}</span><span className="whotx"><b>{user.name}</b><small>{tl(cap(user.role))}</small></span></button>
+    <button className={'who'+(page==='profile'||page==='password'?' on':'')} onClick={onAccount} title={tl("My profile")}><span className="av" aria-hidden="true">{initials(user.name)}</span><span className="whotx"><b>{user.name}</b><small>{tl(cap(user.role))}</small></span></button>
     <button className="ic" aria-label={tl("Sign out")} title={tl("Sign out")} onClick={onOut}><LogOut size={19}/></button></header>}
 // what needs doing: staff get the overview's attention list, students their overdue and due-soon topics and untried or failed tests
 // what needs doing (worked out by the server): staff get the overview's attention list, students their deadlines and tests. The badge counts
@@ -1115,6 +1115,24 @@ function PhotoAsk({toast}){
         <button className="btn" style={{marginTop:8}} disabled={busy||reading||!q.trim()}>{busy?tl("Thinking…"):tl("Ask")}</button></form>
       <p className="known privacy">{diagram?tl("Your photo goes to Claude so it can look at the diagram. It is not stored."):tl("Your photo stays here: only the text above goes to the AI. Nothing is stored.")}</p>
       {answers.map((a,i)=><div key={answers.length-i} className="gist panswer"><small className="steplab">{a.q}</small><Md>{a.text}</Md>{!a.support&&<FlagLink source="photo" excerpt={a.text}/>}</div>)}</>}
+  </div></>}
+// My profile: who they are, their password, and (for students) the rewards for answers others reused. Nothing to share by hand:
+// when others are shown an answer a student's own search, doubt or highlight first brought, it counts, once per person per answer per day
+function Profile({toast,onPassword,onKey}){
+  const [d,setD]=useState(null);useEffect(()=>{api('/me/profile').then(setD).catch(e=>toast(e.message))},[toast])
+  if(!d)return <><Bar title={tl("My profile")}/><div className="main"><Skeleton/></div></>
+  const r=d.rewards,src={search:tl("Search"),doubt:tl("Not clear?"),line:tl("Highlight")}
+  return <><Bar title={tl("My profile")}/><div className="main">
+    <div className="card profcard"><span className="av big" aria-hidden="true">{initials(d.name)}</span><div><b>{d.name}</b><span>{d.email}</span>
+      <span>{tl(cap(d.role))}{d.program?' · '+d.program+(d.semester?' · '+tl('{term} {n}',{term:d.term,n:d.semester}):''):''}</span></div></div>
+    <div className="two"><button className="btn ghost" onClick={onPassword}>{tl("Change password")}</button>{d.self_registered&&<button className="btn ghost" onClick={onKey}>{tl("My AI key")}</button>}</div>
+    {r&&<><h3 className="sec">{tl("Rewards")}</h3>
+      <div className="qbox rewards"><div className="rwtop"><b className="rwpts">{r.points.toLocaleString()}</b><span>{tl("points")}</span></div>
+        <p className="known" style={{margin:'6px 0'}}>{tl("Other students were shown answers your questions brought {n} times.",{n:r.uses.toLocaleString()})}</p>
+        <div className="meter" role="progressbar" aria-label={tl("Toward your next points")} aria-valuemin={0} aria-valuemax={r.per} aria-valuenow={r.toward_next}><i style={{width:Math.round(100*r.toward_next/r.per)+'%'}}/></div>
+        <small className="known">{tl("{n} of {per} toward your next {points} points",{n:r.toward_next.toLocaleString(),per:r.per.toLocaleString(),points:r.points_per})}</small></div>
+      <p className="known">{tl("There is nothing to share by hand. When you search, ask about something that isn't clear, or highlight a passage, the answer is saved, and other students who ask the same thing get it straight away. Each time someone else is shown one of your answers counts once a day for them, and every {per} times earns you {points} points. Nobody sees that the answer came from you.",{per:r.per.toLocaleString(),points:r.points_per})}</p>
+      {r.top.length>0&&<><h3 className="sec">{tl("Your answers others use most")}</h3>{r.top.map((x,i)=><div className="row" key={i}><div>{x.label||'—'}<small>{src[x.source]||x.source} · {pl(x.uses,'use')}</small></div></div>)}</>}</>}
   </div></>}
 // "This looks wrong?" under an AI reply: a student's private report, which the topic's teacher sees (never who sent it) and can have written again
 function FlagLink({source,id,topicId,excerpt}){

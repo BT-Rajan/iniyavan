@@ -145,6 +145,7 @@ class SearchAnswer(Base):  # a saved AI answer to a student's search, shared by 
     __tablename__ = "search_answers"
     id = Column(Integer, primary_key=True); qhash = Column(String(64), unique=True); query = Column(String(200)); text = Column(Text)
     tokens = Column(Integer, default=0); hits = Column(Integer, default=0); created_at = Column(DateTime, default=dt.datetime.utcnow)
+    author_id = Column(Integer, nullable=True, index=True)  # the student whose search first brought this answer (for rewards; never shown to others)
 class SearchLog(Base):  # one row per search that actually went to the AI provider; used for the daily limit
     __tablename__ = "search_log"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
@@ -212,6 +213,7 @@ class AICache(Base):  # shared by all students; key changes when the topic is ed
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"))
     kind = Column(String(10)); chash = Column(String(64)); text = Column(Text)
     tokens = Column(Integer, default=0); hits = Column(Integer, default=0)
+    author_id = Column(Integer, nullable=True, index=True)  # for a highlight explanation: the student who highlighted it first (rewards only)
     __table_args__ = (UniqueConstraint("topic_id", "kind", "chash"),)
 class PrivateAnswer(Base):  # an AI answer written for one student from their own notes: sent once, then shown from here, so showing it again sends nothing
     __tablename__ = "private_answers"
@@ -223,6 +225,12 @@ class DoubtAnswer(Base):  # the AI's answer to a doubt, kept so the same doubt i
     __tablename__ = "doubt_answers"
     id = Column(Integer, primary_key=True); qhash = Column(String(64), unique=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
     phrase = Column(String(300)); text = Column(Text); tokens = Column(Integer, default=0); hits = Column(Integer, default=0); created_at = Column(DateTime, default=dt.datetime.utcnow)
+    author_id = Column(Integer, nullable=True, index=True)  # the student who asked this doubt first (rewards only)
+class ShareUse(Base):  # someone else was shown an answer a student first asked for: at most one row per answer, person and day. Rewards count these.
+    __tablename__ = "share_uses"
+    id = Column(Integer, primary_key=True); author_id = Column(Integer, index=True); viewer_id = Column(Integer)
+    source = Column(String(8)); ref = Column(Integer); day = Column(Date)
+    __table_args__ = (UniqueConstraint("source", "ref", "viewer_id", "day"),)
 class AIEgress(Base):  # one row for every request that left for the AI provider: what kind, about which topic, how many characters, and whether it was answered. Never the text itself.
     __tablename__ = "ai_egress"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, index=True); kind = Column(String(20)); topic_id = Column(Integer, nullable=True)
@@ -576,7 +584,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0021_routine_started_at", _addcol("routines", "started_at", "DATETIME NULL")),
               ("0022_highlight_colors_and_digest", lambda c: [_addcol(*x)(c) for x in (("highlights", "color", "VARCHAR(10) NULL"), ("highlights", "note", "TEXT NULL"),
                                                                                      ("users", "digest", "TINYINT(1) NOT NULL DEFAULT 0"), ("users", "digest_at", "DATETIME NULL"))]),
-              ("0023_users_lang", _addcol("users", "lang", "VARCHAR(5) NULL"))]
+              ("0023_users_lang", _addcol("users", "lang", "VARCHAR(5) NULL")),
+              ("0024_answer_authors", lambda c: [_addcol(t, "author_id", "INTEGER NULL")(c) for t in ("search_answers", "doubt_answers", "ai_cache")])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -2620,7 +2629,8 @@ async def explain_highlight(hid: int, u: User = Depends(me), s: Session = Depend
     t = s.get(Topic, h.topic_id); check_topic_access(u, t, s)
     prompt = in_lang(u, prompt_for(s, "line")); key = key_or_fail(u, s)
     got = line_saved(s, t, u, h.text, prompt)
-    if got: return {"explain": got}
+    if got:
+        row = s.get(AICache, got["id"]); note_use(s, u, "line", got["id"], row.author_id if row else None); return {"explain": got}
     if u.role == "student" and s.query(func.count(StepLog.id)).filter(StepLog.user_id == u.id, StepLog.kind == "line", StepLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= LINE_DAILY:
         raise HTTPException(429, f"You have used today's {LINE_DAILY} highlight explanations. Your highlight is saved; ask again tomorrow.")
     f = full(t, s)  # like a doubt: the names and the passage only, never the topic's notes
@@ -2629,7 +2639,7 @@ async def explain_highlight(hid: int, u: User = Depends(me), s: Session = Depend
     d = step_reply("line", text)
     if not d: raise HTTPException(502, "The AI's answer could not be read. Try again.")
     if u.role == "student": s.add(StepLog(user_id=u.id, topic_id=t.id, kind="line"))
-    row = AICache(topic_id=t.id, kind="line", chash=line_hash(t, prompt, h.text), text=text, tokens=tokens)
+    row = AICache(topic_id=t.id, kind="line", chash=line_hash(t, prompt, h.text), text=text, tokens=tokens, author_id=author_of(u))
     try: s.add(row); s.commit()
     except Exception: s.rollback(); row = None
     return {"explain": {"id": row.id if row else None, "text": d["text"]}}
@@ -2831,6 +2841,30 @@ def key_or_fail(u, s):  # without a key AI is off, even for saved answers
     if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
     if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")
     return key
+# ---- rewards for sharing: nothing to do by hand. When others are shown an answer a student's own search, doubt or highlight first brought,
+# ---- each person counts once a day per answer; every SHARE_USES uses earn SHARE_POINTS points. Others never see who asked first.
+SHARE_USES, SHARE_POINTS = 1000, 100
+def author_of(u): return u.id if u.role == "student" else None  # staff answers are shared too, but only students earn points
+def note_use(s, u, source, ref, author_id):  # it must never break the request that showed the answer
+    if not author_id or author_id == u.id or not ref: return
+    try:
+        with s.begin_nested(): s.add(ShareUse(author_id=author_id, viewer_id=u.id, source=source, ref=ref, day=dt.date.today()))
+        s.commit()
+    except Exception: s.rollback()  # already counted today, most likely
+def rewards(s, uid):
+    uses = s.query(func.count(ShareUse.id)).filter(ShareUse.author_id == uid).scalar() or 0
+    top = s.query(ShareUse.source, ShareUse.ref, func.count(ShareUse.id)).filter(ShareUse.author_id == uid).group_by(ShareUse.source, ShareUse.ref).order_by(func.count(ShareUse.id).desc()).limit(5).all()
+    def label(src, ref):
+        if src == "search": x = s.get(SearchAnswer, ref); return x.query if x else ""
+        if src == "doubt": x = s.get(DoubtAnswer, ref); return x.phrase if x else ""
+        x = s.get(AICache, ref); t = s.get(Topic, x.topic_id) if x else None; return t.title if t else ""
+    return {"uses": uses, "points": uses // SHARE_USES * SHARE_POINTS, "toward_next": uses % SHARE_USES, "per": SHARE_USES, "points_per": SHARE_POINTS,
+            "top": [{"source": src, "label": label(src, ref)[:120], "uses": n} for src, ref, n in top]}
+@app.get("/api/me/profile")
+def my_profile(u: User = Depends(me), s: Session = Depends(db)):
+    pr = s.get(Program, u.program_id) if u.program_id else None
+    return {"name": u.name, "email": u.email, "role": u.role, "lang": u.lang or "en", "program": pr.name if pr else "", "semester": u.semester, "term": term_label(pr) if pr else "",
+            "self_registered": bool(u.self_registered), **({"rewards": rewards(s, u.id)} if u.role == "student" else {})}
 def egress(s, u, kind, topic_id, chars, ok):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
     try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok)); s.commit()
     except Exception: s.rollback()
@@ -3025,7 +3059,7 @@ def doubt_local(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = Depend
     t = doubt_topic(tid, u, s); phrase = doubt_phrase(b); f = full(t, s)
     mine = my_notes(s, u.id, tid) if u.role == "student" else None
     _, qh = doubt_key(u, t, phrase, s); hit = s.query(DoubtAnswer).filter_by(qhash=qh).first() if key_for(u, s) else None
-    if hit: hit.hits += 1; s.commit()
+    if hit: hit.hits += 1; s.commit(); note_use(s, u, "doubt", hit.id, hit.author_id)
     return {"phrase": phrase, "where": {"program": f["program"], "semester": f["semester"], "course": f["course"], "topic": f["title"]},
             "passage": passage_around(words_of(t.content, fmt_of(t)), phrase), "my_passage": passage_around(mine, phrase) if mine else "", "saved": hit.text if hit else None,
             "ai_left": max(0, DOUBT_DAILY - s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar()) if u.role == "student" else None}  # noqa: E712
@@ -3036,13 +3070,13 @@ async def doubt_ask(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = De
     if crisis(phrase): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}
     key = key_or_fail(u, s); prompt, qh = doubt_key(u, t, phrase, s)
     hit = s.query(DoubtAnswer).filter_by(qhash=qh).first()
-    if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True}
+    if hit: hit.hits += 1; s.commit(); note_use(s, u, "doubt", hit.id, hit.author_id); return {"text": hit.text, "cached": True}
     if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= DOUBT_DAILY:  # noqa: E712
         raise HTTPException(429, f"You have used today's {DOUBT_DAILY} AI doubts. Try again tomorrow, or reread the passage above.")
     f = full(t, s)
     msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe student does not understand this phrase:\n{phrase}"
     text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=500, kind="doubt", topic_id=tid)
-    try: s.add(DoubtAnswer(qhash=qh, topic_id=tid, phrase=phrase[:300], text=text, tokens=tokens)); s.commit()
+    try: s.add(DoubtAnswer(qhash=qh, topic_id=tid, phrase=phrase[:300], text=text, tokens=tokens, author_id=author_of(u))); s.commit()
     except Exception: s.rollback()
     return {"text": text, "cached": False}
 @app.get("/api/admin/egress")
@@ -3169,7 +3203,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     key = key_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
-        if hit: hit.hits += 1; s.commit(); return {"text": hit.text, "cached": True, "id": hit.id}
+        if hit: hit.hits += 1; s.commit(); note_use(s, u, "search", hit.id, hit.author_id); return {"text": hit.text, "cached": True, "id": hit.id}
     if u.role == "student" and s.query(func.count(SearchLog.id)).filter(SearchLog.user_id == u.id, SearchLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= SEARCH_DAILY:
         raise HTTPException(429, f"You have used today's {SEARCH_DAILY} AI searches. Try again tomorrow, or browse your courses.")
     who = ""
@@ -3180,7 +3214,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
     saved = None
     if not b.refresh:  # a recheck is the student asking for something different, so it is not saved for others
-        try: saved = SearchAnswer(qhash=qh, query=q[:200], text=text, tokens=tokens); s.add(saved); s.flush()
+        try: saved = SearchAnswer(qhash=qh, query=q[:200], text=text, tokens=tokens, author_id=author_of(u)); s.add(saved); s.flush()
         except Exception: s.rollback(); saved = None; s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
     s.commit(); return {"text": text, "cached": False, "id": saved.id if saved else None}
 # ---- admin: edit the AI prompts ----
