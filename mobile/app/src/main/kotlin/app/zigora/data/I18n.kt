@@ -12,8 +12,12 @@ object I18n {
     private var ctx: Context? = null
     private val dicts = HashMap<String, Map<String, String>>()
     private val shapes by lazy {
-        runCatching { (json.parseToJsonElement(read("srv.json")) as JsonArray).map { val a = it as JsonArray; Regex(a[0].jsonPrimitive.content) to a[1].jsonPrimitive.content } }.getOrDefault(emptyList())
+        runCatching { (json.parseToJsonElement(read("srv.json")) as JsonArray).mapNotNull { val a = it as JsonArray
+            runCatching { Regex(a[0].jsonPrimitive.content) to a[1].jsonPrimitive.content }.getOrNull() } }.getOrDefault(emptyList())
     }
+    // Android's regex engine (ICU) refuses a bare "}" that desktop Java lets through: braces are always escaped here
+    private val PLACEHOLDER = Regex("""\{(\w+)\}""")
+    private val GROUP_NAME = Regex("""\(\?<(\w+)>""")
     private val terms = setOf("Semester", "Semesters", "Year", "Years", "Grade", "Grades", "Term", "Terms", "semester", "semesters", "year", "years", "grade", "grades", "term", "terms")
 
     fun init(c: Context) { ctx = c.applicationContext }
@@ -28,7 +32,7 @@ object I18n {
     /** a label in the reader's language, with {name} values filled in (term words like Semester are translated too) */
     fun t(key: String, vars: Map<String, String> = emptyMap()): String {
         val d = dict(lang()); val out = d?.get(key) ?: key
-        return Regex("""\{(\w+)}""").replace(out) { m -> vars[m.groupValues[1]]?.let { v -> if (v in terms) t(v) else v } ?: m.value }
+        return PLACEHOLDER.replace(out) { m -> vars[m.groupValues[1]]?.let { v -> if (v in terms) t(v) else v } ?: m.value }
     }
 
     fun srv(s: String?): String {
@@ -38,7 +42,7 @@ object I18n {
         for ((re, key) in shapes) {
             val m = re.find(s) ?: continue
             if (d[key] == null) continue
-            val names = Regex("""\(\?<(\w+)>""").findAll(re.pattern).map { it.groupValues[1] }.toList()
+            val names = GROUP_NAME.findAll(re.pattern).map { it.groupValues[1] }.toList()
             return t(key, names.associateWith { n -> m.groups[n]?.value.orEmpty() })
         }
         return s
