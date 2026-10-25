@@ -467,3 +467,8 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 /* my profile and rewards */
 .profcard{padding:16px;gap:14px;align-items:center}.profcard>div span{display:block}.av.big{width:56px;height:56px;font-size:20px;flex:none}
 .rewards .rwtop{display:flex;align-items:baseline;gap:8px}.rwpts{font-size:34px;line-height:1;color:var(--acct)}.rewards .meter{margin:8px 0 4px}
+/* notes in my language; the allowance warning */
+.nlang{margin:0 0 10px}.nlang .seg{display:inline-flex;background:var(--s2);border-radius:99px;padding:3px;gap:2px}
+.nlang .seg button{border:0;background:transparent;color:var(--mut);font-weight:600;font-size:14px;padding:6px 14px;border-radius:99px;margin:0;width:auto}
+.nlang .seg button.on{background:var(--s1);color:var(--tx);box-shadow:0 1px 3px rgba(0,0,0,.12)}.nlang .known{margin:6px 0 0;font-size:13px}.nlang .flagl{margin:0}
+.budwarn{border-inline-start:4px solid var(--warn,#d9a400)}

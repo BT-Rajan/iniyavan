@@ -33,7 +33,7 @@ import '@fontsource/noto-sans-tamil/400.css'
 import '@fontsource/noto-sans-tamil/600.css'
 import './styles.css'
 import './highlighter.js'
-import {t as tl,L,LANGS,locale,applyLang,firstLang,loadLang,srv} from './i18n.js'
+import {t as tl,L,LANGS,locale,applyLang,firstLang,loadLang,srv,getLang} from './i18n.js'
 
 const api=async(p,o={})=>{const t=localStorage.t
   const r=await fetch('/api'+p,{...o,headers:{'Content-Type':'application/json',...(t&&{Authorization:'Bearer '+t})},body:o.body&&JSON.stringify(o.body)})
@@ -396,8 +396,9 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     {d&&total>RS_PAGE&&<nav className="pager" aria-label={tl("Pages")}><button className="btn ghost" disabled={page===0} onClick={()=>setPage(page-1)}><ChevronLeft size={18}/><span>{tl("Previous")}</span></button><small>{tl("Page {v} of",{v:page+1})}{" "}{pages}</small><button className="btn ghost" disabled={page+1>=pages} onClick={()=>setPage(page+1)}><span>{tl("Next")}</span><ChevronRight size={18}/></button></nav>}
   </div></>}
 function StaffHome({user,toast,open}){
-  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null),[flags,setFlags]=useState(0),[fp,setFp]=useState(false)
-  useEffect(()=>{if(!list&&!rep&&!fp){api('/overview').then(setO).catch(e=>toast(e.message));api('/flags?limit=1').then(r=>setFlags(r.total)).catch(()=>{})}},[toast,list,rep,fp])
+  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null),[flags,setFlags]=useState(0),[fp,setFp]=useState(false),[bud,setBud]=useState(null)
+  useEffect(()=>{if(!list&&!rep&&!fp){api('/overview').then(setO).catch(e=>toast(e.message));api('/flags?limit=1').then(r=>setFlags(r.total)).catch(()=>{})
+    if(user.role==='admin')api('/admin/budget').then(setBud).catch(()=>{})}},[toast,list,rep,fp,user.role])
   if(fp)return <FlagsPage toast={toast} back={()=>setFp(false)}/>
   if(rep)return <StudentReport c={rep} back={()=>setRep(null)} toast={toast}/>
   if(list)return <ResultSet kind={list} user={user} back={()=>setList(null)} toast={toast} open={open}/>
@@ -406,6 +407,8 @@ function StaffHome({user,toast,open}){
   return <><Bar title={tl(hi,{name:firstName(user.name)})} sub={admin?tl("Across the whole college"):tl("Your courses")}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {o&&<div className="stats">{stats.map(([n,l0,k])=>{const l=tl(l0);return <button className="stat" key={l0} style={{textAlign:'start',width:'100%'}} onClick={()=>setList(k)} aria-label={tl("{v} {l}. Show the list",{v:(n??0).toLocaleString(),l:l})}><b>{(n??0).toLocaleString()}</b>{l}</button>})}</div>}
+    {bud&&['deepseek','claude'].filter(p=>bud[p].limit&&bud[p].share>=bud.warn_at).map(p=><div key={p} className="qbox budwarn" role="status"><b>{tl(bud[p].share>=1?"This month's {name} allowance is used up":"This month's {name} allowance is {p}% used",{name:p==='claude'?'Claude':'DeepSeek',p:Math.round(100*bud[p].share)})}</b>
+      <p className="known" style={{margin:'4px 0 0'}}>{bud[p].share>=1?tl("New AI answers have stopped until the 1st; saved answers still work. You can raise the allowance under Settings → AI."):tl("When it is used up, new AI answers stop until the 1st. You can raise it under Settings → AI.")}</p></div>)}
     {flags>0&&<button className="card flagcard" style={{textAlign:'start',width:'100%'}} onClick={()=>setFp(true)}><span className="dot" style={{background:'var(--coral)'}}><Flag size={18}/></span><div style={{flex:1}}><b>{tl(flags===1?'1 AI answer flagged by students':'{n} AI answers flagged by students',{n:flags})}</b><span>{tl("Check it, then have it written again or let it stand")}</span></div><ChevronRight size={18}/></button>}
     {o&&<><h3 className="sec">{tl("Needs attention")}</h3>
       {o.attention.length?<Paged rows={o.attention} render={x=><button key={x.kind} className="card" style={{textAlign:'start'}} onClick={()=>setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{srv(x.text)}</b></div><ChevronRight size={18}/></button>}/>
@@ -989,7 +992,8 @@ function HistorySheet({tid,close,done,toast}){
       :<Paged rows={list} render={x=><button key={x.id} className="row" style={{width:'100%',textAlign:'start',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):tl("Before history began")}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">{tl("Current")}</span>}<ChevronRight size={16}/></button>}/>}
     <button className="btn ghost" onClick={close}>{tl("Close")}</button></Sheet>}
 function Topic({id:first,back,toast,role}){
-  const [practice,setPractice]=useState(null),[checking,setChecking]=useState(''),[reading,setReading]=useState(false),[hls,setHls]=useState([])
+  const [practice,setPractice]=useState(null),[checking,setChecking]=useState(''),[reading,setReading]=useState(false),[hls,setHls]=useState([]),[tr,setTr]=useState(null)
+  useEffect(()=>{setTr(null)},[first])
   const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
   const [mat,setMat]=useState(false),[upNext,setUpNext]=useState(null),opened=useRef(false),jump=nid=>{opened.current=false;setUpNext(null);setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
@@ -1029,7 +1033,8 @@ function Topic({id:first,back,toast,role}){
     <Tabs label={tl("Topic sections")} items={[['notes',tl("Notes")],['explain',tl("Explain")],['answer',tl("Sample answer")]]} value={tab} onChange={setTab}/>
     {known.length>0&&tab==='explain'&&<p className="known">{tl("You’ve already covered:")}{" "}{known.join(', ')}</p>}
     {tab==='notes'&&t.content&&<button className="btn lead" onClick={()=>setReading(true)}><Maximize2 size={16}/> {t.content_format==='interactive'?tl("Open the interactive page"):tl("Read in full screen")}</button>}
-    {tab==='notes'&&<div className="prose">{t.content?(t.content_format==='interactive'?<p className="known" style={{margin:0}}>{tl("This topic is an interactive page. Open it above to use it and highlight its text.")}</p>:<Body text={t.content} format={t.content_format}/>):!t.my_notes&&<Md>{tl("No notes yet.")}</Md>}{t.my_notes&&<>{t.content&&<h3>{tl("Your notes")}</h3>}{!t.content&&<span className="chip">{tl("Your notes")}</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>{tl("Question pattern")}</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>{tl("Answer guideline")}</h3><Md>{t.guideline}</Md></>}{role==='student'&&<button className="tool" onClick={()=>setMat(true)}><FileText size={14}/> {t.my_notes?tl("Update your notes for this course"):tl("Add your own notes for this topic")}</button>}</div>}
+    {tab==='notes'&&<NotesLang t={t} aiOk={aiOk} tr={tr} setTr={setTr}/>}
+    {tab==='notes'&&<div className="prose">{t.content?(t.content_format==='interactive'?<p className="known" style={{margin:0}}>{tl("This topic is an interactive page. Open it above to use it and highlight its text.")}</p>:<Body text={tr?.on&&tr.content?tr.content:t.content} format={t.content_format}/>):!t.my_notes&&<Md>{tl("No notes yet.")}</Md>}{t.my_notes&&<>{t.content&&<h3>{tl("Your notes")}</h3>}{!t.content&&<span className="chip">{tl("Your notes")}</span>}<Md>{t.my_notes}</Md></>}{t.question_pattern&&<><h3>{tl("Question pattern")}</h3><Md>{t.question_pattern}</Md></>}{t.guideline&&<><h3>{tl("Answer guideline")}</h3><Md>{t.guideline}</Md></>}{role==='student'&&<button className="tool" onClick={()=>setMat(true)}><FileText size={14}/> {t.my_notes?tl("Update your notes for this course"):tl("Add your own notes for this topic")}</button>}</div>}
     {tab==='notes'&&hls.length>0&&<><h3 className="sec">{tl("Your highlights ({length})",{length:hls.length})}</h3>{<Paged rows={hls} render={h=><HlItem key={h.id} h={{...h,tid:id}} toast={toast} onSaved={r=>setHls(l=>l.map(x=>x.id===r.id?r:x))} onDrop={()=>dropHl(h)}/>}/>}</>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&(aiOk===false?view('answer'):<><Outline id={id}/>{ai.answer?view('answer'):<button className="btn ghost" disabled={busy} onClick={()=>ask('answer')}>{busy?tl("Thinking…"):tl("Show the full sample answer")}</button>}{!ai.answer&&aiMsg&&<p className="known">{aiMsg}</p>}</>)}
     {reading&&<Reader t={t} auto={role==='student'} toast={toast} onList={setHls} close={()=>setReading(false)}/>}
@@ -1134,6 +1139,17 @@ function Profile({toast,onPassword,onKey}){
       <p className="known">{tl("There is nothing to share by hand. When you search, ask about something that isn't clear, or highlight a passage, the answer is saved, and other students who ask the same thing get it straight away. Each time someone else is shown one of your answers counts once a day for them, and every {per} times earns you {points} points. Nobody sees that the answer came from you.",{per:r.per.toLocaleString(),points:r.points_per})}</p>
       {r.top.length>0&&<><h3 className="sec">{tl("Your answers others use most")}</h3>{r.top.map((x,i)=><div className="row" key={i}><div>{x.label||'—'}<small>{src[x.source]||x.source} · {pl(x.uses,'use')}</small></div></div>)}</>}</>}
   </div></>}
+// the switch above a topic's notes for Arabic and Tamil readers: the original, or the notes in their language (translated once, then shared).
+// Highlighting works on the original, so the full-screen reader always opens it
+function NotesLang({t,aiOk,tr,setTr}){
+  const lang=getLang(),name=(LANGS.find(x=>x[0]===lang)||[])[1]
+  if(!['ar','ta'].includes(lang)||!aiOk||!t.content||!['markdown','html',undefined,null].includes(t.content_format))return null
+  const show=async()=>{if(tr?.content){setTr({...tr,on:true});return}setTr({busy:true,on:true})
+    try{const r=await api(`/topics/${t.id}/translation`);setTr({on:true,content:r.content,id:r.id})}catch(e){setTr({on:false,err:e.message})}}
+  return <div className="nlang"><div className="seg" role="group" aria-label={tl("Notes language")}><button className={!tr?.on?'on':''} aria-pressed={!tr?.on} onClick={()=>setTr(x=>({...(x||{}),on:false}))}>{tl("Original")}</button>
+    <button className={tr?.on?'on':''} aria-pressed={!!tr?.on} disabled={tr?.busy} onClick={show}>{tr?.busy?tl("Translating…"):name}</button></div>
+    {tr?.on&&tr.content&&<><p className="known">{tl("Translated by AI. Formulas and terms are kept as in the original. Highlighting works on the original.")}</p><FlagLink source="topic" id={tr.id} topicId={t.id}/></>}
+    {tr?.err&&<p className="known" role="alert">{tr.err}</p>}</div>}
 // "This looks wrong?" under an AI reply: a student's private report, which the topic's teacher sees (never who sent it) and can have written again
 function FlagLink({source,id,topicId,excerpt}){
   const {role}=useContext(Ctx),[st,setSt]=useState(''),[why,setWhy]=useState(''),[err,setErr]=useState('')
@@ -1755,8 +1771,8 @@ function Branding({toast,onSaved}){
     <button className="btn" disabled={busy} onClick={()=>save({name,logo_url:logo||undefined})}>{tl("Save name and logo")}</button></>}
 function AiConfig({toast,onBrand}){
   const confirm=useConfirm()
-  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState('')
-  const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model);setVmodel(c.vision_model)});api('/admin/stats').then(setSt)};useEffect(load,[])
+  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({deepseek:'',claude:''})
+  const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model);setVmodel(c.vision_model);setLim({deepseek:String(c.budget?.deepseek.limit||''),claude:String(c.budget?.claude.limit||'')})});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
   return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")]]} value={tab} onChange={setTab}/>
     {tab==='school'&&<Branding toast={toast} onSaved={onBrand}/>}{tab==='ai'&&<>
@@ -1772,6 +1788,13 @@ function AiConfig({toast,onBrand}){
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{vision_key:vkey,vision_model:vmodel}}).then(()=>setVkey('')),'Claude settings saved')}>{tl("Save")}</button>
     {cfg.vision_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/vision/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>{tl("Test the key")}</button>
       <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{remove_vision_key:true}}),'Claude key removed')}>{tl("Remove the Claude key")}</button></>}
+    <h3 className="sec">{tl("Monthly AI allowance")}</h3>
+    <p className="known" style={{marginTop:0}}>{tl("A limit on the tokens the college's keys can use each month. When one is used up, new AI answers stop until the 1st; saved answers keep working, and people using their own key are not affected. You are warned on Home at 80%. Leave it at 0 for no limit.")}</p>
+    {['deepseek','claude'].map(p=>{const b=cfg.budget?.[p]||{used:0,limit:0};return <div key={p}><label>{p==='claude'?tl("Claude tokens a month"):tl("DeepSeek tokens a month")}</label>
+      <input inputMode="numeric" value={lim[p]} onChange={e=>setLim({...lim,[p]:e.target.value.replace(/\D/g,'')})} placeholder="0"/>
+      <small className="known">{tl("Used this month: {used}",{used:b.used.toLocaleString()})}{b.limit?' · '+tl("{p}% of the allowance",{p:Math.round(100*b.used/b.limit)}):''}</small>
+      {b.limit>0&&<div className="meter"><i style={{width:Math.min(100,Math.round(100*b.used/b.limit))+'%'}}/></div>}</div>})}
+    <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{budget_deepseek:+lim.deepseek||0,budget_claude:+lim.claude||0}}),'Allowance saved')}>{tl("Save allowance")}</button>
     <p className="known" style={{marginTop:20}}>{tl("One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {v} answers are saved so far, which has saved about {v2} tokens.",{v:(st.cached??0).toLocaleString(),v2:(st.tokens_saved??0).toLocaleString()})}</p>
     </>}{tab==='prompts'&&<PromptEditor toast={toast}/>}
     {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/>
