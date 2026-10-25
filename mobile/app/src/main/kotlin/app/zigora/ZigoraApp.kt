@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import app.zigora.data.Api
+import app.zigora.data.I18n
 import app.zigora.data.Store
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -15,6 +16,7 @@ class ZigoraApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        I18n.init(this)
         store = Store(this)
         if (store.server.isEmpty() && BuildConfig.DEFAULT_SERVER.isNotEmpty()) store.server = BuildConfig.DEFAULT_SERVER
         api = Api(store) { signedOut.value++ }

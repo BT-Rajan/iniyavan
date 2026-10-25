@@ -15,6 +15,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import app.zigora.data.I18n
 import app.zigora.data.Notes
 import java.util.concurrent.TimeUnit
 
@@ -28,7 +29,7 @@ class Reminders(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
         app.store.notified = (app.store.notified + fresh.map { it.key }).toList().takeLast(200).toSet()
         if (fresh.isEmpty() || ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return Result.success()
         val open = PendingIntent.getActivity(app, 0, Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE)
-        val style = NotificationCompat.InboxStyle().also { s -> fresh.take(5).forEach { s.addLine(it.text + if (it.sub.isNotEmpty()) " · ${it.sub}" else "") } }
+        val style = NotificationCompat.InboxStyle().also { s -> fresh.take(5).forEach { s.addLine(it.text + if (it.sub.isNotEmpty()) " · ${I18n.srv(it.sub)}" else "") } }
         val n = NotificationCompat.Builder(app, CHANNEL).setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setContentTitle(app.resources.getQuantityString(R.plurals.new_for_you, fresh.size, fresh.size)).setContentText(fresh.first().text)
             .setStyle(style).setContentIntent(open).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_LOW).build()

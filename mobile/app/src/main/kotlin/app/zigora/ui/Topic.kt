@@ -74,6 +74,11 @@ import app.zigora.data.Bookmarked
 import app.zigora.data.Learning
 import app.zigora.data.Me
 import app.zigora.data.Step
+import app.zigora.data.Highlights
+import app.zigora.data.StudyQuiz
+import app.zigora.data.SessionOut
+import app.zigora.data.ReadOut
+import app.zigora.data.SessionItem
 import app.zigora.data.TopicFull
 import app.zigora.data.Translation
 import kotlinx.coroutines.launch
@@ -93,14 +98,17 @@ val PICKS = listOf("why", "example", "exam", "check")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit) {
+fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openReader: (Int) -> Unit, openPractice: (Int) -> Unit, openMaterial: (Int, String) -> Unit) {
     val a = api(); val res = LocalResources.current; val scope = rememberCoroutineScope(); val snack = remember { SnackbarHostState() }
     val topic = rememberLoad("topic", id) { get("/topics/$id", TopicFull.serializer()) }
     val ai = rememberLoad("ai") { runCatching { get("/ai/status", AiStatus.serializer()) }.getOrDefault(AiStatus()) }
     val t = (topic.state as? Load.Ok)?.value
     var marked by remember(t) { mutableStateOf(t?.bookmarked ?: false) }
     var status by remember(t) { mutableStateOf(t?.status ?: "not_started") }
-    LaunchedEffect(id) { runCatching { a.raw("POST", "/topics/$id/read") } } // opening a topic starts it; it never completes it
+    var known by remember(id) { mutableStateOf(emptyList<String>()) }
+    var upNext by remember(id) { mutableStateOf<List<SessionItem>?>(null) }
+    var practising by remember { mutableStateOf("") }
+    LaunchedEffect(id) { runCatching { known = a.send("POST", "/topics/$id/read", null, ReadOut.serializer()).known } } // opening a topic starts it; it never completes it
     LearnClock()
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val student = me.role == "student"
@@ -124,7 +132,21 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit) {
             Loaded(topic) { t ->
                 val aiOn = (ai.state as? Load.Ok)?.value?.available == true
                 if (aiOn) Steps(id, student)
-                Body(t, me, aiOn)
+                Body(t, me, aiOn, known, openReader = { openReader(id) }, openMaterial = { openMaterial(t.course_id, t.course) })
+                if (student && aiOn) {
+                    SectionTitle(stringResource(R.string.test_yourself))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("mcq" to R.string.five_quick, "quiz" to R.string.full_quiz_10).forEach { (k, l) ->
+                            OutlinedButton(enabled = practising.isEmpty(), onClick = { scope.launch {
+                                practising = k
+                                try { openPractice(a.send("POST", "/topics/$id/practice", buildJsonObject { put("kind", k) }, StudyQuiz.serializer()).id) }
+                                catch (e: Exception) { snack.showSnackbar(e.message.orEmpty()) }
+                                practising = ""
+                            } }) { Text(stringResource(if (practising == k) (if (k == "mcq") R.string.writing_questions else R.string.writing_quiz) else l)) }
+                        }
+                    }
+                    Quiet(stringResource(R.string.practice_note), Modifier.padding(top = 4.dp))
+                }
                 if (student) {
                     Gap(16)
                     Panel {
@@ -134,10 +156,25 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit) {
                             val on = status != "completed"
                             scope.launch {
                                 try { status = a.send(if (on) "PUT" else "DELETE", "/topics/$id/complete", null, Learning.serializer()).status
-                                      snack.showSnackbar(res.getString(if (on) R.string.marked_completed else R.string.marked_not_completed)) }
+                                      snack.showSnackbar(res.getString(if (on) R.string.marked_completed else R.string.marked_not_completed))
+                                      upNext = null
+                                      if (on) runCatching { a.get("/me/session", SessionOut.serializer()).session?.items }.getOrNull()  // today's session leads on to its next part
+                                          ?.takeIf { items -> items.any { it.id == id && it.kind != "review" && it.src != "study" } }?.let { upNext = it } }
                                 catch (e: Exception) { snack.showSnackbar(e.message.orEmpty()) }
                             }
                         }) { Text(stringResource(if (status == "completed") R.string.undo else R.string.ive_learned_this)) }
+                    }
+                }
+                upNext?.let { items ->
+                    Gap(12)
+                    Panel {
+                        Text(stringResource(R.string.todays_session_done, items.count { it.done }, items.size), style = MaterialTheme.typography.titleSmall)
+                        val nx = items.firstOrNull { !it.done }
+                        when {
+                            nx == null -> Quiet(stringResource(R.string.session_all_done))
+                            nx.kind != "review" && nx.src != "study" -> Button(onClick = { jump(nx.id) }) { Text(stringResource(R.string.next_colon) + " " + nx.title) }
+                            else -> OutlinedButton(onClick = back) { Text(stringResource(R.string.back_for_next_part) + " " + nx.title) }
+                        }
                     }
                 }
                 t.nav?.takeIf { it.total > 1 }?.let { n ->
@@ -165,13 +202,13 @@ private fun Steps(id: Int, student: Boolean) {
     val gist = rememberLoad("gist", id) { get("/topics/$id/ai/gist", Step.serializer()) }
     val g = (gist.state as? Load.Ok)?.value
     if (gist.state is Load.Failed) return // without AI the page is the notes
-    val trail = remember(id) { mutableStateListOf<Pair<String, JsonObject>>() }
+    val trail = remember(id) { mutableStateListOf<Triple<String, JsonObject, Int?>>() }
     var busy by remember(id) { mutableStateOf("") }
     var err by remember(id) { mutableStateOf("") }
     var showGist by rememberSaveable(id) { mutableStateOf(false) }
     fun step(k: String) = scope.launch {
         busy = k; err = ""
-        try { a.get("/topics/$id/ai/$k", Step.serializer()).data?.let { d -> trail.removeAll { it.first == k }; trail.add(k to d) } }
+        try { val r = a.get("/topics/$id/ai/$k", Step.serializer()); r.data?.let { d -> trail.removeAll { it.first == k }; trail.add(Triple(k, d, r.id)) } }
         catch (e: Exception) { err = e.message.orEmpty() }
         busy = ""
     }
@@ -187,8 +224,9 @@ private fun Steps(id: Int, student: Boolean) {
             Text(stringResource(R.string.the_gist), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             d.list("points").forEach { p -> Row(Modifier.padding(top = 6.dp)) { Text("•  "); Md(p) } }
             if (d.str("hook").isNotEmpty() && !showGist) Hook(d.str("hook"), d.str("hook_answer"))
+            FlagLink("topic", g.id, id)
         }
-        trail.forEach { (k, sd) -> StepCard(id, k, sd, student, onSimpler = if (trail.any { it.first == "simpler" }) null else ({ step("simpler") })) }
+        trail.forEach { (k, sd, rid) -> StepCard(id, rid, k, sd, student, onSimpler = if (trail.any { it.first == "simpler" }) null else ({ step("simpler") })) }
         if (err.isNotEmpty()) Quiet(err, Modifier.padding(top = 8.dp))
         val order = (g.you?.order?.takeIf { it.isNotEmpty() } ?: PICKS).filter { k -> trail.none { it.first == k } }
         if (order.isNotEmpty()) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -205,7 +243,7 @@ private fun Hook(q: String, answer: String) = Column(Modifier.padding(top = 12.d
 }
 
 @Composable
-private fun StepCard(id: Int, k: String, d: JsonObject, student: Boolean, onSimpler: (() -> Unit)?) = Column(Modifier.padding(top = 16.dp)) {
+private fun StepCard(id: Int, rid: Int?, k: String, d: JsonObject, student: Boolean, onSimpler: (() -> Unit)?) = Column(Modifier.padding(top = 16.dp)) {
     Text(stepLabel(k), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
     if (k in listOf("why", "example", "simpler")) {
         Md(d.str("text"))
@@ -218,6 +256,7 @@ private fun StepCard(id: Int, k: String, d: JsonObject, student: Boolean, onSimp
             if (k == "check" && student) SelfMark(id, onSimpler)
         }
     }
+    FlagLink("topic", rid, id)
 }
 
 /** after a quick check: the student's own private "I had it" / "Not quite"; never a score */
@@ -240,7 +279,7 @@ private fun SelfMark(id: Int, onSimpler: (() -> Unit)?) {
 /** the notes (the reference), and AI help on request: Explain and a sample answer */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Body(t: TopicFull, me: Me, aiOn: Boolean) {
+private fun Body(t: TopicFull, me: Me, aiOn: Boolean, known: List<String>, openReader: () -> Unit, openMaterial: () -> Unit) {
     var tab by rememberSaveable(t.id) { mutableIntStateOf(0) }
     Gap(12)
     SecondaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface) {
@@ -248,27 +287,23 @@ private fun Body(t: TopicFull, me: Me, aiOn: Boolean) {
     }
     Gap(8)
     when (tab) {
-        0 -> Notes(t, me, aiOn)
-        1 -> AiAnswer(t.id, "explain", aiOn, R.string.explain_it)
-        else -> { Outline(t.id, aiOn); AiAnswer(t.id, "answer", aiOn, R.string.full_sample_answer) }
+        0 -> Notes(t, me, aiOn, openReader, openMaterial)
+        1 -> { if (known.isNotEmpty()) Quiet(stringResource(R.string.already_covered) + " " + known.joinToString(", "), Modifier.padding(bottom = 8.dp)); AiAnswer(t.id, "explain", aiOn, R.string.explain_it, t.my_notes != null) }
+        else -> { Outline(t.id, aiOn); AiAnswer(t.id, "answer", aiOn, R.string.full_sample_answer, t.my_notes != null) }
     }
 }
 
 @Composable
-private fun Notes(t: TopicFull, me: Me, aiOn: Boolean) {
+private fun Notes(t: TopicFull, me: Me, aiOn: Boolean, openReader: () -> Unit, openMaterial: () -> Unit) {
     val a = api(); val res = LocalResources.current; val scope = rememberCoroutineScope()
-    var full by remember { mutableStateOf(false) }
     var mine by rememberSaveable(t.id) { mutableStateOf(false) }
     var tr by remember(t.id) { mutableStateOf<Translation?>(null) }
     var trMsg by remember(t.id) { mutableStateOf("") }
-    val content = t.content.orEmpty()
-    if (content.isNotEmpty() && t.content_format == "interactive") {
-        Quiet(stringResource(R.string.interactive_note))
-        FilledTonalButton(onClick = { full = true }, modifier = Modifier.padding(top = 8.dp)) { Icon(Icons.Outlined.OpenInFull, null); Text("  " + stringResource(R.string.open_interactive)) }
-        if (full && t.frame_url != null) WebPage(a.base + t.frame_url, script = true) { full = false }
-        return
+    val content = t.content.orEmpty(); val inter = t.content_format == "interactive"
+    if (content.isNotEmpty()) FilledTonalButton(onClick = openReader, modifier = Modifier.padding(bottom = 8.dp)) {
+        Icon(Icons.Outlined.OpenInFull, null); Text("  " + stringResource(if (inter) R.string.open_interactive else R.string.read_full_screen))
     }
-    if (content.isNotEmpty() && me.lang in listOf("ar", "ta") && aiOn) {
+    if (!inter && content.isNotEmpty() && me.lang in listOf("ar", "ta") && aiOn) {
         SingleChoiceSegmentedButtonRow(Modifier.padding(bottom = 8.dp)) {
             SegmentedButton(!mine, onClick = { mine = false }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text(stringResource(R.string.original)) }
             SegmentedButton(mine, onClick = {
@@ -281,22 +316,30 @@ private fun Notes(t: TopicFull, me: Me, aiOn: Boolean) {
         }
         if (trMsg.isNotEmpty()) Quiet(trMsg)
     }
-    val shown = if (mine && tr != null) tr!!.content else content
-    if (shown.isEmpty() && t.my_notes == null) Quiet(stringResource(R.string.no_notes_yet))
-    SelectionContainer { // long-press to copy, or "Look up" through Android's text menu
-        Column {
-            if (shown.isNotEmpty()) {
-                if (t.content_format == "html") Html(shown) else Md(shown)
-            }
-            t.my_notes?.let { SectionTitle(stringResource(R.string.your_notes)); Md(it) }
-            t.question_pattern?.takeIf { it.isNotBlank() }?.let { SectionTitle(stringResource(R.string.question_pattern)); Md(it) }
-            t.guideline?.takeIf { it.isNotBlank() }?.let { SectionTitle(stringResource(R.string.answer_guideline)); Md(it) }
+    Panel {
+        when {
+            inter && content.isNotEmpty() -> Quiet(stringResource(R.string.interactive_note_long))
+            content.isNotEmpty() -> tr.takeIf { mine }?.let { WebContent(it.content, it.format) } ?: WebContent(content, t.content_format)
+            t.my_notes == null -> Quiet(stringResource(R.string.no_notes_yet))
+        }
+        t.my_notes?.let { SectionTitle(stringResource(R.string.your_notes)); WebContent(it) }
+        t.question_pattern?.takeIf { it.isNotBlank() }?.let { SectionTitle(stringResource(R.string.question_pattern)); WebContent(it) }
+        t.guideline?.takeIf { it.isNotBlank() }?.let { SectionTitle(stringResource(R.string.answer_guideline)); WebContent(it) }
+        if (me.role == "student") TextButton(onClick = openMaterial) { Text(stringResource(if (t.my_notes != null) R.string.update_your_notes else R.string.add_your_notes)) }
+    }
+    // the reader's highlights in this topic, as under the web's notes
+    val hl = rememberLoad("tophl", t.id) { get("/topics/${t.id}/highlights", Highlights.serializer()).items }
+    (hl.state as? Load.Ok)?.value?.takeIf { it.isNotEmpty() }?.let { list ->
+        SectionTitle(stringResource(R.string.your_highlights_n, list.size))
+        Paged(list, key = t.id) { h ->
+            HlItem(h, onGo = openReader, onExplain = null, onSaved = { hl.reload() }, topicId = t.id,
+                   onDrop = { scope.launch { runCatching { a.raw("DELETE", "/me/highlights/${h.id}") }; hl.reload() } })
         }
     }
 }
 
 @Composable
-private fun AiAnswer(tid: Int, kind: String, aiOn: Boolean, label: Int) {
+private fun AiAnswer(tid: Int, kind: String, aiOn: Boolean, label: Int, ownNotes: Boolean) {
     val a = api(); val scope = rememberCoroutineScope()
     var ans by remember(tid, kind) { mutableStateOf<Step?>(null) }
     var busy by remember(tid, kind) { mutableStateOf(false) }
@@ -305,12 +348,14 @@ private fun AiAnswer(tid: Int, kind: String, aiOn: Boolean, label: Int) {
     ans?.let { s ->
         if (s.cached) Quiet(stringResource(R.string.saved_answer))
         if (s.own_notes) Quiet(stringResource(R.string.written_with_notes))
-        SelectionContainer { Md(s.text) }
+        Panel { WebContent(s.text) }
+        FlagLink("topic", s.id, tid)
         return
     }
     FilledTonalButton(enabled = !busy, onClick = {
         scope.launch { busy = true; msg = ""; try { ans = a.get("/topics/$tid/ai/$kind", Step.serializer()) } catch (e: Exception) { msg = e.message.orEmpty() }; busy = false }
     }) { Icon(Icons.Outlined.AutoAwesome, null); Text("  " + stringResource(if (busy) R.string.thinking else label)) }
+    if (ownNotes) Quiet(stringResource(R.string.uses_own_notes), Modifier.padding(top = 4.dp))
     if (msg.isNotEmpty()) Quiet(msg, Modifier.padding(top = 8.dp))
 }
 
@@ -324,32 +369,5 @@ private fun Outline(tid: Int, aiOn: Boolean) {
         Text(stringResource(R.string.answer_skeleton), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         d.list("points").forEachIndexed { i, p -> Row(Modifier.padding(top = 6.dp)) { Text("${i + 1}.  "); Md(p) } }
         if (d.str("marks").isNotEmpty()) Quiet(stringResource(R.string.marks, d.str("marks")), Modifier.padding(top = 8.dp))
-    }
-}
-
-/** an HTML topic, shown as a page with no scripts, in the app's colours */
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-private fun Html(html: String) {
-    val base = api().base; val c = MaterialTheme.colorScheme
-    fun hex(x: androidx.compose.ui.graphics.Color) = String.format("#%06X", 0xFFFFFF and x.toArgb())
-    val page = remember(html, c) {
-        "<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><style>body{margin:0;font:16px/1.6 sans-serif;color:${hex(c.onSurface)};background:transparent}" +
-        "a{color:${hex(c.primary)}}img,table{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid ${hex(c.outlineVariant)};padding:4px 8px}</style></head><body>$html</body></html>"
-    }
-    AndroidView(factory = { ctx -> WebView(ctx).apply { setBackgroundColor(0); settings.javaScriptEnabled = false; settings.allowFileAccess = false; webViewClient = WebViewClient() } },
-                update = { it.loadDataWithBaseURL("$base/", page, "text/html", "utf-8", null) }, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
-}
-
-/** a full-screen page inside the app (an interactive topic runs its own scripts, sandboxed by the server) */
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun WebPage(url: String, script: Boolean, close: () -> Unit) = Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-    androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = close) { Icon(Icons.Filled.Close, stringResource(R.string.close)) } }
-            AndroidView(factory = { ctx -> WebView(ctx).apply { settings.javaScriptEnabled = script; settings.domStorageEnabled = false; settings.allowFileAccess = false
-                                                                 webViewClient = WebViewClient(); loadUrl(url) } }, modifier = Modifier.fillMaxSize())
-        }
     }
 }

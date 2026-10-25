@@ -17,6 +17,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Password
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -62,12 +66,14 @@ val LANGS = listOf("en" to "English", "ar" to "العربية", "ta" to "தம�
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, signOut: () -> Unit) {
+fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, themeOf: (String) -> Unit, signOut: () -> Unit, openPassword: () -> Unit, openKey: () -> Unit) {
     val app = app(); val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     val p = rememberLoad("profile") { get("/me/profile", Profile.serializer()) }
     val lm = remember { ctx.getSystemService(LocaleManager::class.java) }
     var lang by remember { mutableStateOf(lm.applicationLocales.get(0)?.language ?: me.lang) }
     var colours by remember { mutableStateOf(app.store.wallpaper) }
+    var theme by remember { mutableStateOf(app.store.theme) }
+    var about by remember { mutableStateOf(false) }
     var remind by remember { mutableStateOf(app.store.reminders) }
     var asking by remember { mutableStateOf(false) }
     val notify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> remind = ok; app.store.reminders = ok; Reminders.schedule(ctx, ok) }
@@ -106,6 +112,12 @@ fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, signOut: () -> Unit) {
                     }) { Text(name) }
                 }
             }
+            ListItem(leadingContent = { Icon(Icons.Outlined.DarkMode, null) }, headlineContent = { Text(stringResource(R.string.theme)) })
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                listOf("system" to R.string.theme_auto, "light" to R.string.theme_light, "dark" to R.string.theme_dark).forEachIndexed { i, (k, l) ->
+                    SegmentedButton(theme == k, shape = SegmentedButtonDefaults.itemShape(i, 3), onClick = { theme = k; themeOf(k) }) { Text(stringResource(l)) }
+                }
+            }
             ListItem(headlineContent = { Text(stringResource(R.string.wallpaper_colours)) }, supportingContent = { Text(stringResource(R.string.wallpaper_colours_hint)) },
                      trailingContent = { Switch(colours, { colours = it; wallpaper(it) }) })
             ListItem(headlineContent = { Text(stringResource(R.string.daily_note)) }, supportingContent = { Text(stringResource(R.string.daily_note_hint)) },
@@ -113,7 +125,11 @@ fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, signOut: () -> Unit) {
                          if (on && ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) notify.launch(Manifest.permission.POST_NOTIFICATIONS)
                          else { remind = on; app.store.reminders = on; Reminders.schedule(ctx, on) }
                      }) })
+            SectionTitle(stringResource(R.string.account))
+            ListItem(modifier = Modifier.clickableRounded(openPassword), leadingContent = { Icon(Icons.Outlined.Password, null) }, headlineContent = { Text(stringResource(R.string.change_password)) })
+            if (me.self_registered) ListItem(modifier = Modifier.clickableRounded(openKey), leadingContent = { Icon(Icons.Outlined.Key, null) }, headlineContent = { Text(stringResource(R.string.my_ai_key)) })
             SectionTitle(stringResource(R.string.about_app))
+            ListItem(modifier = Modifier.clickableRounded { about = true }, leadingContent = { Icon(Icons.Outlined.Info, null) }, headlineContent = { Text(stringResource(R.string.about)) })
             val rel = rememberLoad("update") { runCatching { get("/app/android", AndroidRelease.serializer()) }.getOrNull() }
             val newer = (rel.state as? Load.Ok)?.value?.takeIf { (it.code ?: 0) > BuildConfig.VERSION_CODE && it.url != null }
             ListItem(headlineContent = { Text(stringResource(R.string.version_n, BuildConfig.VERSION_NAME)) },
@@ -123,6 +139,11 @@ fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, signOut: () -> Unit) {
                      headlineContent = { Text(stringResource(R.string.sign_out)) })
         }
     }
+    if (about) AlertDialog(onDismissRequest = { about = false }, confirmButton = { TextButton(onClick = { about = false }) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.app_name)) }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.about_text_1)); Text(stringResource(R.string.about_text_2))
+            Quiet(stringResource(R.string.signed_in_as, me.name, me.role))
+        } })
     if (asking) AlertDialog(onDismissRequest = { asking = false }, title = { Text(stringResource(R.string.sign_out_q)) },
         confirmButton = { TextButton(onClick = { asking = false; Reminders.schedule(ctx, false); signOut() }) { Text(stringResource(R.string.sign_out)) } },
         dismissButton = { TextButton(onClick = { asking = false }) { Text(stringResource(R.string.cancel)) } })
@@ -141,11 +162,12 @@ fun NotificationsScreen(back: () -> Unit, openTopic: (Int) -> Unit) {
         navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } }) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp)) {
             Loaded(n) { r ->
+                if (r.mail) DigestToggle(r.digest)
                 if (r.items.isEmpty()) Quiet(stringResource(R.string.no_notifications))
                 Paged(r.items) { x ->
                     val tid = x.key.substringAfter(":").toIntOrNull().takeIf { !x.key.startsWith("quiz") }
                     ListItem(modifier = if (tid != null) Modifier.clickableRounded { openTopic(tid) } else Modifier,
-                             headlineContent = { Text(x.text) }, supportingContent = { if (x.sub.isNotEmpty()) Text(x.sub) },
+                             headlineContent = { Text(x.text) }, supportingContent = { if (x.sub.isNotEmpty()) Text(app.zigora.data.I18n.srv(x.sub)) },
                              overlineContent = { if (x.unread) Text(stringResource(R.string.new_label), color = MaterialTheme.colorScheme.primary) })
                 }
             }
@@ -205,4 +227,47 @@ private fun PlanCard(ai: AiPlan, changed: () -> Unit) {
 private fun Meter(label: String, used: Int, max: Int) = Column(Modifier.padding(top = 8.dp)) {
     Quiet(label)
     LinearProgressIndicator(progress = { (used.toFloat() / max.coerceAtLeast(1)).coerceIn(0f, 1f) }, Modifier.fillMaxWidth().padding(top = 4.dp))
+}
+
+/** "Email me a daily summary of new ones": the same switch as under the web's bell */
+@Composable
+private fun DigestToggle(initial: Boolean) {
+    val a = api(); val scope = rememberCoroutineScope(); var on by remember { mutableStateOf(initial) }
+    ListItem(headlineContent = { Text(stringResource(R.string.daily_email)) }, trailingContent = { Switch(on, { v ->
+        on = v; scope.launch { runCatching { a.raw("PUT", "/me/notifications/settings", buildJsonObject { put("digest", v) }) }.onFailure { on = !v } }
+    }) })
+}
+
+/** My AI key: save or remove a self-registered person's own DeepSeek key (checked with DeepSeek first, stored encrypted) */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MyKeyScreen(back: () -> Unit) {
+    val a = api(); val scope = rememberCoroutineScope()
+    val k = rememberLoad("key") { get("/me/ai-key", app.zigora.data.KeyState.serializer()) }
+    var key by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf(false) }
+    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.my_ai_key)) },
+        navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } }) }) { pad ->
+        Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Loaded(k) { st ->
+                Text(if (st.key_set) stringResource(R.string.key_on, st.key_hint) else stringResource(R.string.key_off), style = MaterialTheme.typography.titleMedium)
+                Quiet(stringResource(R.string.key_explain))
+                androidx.compose.material3.OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.deepseek_key)) },
+                    placeholder = { Text(stringResource(if (st.key_set) R.string.key_replace else R.string.key_placeholder)) },
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
+                androidx.compose.material3.Button(enabled = !busy && key.isNotBlank(), onClick = { scope.launch {
+                    busy = true; msg = ""
+                    try { a.raw("PUT", "/me/ai-key", buildJsonObject { put("key", key.trim()) }); key = ""; k.reload() } catch (e: Exception) { msg = e.message.orEmpty() }
+                    busy = false
+                } }) { Text(stringResource(if (busy) R.string.checking_key else R.string.save_key)) }
+                if (st.key_set) androidx.compose.material3.OutlinedButton(onClick = { confirm = true }) { Text(stringResource(R.string.remove_my_key)) }
+            }
+        }
+    }
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.remove_key_q)) }, text = { Text(stringResource(R.string.remove_key_body)) },
+        confirmButton = { TextButton(onClick = { confirm = false; scope.launch { runCatching { a.raw("DELETE", "/me/ai-key") }; k.reload() } }) { Text(stringResource(R.string.remove_key)) } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.cancel)) } })
 }

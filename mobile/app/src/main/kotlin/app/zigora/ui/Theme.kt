@@ -30,8 +30,8 @@ private val Dark = darkColorScheme(
 
 /** Material You: the phone's own wallpaper colours by default, or Zigora's plum when the student prefers it. Dark follows the system. */
 @Composable
-fun ZigoraTheme(wallpaper: Boolean, content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme(); val ctx = LocalContext.current
+fun ZigoraTheme(wallpaper: Boolean, theme: String = "system", content: @Composable () -> Unit) {
+    val dark = when (theme) { "light" -> false; "dark" -> true; else -> isSystemInDarkTheme() }; val ctx = LocalContext.current
     val scheme = when {
         wallpaper && dark -> dynamicDarkColorScheme(ctx)
         wallpaper -> dynamicLightColorScheme(ctx)

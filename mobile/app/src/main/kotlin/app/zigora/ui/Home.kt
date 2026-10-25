@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -73,15 +74,22 @@ fun firstName(n: String) = n.trim().split(" ").firstOrNull().orEmpty()
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, openQuiz: (Int) -> Unit, openNotes: () -> Unit, openPhoto: () -> Unit) {
+fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, openQuiz: (Int) -> Unit, openNotes: () -> Unit, openPhoto: () -> Unit,
+               openSearch: () -> Unit, openRoutine: () -> Unit, openSession: (app.zigora.data.SessionItem) -> Unit, openStudy: () -> Unit,
+               openOwn: (Int, Int) -> Unit, review: (Int) -> Unit) {
     val tree = rememberLoad("tree") { get("/tree", ListSerializer(ProgramNode.serializer())) }
     val today = rememberLoad("today") { get("/me/today", Today.serializer()) }
     val notes = rememberLoad("notes") { get("/me/notifications", Notes.serializer()) }
+    val sme = (rememberLoad("study-me") { get("/study/me", app.zigora.data.StudyMe.serializer()) }.state as? Load.Ok)?.value
+    val session = rememberLoad("session") { get("/me/session", app.zigora.data.SessionOut.serializer()) }
+    var sess by remember { mutableStateOf<app.zigora.data.SessionOut?>(null) }
+    androidx.compose.runtime.LaunchedEffect(session.state) { (session.state as? Load.Ok)?.value?.let { sess = it } }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val h = LocalTime.now().hour
     val hi = stringResource(if (h < 12) R.string.good_morning else if (h < 17) R.string.good_afternoon else R.string.good_evening, firstName(me.name))
     Scaffold(Modifier.nestedScroll(scroll.nestedScrollConnection), topBar = {
         LargeTopAppBar(title = { Text(hi) }, scrollBehavior = scroll, actions = {
+            IconButton(onClick = openSearch) { Icon(Icons.Outlined.Search, stringResource(R.string.tab_search)) }
             IconButton(onClick = openPhoto) { Icon(Icons.Outlined.CameraAlt, stringResource(R.string.ask_photo)) }
             val unread = (notes.state as? Load.Ok)?.value?.items?.count { it.unread } ?: 0
             IconButton(onClick = openNotes) {
@@ -89,11 +97,12 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
             }
         })
     }) { pad ->
-        PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload() }, modifier = Modifier.padding(pad)) {
+        PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload(); session.reload() }, modifier = Modifier.padding(pad)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 UpdateCard()
-                (today.state as? Load.Ok)?.value?.let { t ->
-                    val f = t.focus.firstOrNull { it.kind == "resume" } ?: t.focus.firstOrNull { it.kind == "next" }
+                sess?.let { SessionCard(it, openRoutine, openSession) { n -> sess = n } }
+                (today.state as? Load.Ok)?.value?.takeIf { sess?.routine == null }?.let { t ->  // with a routine, its session says what is next
+                    val f = t.focus.filter { it.kind == "resume" }.maxByOrNull { it.last_read.orEmpty() } ?: t.focus.firstOrNull { it.kind == "next" }
                     if (f?.topic_id != null) Panel(onClick = { openTopic(f.topic_id) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.PlayArrow, null, tint = MaterialTheme.colorScheme.primary)
@@ -106,8 +115,11 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
                     }
                 }
                 RecallCard(openTopic)
+                if (sme != null && sme.courses > 0) { SectionTitle(tl("Your own courses")); LearnCard(sme, openOwn, review) }
                 Loaded(tree) { list ->
                     val courses = coursesOf(list)
+                    if (sme != null && sme.courses == 0 && courses.isEmpty())
+                        RowLink(tl("Build a course from your own notes"), tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews"), openStudy)
                     if (courses.isEmpty()) Quiet(stringResource(if (me.self_registered && !me.placed) R.string.not_placed else R.string.not_enrolled), Modifier.padding(top = 16.dp))
                     else {
                         SectionTitle(stringResource(R.string.my_courses))

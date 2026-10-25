@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
@@ -32,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -157,3 +160,66 @@ fun LearnClock() {
         }
     }
 }
+
+/** the web app's own words (its English is the key), in the reader's language from the same translation files, with {name} values filled in */
+fun tl(key: String, vararg v: Pair<String, Any?>): String = app.zigora.data.I18n.t(key, v.associate { (k, x) -> k to x.toString() })
+/** "1 topic", "3 topics": each form is its own phrase to translate, as on the web */
+fun pl(n: Int, w: String) = tl(if (n == 1) "{n} $w" else "{n} " + (if (w == "quiz") "quizzes" else w + "s"), "n" to n)
+
+/** a time from the server, with the date, in the phone's own language */
+fun stamp(iso: String): String = runCatching {
+    java.time.format.DateTimeFormatter.ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM, java.time.format.FormatStyle.SHORT)
+        .format(java.time.OffsetDateTime.parse(iso).atZoneSameInstant(java.time.ZoneId.systemDefault()))
+}.getOrDefault(iso.take(16).replace('T', ' '))
+
+/** a percentage as a thin bar */
+@Composable
+fun ScoreBar(v: Int?) = androidx.compose.material3.LinearProgressIndicator(progress = { (v ?: 0).coerceIn(0, 100) / 100f }, Modifier.fillMaxWidth().padding(top = 4.dp))
+
+/** a screen with a title (and a line under it), a back arrow and scrolling content */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun Page(title: String, sub: String = "", back: (() -> Unit)? = null, actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
+         scroll: androidx.compose.foundation.ScrollState = androidx.compose.foundation.rememberScrollState(), content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val bar = androidx.compose.material3.TopAppBarDefaults.pinnedScrollBehavior()
+    androidx.compose.material3.Scaffold(Modifier.nestedScroll(bar.nestedScrollConnection), topBar = {
+        androidx.compose.material3.TopAppBar(scrollBehavior = bar, actions = actions,
+            title = { Column { Text(title, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                               if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) } },
+            navigationIcon = { if (back != null) IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } })
+    }) { pad ->
+        Column(Modifier.padding(pad).verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp),
+               verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+    }
+}
+
+/** a list row: a title, a quieter line, and an arrow when it opens something */
+@Composable
+fun RowLink(title: String, sub: String = "", onClick: (() -> Unit)?, extra: @Composable () -> Unit = {}) = Panel(onClick = onClick) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); if (sub.isNotEmpty()) Quiet(sub); extra() }
+        if (onClick != null) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
+    }
+}
+
+/** a short note at the bottom of the screen, like the web's toast */
+@Composable
+fun rememberToast(): (String) -> Unit {
+    val ctx = LocalContext.current
+    val main = remember { android.os.Handler(android.os.Looper.getMainLooper()) }  // a note can come from any thread a request finished on
+    return remember(ctx) { { m: String -> if (m.isNotEmpty()) main.post { android.widget.Toast.makeText(ctx, m, android.widget.Toast.LENGTH_SHORT).show() } } }
+}
+
+/** "are you sure?" before something that can't be undone, as the web asks */
+class Ask(val title: String, val body: String, val ok: String, val danger: Boolean = false, val yes: () -> Unit)
+
+@Composable
+fun AskDialog(ask: Ask?, close: () -> Unit) {
+    if (ask == null) return
+    androidx.compose.material3.AlertDialog(onDismissRequest = close, title = { Text(ask.title) }, text = { Text(ask.body) },
+        confirmButton = { TextButton(onClick = { close(); ask.yes() }) { Text(ask.ok, color = if (ask.danger) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) } },
+        dismissButton = { TextButton(onClick = close) { Text(tl("Cancel")) } })
+}
+
+/** navigation after a request: always on the main thread, wherever the request finished */
+suspend fun onMain(f: () -> Unit) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { f() }

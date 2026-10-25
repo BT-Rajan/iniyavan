@@ -9,6 +9,7 @@ lifecycle = "2.11.0"
 navigation = "2.10.2"
 work = "2.12.0"
 browser = "1.10.0"
+webkit = "1.18.0"
 okhttp = "5.5.1"
 serialization = "1.10.0"
 coil = "3.6.3"
@@ -33,6 +34,7 @@ lifecycle-runtime = { group = "androidx.lifecycle", name = "lifecycle-runtime-co
 navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
 work = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
+webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }

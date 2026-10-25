@@ -24,18 +24,8 @@ export function firstLang(){  // a choice made on this device, else the browser'
 export const L=o=>new Proxy(o,{get(x,k){const v=x[k];return typeof v==='string'?t(v):v&&typeof v==='object'?L(v):v}})
 // sentences the server builds (focus reasons, deadlines, what needs attention): an exact match first, then these shapes, with the numbers and
 // names carried into the translation. Anything else is shown as it came.
-const SRV=[
-  [/^Test not tried yet · (?<n>\d+) questions$/,'Test not tried yet · {n} questions'],[/^Quiz not tried yet · (?<n>\d+) questions$/,'Quiz not tried yet · {n} questions'],
-  [/^Best so far (?<best>\d+)%, pass mark (?<pass>\d+)%$/,'Best so far {best}%, pass mark {pass}%'],[/^You scored (?<p>\d+)% on questions about this$/,'You scored {p}% on questions about this'],
-  [/^Overdue by 1 day$/,'Overdue by 1 day'],[/^Overdue by (?<n>\d+) days$/,'Overdue by {n} days'],[/^Due in (?<n>\d+) days$/,'Due in {n} days'],
-  [/^1 draft topic not yet visible to students$/,'1 draft topic not yet visible to students'],[/^(?<n>\d+) draft topics not yet visible to students$/,'{n} draft topics not yet visible to students'],
-  [/^1 course has no units yet: (?<names>.*)$/,'1 course has no units yet: {names}'],[/^(?<n>\d+) courses have no units yet: (?<names>.*)$/,'{n} courses have no units yet: {names}'],
-  [/^1 course has no owner, so only admins can edit: (?<names>.*)$/,'1 course has no owner, so only admins can edit: {names}'],[/^(?<n>\d+) courses have no owner, so only admins can edit: (?<names>.*)$/,'{n} courses have no owner, so only admins can edit: {names}'],
-  [/^1 active student is not placed in a program and semester or year, so they see nothing$/,'1 active student is not placed in a program and semester or year, so they see nothing'],
-  [/^(?<n>\d+) active students are not placed in a program and semester or year, so they see nothing$/,'{n} active students are not placed in a program and semester or year, so they see nothing'],
-  [/^1 semester has no semester number \(set it under Programs\)$/,'1 semester has no semester number (set it under Programs)'],[/^(?<n>\d+) semesters have no semester number \(set it under Programs\)$/,'{n} semesters have no semester number (set it under Programs)'],
-  [/^1 active student has never opened a topic$/,'1 active student has never opened a topic'],[/^(?<n>\d+) active students have never opened a topic$/,'{n} active students have never opened a topic'],
-  [/^Owner (?<name>.+) is no longer faculty$/,'Owner {name} is no longer faculty'],[/^Owner (?<name>.+) is disabled$/,'Owner {name} is disabled']]
+import SRV_SHAPES from './locales/srv.json'  // [pattern, key]: shared with the Android app, which reads the same file
+const SRV=SRV_SHAPES.map(([p,k])=>[new RegExp(p),k])
 export function srv(s){
   if(typeof s!=='string'||!s)return s
   const d=DICTS[lang];if(!d)return s;if(d[s])return d[s]

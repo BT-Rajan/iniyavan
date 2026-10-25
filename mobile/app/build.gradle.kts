@@ -52,7 +52,8 @@ android {
     androidResources { generateLocaleConfig = true } // Android 13's per-app language, from res/resources.properties
     lint {
         warningsAsErrors = false
-        disable += setOf("NewerVersionAvailable", "GradleDependency", "AndroidGradlePluginVersion") // versions move on their own schedule
+        disable += setOf("NewerVersionAvailable", "GradleDependency", "AndroidGradlePluginVersion", // versions move on their own schedule
+                        "PluralsCandidate") // counts like "3 of 10" follow the web app's wording
     }
     testOptions.unitTests.isIncludeAndroidResources = true
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
@@ -74,6 +75,7 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.work)
     implementation(libs.browser)
+    implementation(libs.webkit)
     implementation(libs.okhttp)
     implementation(libs.serialization.json)
     implementation(libs.coil.compose)
@@ -102,4 +104,20 @@ tasks.withType<Test>().configureEach {
     systemProperty("roborazzi.test.record", "true")
     providers.gradleProperty("robolectricRepo").orNull?.let { systemProperty("robolectric.dependency.repo.url", it) }
     outputs.upToDateWhen { !screens }
+}
+
+// The web app's dictionaries (locales/ar.json, ta.json) and the shapes of the server's sentences (srv.json) are packed into the app as they are,
+// so server messages read the same in Arabic and Tamil on the phone as on the web. One source: frontend/src/locales.
+androidComponents {
+    onVariants { v ->
+        v.sources.assets?.addStaticSourceDirectory(rootDir.resolve("../frontend/src/locales").canonicalPath)
+        // the reader page (frontend/reader.html): the web's own renderer and highlighter, built by `npm run build:reader` in frontend/
+        v.sources.assets?.addStaticSourceDirectory(rootDir.resolve("../frontend/dist-reader").canonicalPath)
+    }
+}
+
+// the reader page must be built first; without it topics could not show their content
+tasks.named("preBuild") {
+    val readerPage = rootDir.resolve("../frontend/dist-reader/reader/reader.html")
+    doFirst { check(readerPage.exists()) { "Build the reader page first: cd frontend && npm ci && npm run build:reader" } }
 }
