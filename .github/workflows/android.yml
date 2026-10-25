@@ -32,7 +32,7 @@ jobs:
         id: v
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
-          n=$(git rev-list --count HEAD -- . ../frontend/src/reader.jsx ../frontend/src/content.jsx ../frontend/src/highlighter.js ../frontend/src/styles.css ../frontend/src/locales ../frontend/reader.html ../frontend/vite.reader.config.js)
+          n=$(bash version.sh)  # the same count run.sh uses
           echo "code=$n" >> "$GITHUB_OUTPUT"; echo "name=1.0.$n" >> "$GITHUB_OUTPUT"
           publish=false
           if [ "${{ github.event_name }}" != "pull_request" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then

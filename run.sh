@@ -32,5 +32,10 @@ pm2 describe "$APP" >/dev/null 2>&1 && pm2 delete "$APP" >/dev/null
 pm2 start backend/run.py --name "$APP" --interpreter "$VENV/bin/python" --cwd "$ROOT"
 pm2 save >/dev/null
 
+# the Android release this deploy brings is built on GitHub a few minutes after the merge: once it is out, the site and the app show it
+LOG="${TMPDIR:-/tmp}/zigora-android-release.log"
+nohup bash mobile/show-release.sh > "$LOG" 2>&1 &
+echo "==> Will show the new Android release as soon as GitHub has it (notes: $LOG)"
+
 HOST=$(sed -n 's/^HOST=//p' .env | tail -1); PORT=$(sed -n 's/^PORT=//p' .env | tail -1)
 echo "==> Zigora is up at http://${HOST:-0.0.0.0}:${PORT:-5252}   (logs: pm2 logs $APP)"
