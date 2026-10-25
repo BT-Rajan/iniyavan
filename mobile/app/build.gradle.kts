@@ -8,7 +8,7 @@ plugins {
 val versionCodeProp = (findProperty("zigoraVersionCode") as String?)?.toIntOrNull() ?: 1
 val versionNameProp = (findProperty("zigoraVersionName") as String?) ?: "1.0-dev"
 val defaultServer = (findProperty("zigoraServer") as String?).orEmpty()
-val keystore = System.getenv("ZIGORA_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+val keystore = System.getenv("ZIGORA_KEYSTORE")?.takeIf { it.isNotBlank() }?.let { file(it) }?.takeIf { it.exists() } // empty until the key is set up
 
 android {
     namespace = "app.zigora"
