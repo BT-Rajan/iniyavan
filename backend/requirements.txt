@@ -11,3 +11,4 @@ pypdf
 pypdfium2
 pytesseract
 Pillow
+anthropic

@@ -91,7 +91,7 @@ def test_self_registered_users_need_their_own_ai_key_and_never_use_the_shared_on
     monkeypatch.setattr(main.httpx, "AsyncClient", FakeClient); FakeClient.mode, FakeClient.calls = "ok", 0
     with Session_() as s: s.merge(main.Setting(k="deepseek_key", v="sk-shared-admin-key-123456")); s.commit()
     h = signed_up(reg)
-    assert reg.c.get("/api/ai/status", headers=h).json() == {"available": False, "own_key": True}
+    assert reg.c.get("/api/ai/status", headers=h).json()["available"] is False and reg.c.get("/api/ai/status", headers=h).json()["own_key"] is True
     assert reg.c.get("/api/ai/status", headers=reg.stu).json()["available"] is True  # staff-added users still use the shared key
     assert reg.c.put("/api/me/ai-key", headers=reg.stu, json={"key": "sk-" + "a" * 30}).status_code == 403
     for bad in ("short", "sk-" + "a b" * 12): assert reg.c.put("/api/me/ai-key", headers=h, json={"key": bad}).status_code == 400

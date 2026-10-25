@@ -460,3 +460,7 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
   .bar{padding:0 0 4px!important}.revsheet{columns:2;column-gap:20px;font-size:10pt}.revhead{column-span:all}.revtopic{padding:6px 0}.revtopic h3{font-size:11pt}
   .revq{color:#333!important}
 }
+/* ask from a photo */
+.search .camb{margin-inline-start:auto;background:transparent;color:var(--acct)}.search .camb:hover{background:var(--accbg)}
+.photoprev{display:block;width:100%;max-height:340px;object-fit:contain;border-radius:var(--r-box);border:1px solid var(--line);background:var(--s2);margin:14px 0 4px}
+.pform input{width:100%}.privacy{font-size:13px}.panswer{margin-top:14px}.panswer p{margin:0 0 6px;line-height:1.55}
