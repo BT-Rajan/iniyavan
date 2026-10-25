@@ -29,7 +29,7 @@ import kotlinx.serialization.json.JsonObject
                                    val my_notes: String? = null, val frame_url: String? = null, val status: String = "not_started", val learning_due_at: String? = null,
                                    val bookmarked: Boolean = false, val nav: Nav? = null)
 @Serializable data class Learning(val status: String = "not_started")
-@Serializable data class AiStatus(val available: Boolean = false, val own_key: Boolean = false, val vision: Boolean = false, val ocr: Boolean = false)
+@Serializable data class AiStatus(val available: Boolean = false, val own_key: Boolean = false, val vision: Boolean = false, val ocr: Boolean = false, val plan: String = "college")
 @Serializable data class You(val order: List<String> = emptyList(), val question_first: Boolean = false, val level: String? = null)
 /** a topic step: the gist, why, example, exam angle, quick check or "more simply". data holds the step's own JSON */
 @Serializable data class Step(val text: String = "", val cached: Boolean = false, val id: Int? = null, val data: JsonObject? = null, val you: You? = null, val own_notes: Boolean = false)
@@ -48,8 +48,11 @@ import kotlinx.serialization.json.JsonObject
 
 @Serializable data class Shared(val source: String, val label: String, val uses: Int)
 @Serializable data class Rewards(val uses: Int = 0, val points: Int = 0, val toward_next: Int = 0, val per: Int = 1000, val points_per: Int = 100, val top: List<Shared> = emptyList())
+/** a self-registered person's AI plan: lite (a free daily allowance on the college's key), own (their own key) or pro (given by the admin until a date) */
+@Serializable data class AiPlan(val plan: String = "college", val pro_until: String? = null, val searches_used: Int = 0, val searches_limit: Int = 0,
+                                val minutes_used: Int = 0, val minutes_limit: Int = 0, val asked: Boolean = false)
 @Serializable data class Profile(val name: String, val email: String, val role: String, val lang: String = "en", val program: String = "", val semester: Int? = null, val term: String = "",
-                                 val rewards: Rewards? = null)
+                                 val self_registered: Boolean = false, val ai: AiPlan? = null, val rewards: Rewards? = null)
 @Serializable data class Note(val key: String, val text: String, val sub: String = "", val unread: Boolean = false)
 @Serializable data class Notes(val items: List<Note> = emptyList())
 @Serializable data class AndroidRelease(val version: String? = null, val code: Int? = null, val date: String? = null, val url: String? = null)

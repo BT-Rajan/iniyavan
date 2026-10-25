@@ -38,11 +38,11 @@ def test_nobody_elses_request_ever_carries_the_students_key(env, monkeypatch):
     t, a, c = setup(env, monkeypatch); Spy.calls = []
     env.c.get(f"/api/topics/{t}/ai/explain", headers=env.stu)            # a staff-added student: the admin's key
     env.c.post("/api/search/ai", headers=env.stu, json={"q": "what is hardness"})
-    r = env.c.post("/api/search/ai", headers=c, json={"q": "what is softening"})  # another self-registered student, no key of their own
-    assert r.status_code == 503 and "own" in r.json()["detail"]
+    r = env.c.post("/api/search/ai", headers=c, json={"q": "what is softening"})  # another self-registered student, no key of their own: lite, on the admin's key
+    assert r.status_code == 200
     env.c.post("/api/search/ai", headers=a, json={"q": "what is ion exchange"})  # the owner: their own key
     assert Spy.calls and all(url == "https://api.deepseek.com/chat/completions" for url, _ in Spy.calls)
-    assert [k for _, k in Spy.calls] == [f"Bearer {ADMIN_KEY}", f"Bearer {ADMIN_KEY}", f"Bearer {KEY_A}"]
+    assert [k for _, k in Spy.calls] == [f"Bearer {ADMIN_KEY}", f"Bearer {ADMIN_KEY}", f"Bearer {ADMIN_KEY}", f"Bearer {KEY_A}"]  # never student A's key for anyone else
 
 def test_without_an_admin_key_staff_added_students_dont_fall_back_to_a_students_key(env, monkeypatch):
     t, a, c = setup(env, monkeypatch, admin_key=False); Spy.calls = []

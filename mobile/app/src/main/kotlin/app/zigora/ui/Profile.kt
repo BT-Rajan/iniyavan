@@ -41,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -48,6 +49,7 @@ import androidx.core.content.ContextCompat
 import app.zigora.BuildConfig
 import app.zigora.R
 import app.zigora.Reminders
+import app.zigora.data.AiPlan
 import app.zigora.data.AndroidRelease
 import app.zigora.data.Me
 import app.zigora.data.Notes
@@ -77,6 +79,7 @@ fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, signOut: () -> Unit) {
                     Quiet(pr.email)
                     if (pr.program.isNotEmpty()) Quiet(pr.program + (pr.semester?.let { " · ${pr.term} $it" } ?: ""))
                 }
+                pr.ai?.takeIf { pr.self_registered && it.plan != "college" }?.let { PlanCard(it) { p.reload() } }
                 pr.rewards?.let { r ->
                     SectionTitle(stringResource(R.string.rewards))
                     Panel {
@@ -148,4 +151,58 @@ fun NotificationsScreen(back: () -> Unit, openTopic: (Int) -> Unit) {
             }
         }
     }
+}
+
+/** a self-registered student's AI plan: today's free allowance on Lite, and the two ways to more (their own DeepSeek key, or asking the admin) */
+@Composable
+private fun PlanCard(ai: AiPlan, changed: () -> Unit) {
+    val app = app(); val res = LocalResources.current; val scope = rememberCoroutineScope()
+    var dialog by remember { mutableStateOf("") }
+    var text by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    SectionTitle(stringResource(R.string.ai_help))
+    Panel {
+        Text(stringResource(when (ai.plan) { "pro" -> R.string.plan_pro; "own" -> R.string.plan_own; else -> R.string.plan_lite }), style = MaterialTheme.typography.titleMedium)
+        when (ai.plan) {
+            "pro" -> Quiet(stringResource(R.string.pro_until_note, ai.pro_until?.let { day(it) }.orEmpty()))
+            "own" -> Quiet(stringResource(R.string.own_key_note))
+            else -> {
+                Quiet(stringResource(R.string.lite_note, ai.searches_limit, ai.minutes_limit))
+                Meter(stringResource(R.string.searches_today, ai.searches_used, ai.searches_limit), ai.searches_used, ai.searches_limit)
+                Meter(stringResource(R.string.minutes_today, ai.minutes_used, ai.minutes_limit), ai.minutes_used, ai.minutes_limit)
+                androidx.compose.foundation.layout.Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { text = ""; msg = ""; dialog = "key" }) { Text(stringResource(R.string.use_own_key)) }
+                    TextButton(enabled = !ai.asked, onClick = { text = ""; msg = ""; dialog = "more" }) { Text(stringResource(if (ai.asked) R.string.asked_admin else R.string.ask_admin_more)) }
+                }
+            }
+        }
+    }
+    if (dialog.isNotEmpty()) AlertDialog(onDismissRequest = { dialog = "" },
+        title = { Text(stringResource(if (dialog == "key") R.string.use_own_key else R.string.ask_admin_more)) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Quiet(stringResource(if (dialog == "key") R.string.own_key_how else R.string.ask_more_how))
+            androidx.compose.material3.OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = dialog == "key",
+                label = { Text(stringResource(if (dialog == "key") R.string.deepseek_key else R.string.note_optional)) },
+                visualTransformation = if (dialog == "key") androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None)
+            if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
+        } },
+        confirmButton = { TextButton(enabled = !busy && (dialog != "key" || text.isNotBlank()), onClick = {
+            scope.launch {
+                busy = true; msg = ""
+                try {
+                    if (dialog == "key") app.api.raw("PUT", "/me/ai-key", buildJsonObject { put("key", text.trim()) })
+                    else app.api.raw("POST", "/me/plan/request", buildJsonObject { put("note", text.trim()) })
+                    dialog = ""; changed()
+                } catch (e: Exception) { msg = e.message ?: res.getString(R.string.try_again) }
+                busy = false
+            }
+        }) { Text(stringResource(if (busy) R.string.thinking else if (dialog == "key") R.string.save_key else R.string.send_request)) } },
+        dismissButton = { TextButton(onClick = { dialog = "" }) { Text(stringResource(R.string.cancel)) } })
+}
+
+@Composable
+private fun Meter(label: String, used: Int, max: Int) = Column(Modifier.padding(top = 8.dp)) {
+    Quiet(label)
+    LinearProgressIndicator(progress = { (used.toFloat() / max.coerceAtLeast(1)).coerceIn(0f, 1f) }, Modifier.fillMaxWidth().padding(top = 4.dp))
 }

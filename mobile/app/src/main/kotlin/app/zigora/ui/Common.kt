@@ -144,3 +144,16 @@ fun Dot(letter: String, color: androidx.compose.ui.graphics.Color) = Box(
 }
 
 @Composable fun Gap(h: Int = 12) = androidx.compose.foundation.layout.Spacer(Modifier.height(h.dp))
+
+/** a lite person's learning minutes: while a learning screen is open and the app is in front, one tick a minute (the server counts each minute once) */
+@Composable
+fun LearnClock() {
+    val a = api(); val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) {
+        val lite = runCatching { a.get("/ai/status", app.zigora.data.AiStatus.serializer()).plan == "lite" }.getOrDefault(false)
+        while (lite) {
+            kotlinx.coroutines.delay(60_000)
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) runCatching { a.raw("POST", "/me/plan/tick") }
+        }
+    }
+}
