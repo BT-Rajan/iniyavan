@@ -5,3 +5,6 @@ __pycache__
 venv
 backend/uploads
 backups
+
+# the promo demo server's scratch data when PROMO_WORK is not set
+.promo/work/

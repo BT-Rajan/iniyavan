@@ -10,7 +10,7 @@ REPO="${REPO:-BT-Rajan/iniyavan}"
 DIR="${ZIGORA_KEY_DIR:-$HOME/zigora-signing}"
 KS="$DIR/zigora.keystore"
 ALIAS="zigora"
-DNAME="CN=Zigora, O=Zigora Intelligence, L=Chennai, ST=Tamil Nadu, C=IN"
+DNAME="CN=Zigora Intelligence, O=Perennia, L=Chennai, ST=Tamil Nadu, C=IN"
 
 need() { command -v "$1" > /dev/null || { echo "Missing: $1. $2"; exit 1; }; }
 need keytool "Install a JDK: sudo apt install openjdk-21-jdk-headless"

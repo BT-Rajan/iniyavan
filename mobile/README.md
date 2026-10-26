@@ -22,7 +22,7 @@ the release that commit makes to appear on GitHub, then has the server show it a
 
 ### One-time setup: the signing key
 
-The easy way: on your server, run `bash mobile/make-signing-key.sh`. It makes the key (Zigora, Zigora Intelligence, Chennai, Tamil Nadu, India),
+The easy way: on your server, run `bash mobile/make-signing-key.sh`. It makes the key (Zigora Intelligence, Perennia, Chennai, Tamil Nadu, India),
 keeps it in `~/zigora-signing`, sends the four secrets below to GitHub with the GitHub CLI (`gh`), and starts a build. Or by hand:
 
 Releases need a signing key, kept in the repository's secrets. Every version must be signed with the same key, or phones refuse the update. Make it once,
@@ -63,3 +63,9 @@ courses), My courses (topics, quizzes and tests, revision sheets, your own notes
 Build a course, Search, Ask from a photo and Me. Its labels are the web's own words, read from `frontend/src/locales`, so a translation fixed for
 the web is fixed in the app too. Topic content is drawn by the web's renderer (`frontend/reader.html`, built with `npm run build:reader`).
 Teachers and admins who sign in are pointed to the web.
+
+## Promo video
+
+`.promo/` makes a ~45 s marketing video from the app's own screens with the `promo-video` skill (BT-Rajan/claude-skills):
+`.promo/server.py` is a throwaway demo server, and `PromoTest` captures the screens against it. Captions are in English,
+Tamil and Arabic (`PROMO_LANGS=ta,en` or `ar,en` for the other versions).
