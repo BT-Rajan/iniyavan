@@ -61,6 +61,9 @@ class PendingRegistration(Base):  # someone who has asked for an account but has
     name = Column(String(100)); institution = Column(String(150)); id_number = Column(String(60)); phone = Column(String(30)); pw = Column(String(200))
     code_hash = Column(String(64)); attempts = Column(Integer, default=0); sends = Column(Integer, default=1)
     ip = Column(String(64), index=True); created_at = Column(DateTime, default=dt.datetime.utcnow); last_sent_at = Column(DateTime, default=dt.datetime.utcnow); expires_at = Column(DateTime)
+    who = Column(String(10), nullable=True); level = Column(String(8), nullable=True)  # student, parent or teacher; school or college
+    program_id = Column(Integer, nullable=True); semester = Column(Integer, nullable=True)  # where the student signing up studies
+    children = Column(Text, nullable=True)  # a parent's children as JSON: name, username, hashed password, program_id, semester
 class CourseFaculty(Base):  # legacy faculty-course assignments from before course owners; kept for reference, grants nothing
     __tablename__ = "course_faculty"
     id = Column(Integer, primary_key=True)
@@ -473,23 +476,63 @@ def deliver_otp(email, name, code, exists=False):
         if exists: send_mail(email, f"Your {APP_NAME} account", kind="account", body=f"Hi {name},\n\nSomeone tried to register {email} on {APP_NAME}, but that email already has an account. If it was you, sign in, or use \"Forgot your password?\" on the sign-in page. If it was not you, ignore this message.")
         else: send_mail(email, f"Your {APP_NAME} verification code: {code}", kind="code", body=f"Hi {name},\n\nYour verification code is {code}. It works for {OTP_MINUTES} minutes. Enter it in the app to finish creating your {APP_NAME} account.\n\nIf you did not ask for this, ignore this message; no account is created without the code.")
     except MailError: pass  # recorded in the email log
-class RegisterIn(BaseModel): name: str; institution: str; id_number: str; email: str; phone: str; password: str
+class ChildIn(BaseModel): name: str; username: str; password: str; program_id: int | None = None; semester: int | None = None
+class RegisterIn(BaseModel):  # who and level are new: an older app sends neither and gets the old student sign-up
+    name: str; institution: str = ""; id_number: str = ""; email: str; phone: str; password: str
+    who: str = "student"; level: str | None = None; program_id: int | None = None; semester: int | None = None; children: list[ChildIn] = []
+USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,29}")  # a child's sign-in name: no @, so it never looks like an email
+MAX_CHILDREN = 8
 def clean_registration(b, s):
     name, inst, idn, email, phone = " ".join(b.name.split()), " ".join(b.institution.split()), " ".join(b.id_number.split()), b.email.strip().lower(), b.phone.strip()
     if not 2 <= len(name) <= 100: raise HTTPException(400, "Enter your full name")
-    if not 2 <= len(inst) <= 150: raise HTTPException(400, "Enter your institution")
-    if not IDNUM.fullmatch(idn): raise HTTPException(400, "Enter your ID number (letters, numbers, spaces and - / . _ only)")
+    if b.who not in ("student", "parent", "teacher"): raise HTTPException(400, "Choose who is signing up")
+    if b.level is not None and b.level not in ("school", "college"): raise HTTPException(400, "Choose school or college")
+    if b.who != "student" and b.level is None: raise HTTPException(400, "Choose school or college")
+    if b.who != "parent" and not 2 <= len(inst) <= 150: raise HTTPException(400, "Enter your institution")  # a parent's children each have their own school
+    if inst and len(inst) > 150: raise HTTPException(400, "Enter your institution")
+    need_id = b.who == "student" and b.level != "school"  # a roll number is for college students; school students and parents may not have one
+    if (need_id or idn) and not IDNUM.fullmatch(idn): raise HTTPException(400, "Enter your ID number (letters, numbers, spaces and - / . _ only)")
     if not EMAIL.match(email) or len(email) > 190: raise HTTPException(400, "Enter a valid email")
     if not PHONE.fullmatch(phone) or not 7 <= sum(ch.isdigit() for ch in phone) <= 15: raise HTTPException(400, "Enter a valid phone number, for example +91 98765 43210")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters for the password")
     if b.password.strip().lower() == email: raise HTTPException(400, "Password can't be your email")
     doms = allowed_domains(s)
-    if doms and not any(email.endswith("@" + d) or email.endswith("." + d) for d in doms): raise HTTPException(400, "Use your institution email address (" + ", ".join("@" + d for d in doms) + ")")
+    if doms and b.who != "parent" and not any(email.endswith("@" + d) or email.endswith("." + d) for d in doms): raise HTTPException(400, "Use your institution email address (" + ", ".join("@" + d for d in doms) + ")")
     return name, inst, idn, email, phone
+def open_terms(s, p):  # the semester, year or grade numbers of a program that someone can join now
+    return sorted(n for (n,) in s.query(Semester.semester_no).filter(Semester.program_id == p.id, Semester.semester_no.isnot(None), Semester.archived_at.is_(None)))
+def check_place(s, level, pid, sem):  # a program of the chosen level and one of its terms; no program means an admin places them later
+    if pid is None: return None, None
+    p = s.get(Program, pid)
+    if not p or p.archived_at is not None or program_level(p) != level: raise HTTPException(400, "Choose a program from the list")
+    if sem not in open_terms(s, p): raise HTTPException(400, f"Choose a {term_label(p).lower()} from the list")
+    return p.id, sem
+def clean_children(b, s):  # a parent adds each child with their own sign-in name and password
+    if b.who != "parent": return []
+    if not 1 <= len(b.children) <= MAX_CHILDREN: raise HTTPException(400, f"Add between 1 and {MAX_CHILDREN} children")
+    out, seen = [], set()
+    for c in b.children:
+        name, un = " ".join(c.name.split()), c.username.strip().lower()
+        if not 2 <= len(name) <= 100: raise HTTPException(400, "Enter each child's name")
+        if not USERNAME.fullmatch(un): raise HTTPException(400, f"Usernames are 3 to 30 letters, numbers, dots, dashes or underscores, starting with a letter: {un or '(empty)'}")
+        if un in seen or s.query(User.id).filter_by(username=un).first(): raise HTTPException(400, f"The username {un} is taken. Choose another.")
+        if len(c.password) < 8: raise HTTPException(400, f"Use at least 8 characters for {name}'s password")
+        if c.password.strip().lower() == un: raise HTTPException(400, "A password can't be the username")
+        pid, sem = check_place(s, b.level, c.program_id, c.semester)
+        seen.add(un); out.append({"name": name, "username": un, "pw": hp(c.password), "program_id": pid, "semester": sem})
+    return out
 def same_id(s, inst, idn):
     return s.query(User.id).filter(func.lower(User.institution) == inst.lower(), func.lower(User.id_number) == idn.lower()).first() is not None
 @app.get("/api/register/status")
 def register_status(s: Session = Depends(db)): return {"open": reg_open(s), "domains": allowed_domains(s)}
+@app.get("/api/register/options")
+def register_options(s: Session = Depends(db)):  # the programs someone signing up can pick, by school or college, with the terms open in each
+    out = {"school": [], "college": []}
+    if not reg_open(s): return out
+    for p in s.query(Program).filter(Program.archived_at.is_(None)).order_by(Program.name):
+        terms = open_terms(s, p)
+        if terms: out[program_level(p)].append({"id": p.id, "name": p.name, "term": term_label(p), "terms": terms})
+    return out
 @app.post("/api/register/start")
 def register_start(b: RegisterIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
     if not reg_open(s): raise HTTPException(403, "Self-registration is not open here. Ask your admin for an account.")
@@ -500,14 +543,17 @@ def register_start(b: RegisterIn, request: Request, bg: BackgroundTasks, s: Sess
     if s.query(User.id).filter_by(email=email).first():  # the same answer as a new address, so nobody can use this form to find out who has an account
         if s.query(func.count(PendingRegistration.id)).filter(PendingRegistration.ip == ip, PendingRegistration.last_sent_at >= now - dt.timedelta(minutes=1)).scalar() < 3: bg.add_task(deliver_otp, email, name, "", True)
         return reply
-    if same_id(s, inst, idn): raise HTTPException(400, "An account already exists for that institution ID. Sign in, or ask your admin.")
+    if idn and same_id(s, inst, idn): raise HTTPException(400, "An account already exists for that institution ID. Sign in, or ask your admin.")
+    pid, sem = check_place(s, b.level, b.program_id, b.semester) if b.who == "student" and b.level else (None, None)
+    kids = clean_children(b, s)
     code = f"{secrets.randbelow(10 ** 6):06d}"; p = s.query(PendingRegistration).filter_by(email=email).first()
     if p:
         if p.last_sent_at and (now - p.last_sent_at).total_seconds() < OTP_COOLDOWN: raise HTTPException(429, "Wait a moment before asking for another code.")
         if p.sends >= OTP_MAX_SENDS: raise HTTPException(429, "Too many codes were requested for this email. Please try again tomorrow.")
         p.sends += 1
     else: p = PendingRegistration(email=email, sends=1, created_at=now); s.add(p)
-    p.name, p.institution, p.id_number, p.phone, p.pw = name, inst, idn, phone, hp(b.password); p.code_hash = otp_hash(email, code); p.attempts = 0; p.ip = ip; p.last_sent_at = now
+    p.name, p.institution, p.id_number, p.phone, p.pw = name, inst, idn, phone, hp(b.password)
+    p.who, p.level, p.program_id, p.semester, p.children = b.who, b.level, pid, sem, json.dumps(kids) if kids else None; p.code_hash = otp_hash(email, code); p.attempts = 0; p.ip = ip; p.last_sent_at = now
     p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit(); bg.add_task(deliver_otp, email, name, code)
     return reply
 class VerifyIn(BaseModel): email: str; code: str
@@ -519,9 +565,20 @@ def register_verify(b: VerifyIn, s: Session = Depends(db)):
     if not hmac.compare_digest(p.code_hash, otp_hash(email, code)):
         p.attempts += 1; left = OTP_MAX_TRIES - p.attempts; s.commit()
         raise HTTPException(400, f"That code is not right. {left} {'try' if left == 1 else 'tries'} left." if left else "Too many wrong codes. Ask for a new one.")
-    if s.query(User.id).filter_by(email=email).first() or same_id(s, p.institution, p.id_number): s.delete(p); s.commit(); raise bad
-    u = User(name=p.name, email=email, pw=p.pw, role="student", active=True, must_change=False, institution=p.institution, id_number=p.id_number, phone=p.phone, self_registered=True)
-    s.add(u); s.delete(p)
+    if s.query(User.id).filter_by(email=email).first() or (p.id_number and same_id(s, p.institution, p.id_number)): s.delete(p); s.commit(); raise bad
+    kids = json.loads(p.children or "[]")
+    for k in kids:  # someone may have taken a username since the code was sent
+        if s.query(User.id).filter_by(username=k["username"]).first(): raise HTTPException(400, f"The username {k['username']} was taken meanwhile. Go back, change it and ask for a new code.")
+    guardian = (p.who or "student") != "student"
+    u = User(name=p.name, email=email, pw=p.pw, role="guardian" if guardian else "student", relation=p.who if guardian else None, level=p.level, active=True, must_change=False,
+             institution=p.institution or None, id_number=p.id_number or None, phone=p.phone, self_registered=True,
+             program_id=None if guardian else p.program_id, semester=None if guardian else p.semester)
+    s.add(u); s.flush()
+    for k in kids:  # each child signs in on their own with the username their parent chose
+        c = User(name=k["name"], email=None, username=k["username"], pw=k["pw"], role="student", level=p.level, active=True, must_change=False,
+                 program_id=k["program_id"], semester=k["semester"], self_registered=True)
+        s.add(c); s.flush(); s.add(GuardianLink(guardian_id=u.id, student_id=c.id, status="active"))
+    s.delete(p)
     try: s.commit()
     except IntegrityError: s.rollback(); raise bad
     return {"token": make_token(u), "user": me_json(u)}
@@ -670,7 +727,9 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0024_answer_authors", lambda c: [_addcol(t, "author_id", "INTEGER NULL")(c) for t in ("search_answers", "doubt_answers", "ai_cache")]),
               ("0025_egress_tokens", lambda c: [_addcol("ai_egress", "tokens", "INTEGER NOT NULL DEFAULT 0")(c), _addcol("ai_egress", "own", "BOOLEAN NOT NULL DEFAULT 0")(c)]),
               ("0026_users_pro_until", _addcol("users", "pro_until", "DATETIME NULL")),
-              ("0027_users_guardians", guardian_columns)]
+              ("0027_users_guardians", guardian_columns),
+              ("0028_pending_onboarding", lambda c: [_addcol("pending_registrations", col, typ)(c) for col, typ in (("who", "VARCHAR(10) NULL"), ("level", "VARCHAR(8) NULL"),
+                                                     ("program_id", "INTEGER NULL"), ("semester", "INTEGER NULL"), ("children", "TEXT NULL"))])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -717,6 +776,9 @@ def stage_of(u):  # school or college: from the program a student is placed in, 
     if is_staff(u): return None
     s = object_session(u); p = s.get(Program, u.program_id) if s is not None and u.program_id else None
     return program_level(p) if p is not None else (u.level if u.level in ("school", "college") else None)
+def place_line(s, u):  # "B.E. Mechanical · Semester 3", or "" when not placed yet
+    p = s.get(Program, u.program_id) if u.program_id else None
+    return f"{p.name} · {term_label(p)} {u.semester}" if p and u.semester else (p.name if p else "")
 def guardian_students(s, gid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.student_id == User.id).filter(GuardianLink.guardian_id == gid, GuardianLink.status == status).all()
 def guardians_of(s, sid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.guardian_id == User.id).filter(GuardianLink.student_id == sid, GuardianLink.status == status).all()
 def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": is_staff(u) or bool(u.program_id), "lang": u.lang or "en",
@@ -757,6 +819,11 @@ def health():
     return {"ok": True, "db": True}
 @app.get("/api/me")
 def whoami(u: User = Depends(me)): return me_json(u)
+@app.get("/api/guardian/students")
+def my_students(u: User = Depends(me), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
+    if u.role != "guardian": raise HTTPException(403, "For parents and teachers")
+    row = lambda x, st: {"id": x.id, "name": x.name, "username": x.username, "place": place_line(s, x), "status": st, "active": bool(x.active)}
+    return {"students": [row(x, "active") for x in guardian_students(s, u.id)] + [row(x, "invited") for x in guardian_students(s, u.id, "invited")]}
 LANGS = {"en": "English", "ar": "Arabic", "ta": "Tamil"}
 class LangIn(BaseModel): lang: str
 @app.put("/api/me/lang")
@@ -979,12 +1046,12 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
     if b.name is not None:
         if not b.name.strip(): raise HTTPException(400, "Name can't be empty")
         u.name = b.name.strip()
-    if b.email is not None:
+    if b.email is not None and not (u.username and not b.email.strip()):  # a child a parent signed up has a username and may have no email
         e = b.email.strip().lower()
         if not EMAIL.match(e): raise HTTPException(400, "Enter a valid email")
         if e != u.email and s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
         u.email = e
-    if b.role:
+    if b.role and b.role != u.role:  # a parent or teacher who signed up keeps "guardian" when an admin edits other details
         if b.role not in ROLES: raise HTTPException(400, "Role must be student, faculty or admin")
         u.role = b.role
     if b.active is not None: u.active = b.active
@@ -3071,7 +3138,7 @@ def make_pro(uid: int, b: ProIn, bg: BackgroundTasks, a: User = Depends(admin), 
         if d < local_day(dt.datetime.utcnow()): raise HTTPException(400, "Choose a day from today on")
         until = dt.datetime.combine(d + dt.timedelta(days=1), dt.time()) - dt.timedelta(minutes=DAY_OFFSET)  # the end of that day, in the students' local time
     u.pro_until = until; close_requests(s, u.id); s.commit()
-    if mail_on(s): bg.add_task(deliver_pro, u.email, u.name, local_day(until - dt.timedelta(seconds=1)))
+    if mail_on(s) and u.email: bg.add_task(deliver_pro, u.email, u.name, local_day(until - dt.timedelta(seconds=1)))
     return urow(u, None)
 def deliver_pro(email, name, last_day):
     try: send_mail(email, f"More AI on {APP_NAME}", f"Hi {name},\n\nYour admin has given you more AI help on {APP_NAME}: no daily limit until {last_day.strftime('%d %B %Y')}.\n\nEnjoy your studies.\n", kind="pro")
