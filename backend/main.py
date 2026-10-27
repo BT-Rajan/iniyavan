@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from guardrails import GUARDRAILS, GUARD_VERSION, SUPPORT, checked, crisis, fence
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Date, func, or_, and_, inspect, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy.orm import sessionmaker, declarative_base, Session, object_session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 APP_NAME = (os.getenv("APP_NAME") or "Zigora").strip()
@@ -44,7 +44,17 @@ class User(Base):
     pro_until = Column(DateTime, nullable=True)  # a self-registered person an admin made "pro": the college's AI key with the usual limits until then
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
     digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)
+    username = Column(String(40), unique=True, nullable=True)  # sign-in name for a child a parent or teacher created (no email of their own); lower case
+    relation = Column(String(10), nullable=True)  # a guardian's relation to the students they manage: "parent" or "teacher"
+    level = Column(String(8), nullable=True)  # "school" or "college", chosen at sign-up; a student placed in a program takes it from the program instead
     lang = Column(String(5), nullable=True)  # the language of the app's screens and AI answers for them: en, ar or ta (null = English)  # a daily email of new notifications, if they asked for it; when it last went
+class GuardianLink(Base):  # a parent or teacher (role "guardian") and a student they look after; a teacher's invitation waits until the student accepts
+    __tablename__ = "guardian_links"
+    id = Column(Integer, primary_key=True)
+    guardian_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True); student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    status = Column(String(10), default="active")  # "active", or "invited" until the student accepts
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    __table_args__ = (UniqueConstraint("guardian_id", "student_id"),)
 class PendingRegistration(Base):  # someone who has asked for an account but has not yet entered the emailed code; becomes a User only when they do
     __tablename__ = "pending_registrations"
     id = Column(Integer, primary_key=True); email = Column(String(190), unique=True, index=True)
@@ -277,6 +287,7 @@ def me(request: Request, authorization: str = Header(""), s: Session = Depends(d
 def admin(u: User = Depends(me)):
     if u.role != "admin": raise HTTPException(403, "Admins only")
     return u
+def is_staff(u): return u.role in ("admin", "faculty")  # everyone else (students, parents, teachers who signed up) sees only their own program and has the daily AI limits
 def staff(u: User = Depends(me)):
     if u.role not in ("admin", "faculty"): raise HTTPException(403, "Admins and faculty only")
     return u
@@ -637,6 +648,10 @@ def content_format_columns(c):  # topics can hold an uploaded HTML file; HTML ru
         _addcol(t, "content_format", "VARCHAR(10) NOT NULL DEFAULT 'markdown'")(c)
         if c.dialect.name != "sqlite": c.execute(text(f"ALTER TABLE {t} MODIFY content MEDIUMTEXT"))
 # Append new migrations at the END. Each runs once, is recorded in schema_migrations, and must be safe to run on a database that already has the change.
+def guardian_columns(c):  # sign-in names for children, a guardian's relation, and school or college
+    for col, typ in (("username", "VARCHAR(40) NULL"), ("relation", "VARCHAR(10) NULL"), ("level", "VARCHAR(8) NULL")): _addcol("users", col, typ)(c)
+    if not any(set(ix.get("column_names") or []) == {"username"} for ix in inspect(c).get_indexes("users") + [dict(column_names=u["column_names"]) for u in inspect(c).get_unique_constraints("users")]):
+        c.execute(text("CREATE UNIQUE INDEX ux_users_username ON users (username)"))
 MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")), ("0002_subjects_semester_id", _addcol("subjects", "semester_id", "INT NULL")),
               ("0003_users_program_id", _addcol("users", "program_id", "INT NULL")), ("0004_users_semester", _addcol("users", "semester", "INT NULL")),
               ("0005_users_must_change", _addcol("users", "must_change", "TINYINT(1) NOT NULL DEFAULT 0")), ("0006_topics_published", _addcol("topics", "published", "TINYINT(1) NOT NULL DEFAULT 1")),
@@ -654,7 +669,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0023_users_lang", _addcol("users", "lang", "VARCHAR(5) NULL")),
               ("0024_answer_authors", lambda c: [_addcol(t, "author_id", "INTEGER NULL")(c) for t in ("search_answers", "doubt_answers", "ai_cache")]),
               ("0025_egress_tokens", lambda c: [_addcol("ai_egress", "tokens", "INTEGER NOT NULL DEFAULT 0")(c), _addcol("ai_egress", "own", "BOOLEAN NOT NULL DEFAULT 0")(c)]),
-              ("0026_users_pro_until", _addcol("users", "pro_until", "DATETIME NULL"))]
+              ("0026_users_pro_until", _addcol("users", "pro_until", "DATETIME NULL")),
+              ("0027_users_guardians", guardian_columns)]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -696,12 +712,20 @@ def throttle(s, email, ip):  # 5 misses per account from one address, 20 per acc
 def note_fail(s, email, ip):
     s.add(LoginFail(email=email, ip=ip)); s.query(LoginFail).filter(LoginFail.at < dt.datetime.utcnow() - dt.timedelta(days=1)).delete(); s.commit()
 def clear_fails(s, email, ip): s.query(LoginFail).filter_by(email=email, ip=ip).delete(); s.commit()
-def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": u.role != "student" or bool(u.program_id), "lang": u.lang or "en"}
+def program_level(p): return "school" if p is not None and p.pattern == "grade" else "college"  # school programs count in grades
+def stage_of(u):  # school or college: from the program a student is placed in, else what they chose at sign-up; staff have none
+    if is_staff(u): return None
+    s = object_session(u); p = s.get(Program, u.program_id) if s is not None and u.program_id else None
+    return program_level(p) if p is not None else (u.level if u.level in ("school", "college") else None)
+def guardian_students(s, gid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.student_id == User.id).filter(GuardianLink.guardian_id == gid, GuardianLink.status == status).all()
+def guardians_of(s, sid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.guardian_id == User.id).filter(GuardianLink.student_id == sid, GuardianLink.status == status).all()
+def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": is_staff(u) or bool(u.program_id), "lang": u.lang or "en",
+                     "username": u.username, "relation": u.relation, "level": stage_of(u)}
 @app.post("/api/login")
 def login(b: Login, request: Request, s: Session = Depends(db)):
     global DUMMY
     email, ip = b.email.strip().lower()[:190], client_ip(request); throttle(s, email, ip)
-    u = s.query(User).filter_by(email=email).first()
+    u = s.query(User).filter_by(email=email).first() if "@" in email else s.query(User).filter_by(username=email).first()  # a child signs in with the name their parent or teacher gave them
     if DUMMY is None: DUMMY = hp("not-a-real-password")
     if not vp(b.password, u.pw if u else DUMMY) or not u: note_fail(s, email, ip); raise HTTPException(401, "Wrong email or password")
     if not u.active: raise HTTPException(403, "Account disabled. Ask your admin.")
@@ -773,7 +797,7 @@ ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 
 def sem_no(name):  # "Semester 1", "Sem I", "S3" -> number. Only used to fill semesters.semester_no once (migration 0010, CSV import)
     m = re.search(r"(?<![\w])(?:1[0-2]|[1-9]|xii|xi|ix|x|viii|vii|vi|iv|v|iii|ii|i)(?![\w])", name or "", re.I)
     return None if not m else (int(m.group(0)) if m.group(0).isdigit() else ROMAN[m.group(0).lower()])
-def scoped(u): return u.role == "student"  # a student without a program sees no programs, courses or topics until an admin enrols them
+def scoped(u): return not is_staff(u)  # a student without a program sees no programs, courses or topics until an admin enrols them
 def sem_visible(u, sem):  # a student sees their own program, up to and including their current semester
     if not scoped(u): return True
     if sem.program_id != u.program_id: return False
@@ -1927,7 +1951,7 @@ def my_insights(u: User = Depends(me), s: Session = Depends(db)):
         return ok_course[cid]
     qs = [(q, quiz_course_id(q, s)) for q in s.query(Quiz).filter(Quiz.published == True, Quiz.id.in_(s.query(Attempt.quiz_id).filter(Attempt.user_id == u.id)))]  # noqa: E712
     qids = [q.id for q, cid in qs if cid and allowed(cid)]
-    areas = areas_for(latest_batches(s, [u.id], qids), s, u.role != "student", u.id)
+    areas = areas_for(latest_batches(s, [u.id], qids), s, is_staff(u), u.id)
     by = defaultdict(list)
     for a in areas: by[a["course_id"]].append(a)
     courses = [{"course_id": cid, "course": L[0]["course"], "percent": round(100 * sum(a["correct"] for a in L) / sum(a["total"] for a in L)), "areas": L} for cid, L in by.items()]
@@ -2099,7 +2123,7 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     score = sum(r["ok"] for r in results); pct = round(100 * score / len(qs))
     detail = [[x.id, int(r["ok"]), a] for x, r, a in zip(qs, results, b.answers)]
     at = Attempt(quiz_id=qid, user_id=u.id, score=score, total=len(qs), percent=pct, detail=json.dumps(detail)); s.add(at); s.commit()
-    areas = areas_for([(u.id, q, {x.id: x for x in qs}, detail)], s, u.role != "student", u.id)
+    areas = areas_for([(u.id, q, {x.id: x for x in qs}, detail)], s, is_staff(u), u.id)
     return {"attempt_id": at.id, "score": score, "total": len(qs), "percent": pct, "passed": pct >= q.pass_percent, "pass_percent": q.pass_percent, "reveal": key, "results": results, "areas": areas,
             "summary": area_summary(areas)}
 
@@ -2261,7 +2285,7 @@ def attempt_detail(aid: int, u: User = Depends(me), s: Session = Depends(db)):
         if not x: gone += 1; continue
         items.append({**question_view(x), "ok": bool(d[1]), "chosen": d[2] if len(d) > 2 else None, "chosen_known": len(d) > 2, "area": topics.get(x.topic_id) or x.area or "",
                       **({"correct": x.correct, "explanation": x.explanation or ""} if key else {})})
-    areas = areas_for([(a.user_id, q, qm, detail)], s, u.role != "student", a.user_id) if detail else []
+    areas = areas_for([(a.user_id, q, qm, detail)], s, is_staff(u), a.user_id) if detail else []
     p = s.get(User, a.user_id); co = s.get(Course, cid) if cid else None
     return {**attempt_row(a, q), "quiz_id": q.id, "quiz": q.title, "course": co.name if co else "", "user": p.name if p else "", "user_id": a.user_id, "pass_percent": q.pass_percent,
             "reveal": key, "questions": items, "changed": gone, "no_detail": not detail, "areas": areas, "summary": area_summary(areas)}
@@ -2300,7 +2324,7 @@ def my_scores(u: User = Depends(me), s: Session = Depends(db)):
     for p in tree(u, s):
         for sm in p["semesters"]:
             for c in sm["courses"]:
-                if c["id"] in seen or (c["archived"] and u.role == "student"): continue
+                if c["id"] in seen or (c["archived"] and not is_staff(u)): continue
                 seen.add(c["id"])
                 found = [(q, "") for q in c.get("tests", [])] + [(q, un["name"]) for un in c["units"] for q in un["quizzes"]]
                 tests = []
@@ -2761,14 +2785,14 @@ async def explain_highlight(hid: int, u: User = Depends(me), s: Session = Depend
     got = line_saved(s, t, u, h.text, prompt)
     if got:
         row = s.get(AICache, got["id"]); note_use(s, u, "line", got["id"], row.author_id if row else None); return {"explain": got}
-    if u.role == "student" and s.query(func.count(StepLog.id)).filter(StepLog.user_id == u.id, StepLog.kind == "line", StepLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= LINE_DAILY:
+    if not is_staff(u) and s.query(func.count(StepLog.id)).filter(StepLog.user_id == u.id, StepLog.kind == "line", StepLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= LINE_DAILY:
         raise HTTPException(429, f"You have used today's {LINE_DAILY} highlight explanations. Your highlight is saved; ask again tomorrow.")
     f = full(t, s)  # like a doubt: the names and the passage only, never the topic's notes
     msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe passage the student highlighted:\n{h.text[:600]}"
     text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=STEPS["line"], kind="line", topic_id=t.id)
     d = step_reply("line", text)
     if not d: raise HTTPException(502, "The AI's answer could not be read. Try again.")
-    if u.role == "student": s.add(StepLog(user_id=u.id, topic_id=t.id, kind="line"))
+    if not is_staff(u): s.add(StepLog(user_id=u.id, topic_id=t.id, kind="line"))
     row = AICache(topic_id=t.id, kind="line", chash=line_hash(t, prompt, h.text), text=text, tokens=tokens, author_id=author_of(u))
     try: s.add(row); s.commit()
     except Exception: s.rollback(); row = None
@@ -3300,7 +3324,7 @@ async def doubt_ask(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = De
     key = key_or_fail(u, s); lite_search_or_fail(u, s); prompt, qh = doubt_key(u, t, phrase, s)
     hit = s.query(DoubtAnswer).filter_by(qhash=qh).first()
     if hit: hit.hits += 1; s.commit(); note_use(s, u, "doubt", hit.id, hit.author_id); return {"text": hit.text, "cached": True}
-    if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= DOUBT_DAILY:  # noqa: E712
+    if not is_staff(u) and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= DOUBT_DAILY:  # noqa: E712
         raise HTTPException(429, f"You have used today's {DOUBT_DAILY} AI doubts. Try again tomorrow, or reread the passage above.")
     f = full(t, s)
     msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe student does not understand this phrase:\n{phrase}"
@@ -3345,7 +3369,7 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
     if crisis(q) or crisis(text): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "support": True}
     see = b.diagram and b.image and vision_on(u, s)
     if not see and not text: raise HTTPException(400, "No text was read from the photo. Type what it says, or retake it closer and in good light.")
-    if u.role == "student" and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind.in_(("photo", "vision")), AIEgress.ok == True,  # noqa: E712
+    if not is_staff(u) and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind.in_(("photo", "vision")), AIEgress.ok == True,  # noqa: E712
                                                                     AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= PHOTO_DAILY:
         raise HTTPException(429, f"You have used today's {PHOTO_DAILY} photo questions. Try again tomorrow.")
     if not see: key_or_fail(u, s)  # before counting a lite search, so a missing key doesn't use one up
@@ -3471,7 +3495,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
         if hit: hit.hits += 1; s.commit(); note_use(s, u, "search", hit.id, hit.author_id); return {"text": hit.text, "cached": True, "id": hit.id}
-    if u.role == "student" and s.query(func.count(SearchLog.id)).filter(SearchLog.user_id == u.id, SearchLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= SEARCH_DAILY:
+    if not is_staff(u) and s.query(func.count(SearchLog.id)).filter(SearchLog.user_id == u.id, SearchLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= SEARCH_DAILY:
         raise HTTPException(429, f"You have used today's {SEARCH_DAILY} AI searches. Try again tomorrow, or browse your courses.")
     who = ""
     if u.role == "student" and u.program_id:
@@ -3625,12 +3649,12 @@ STUDY_PROMPTS = {
 }
 
 def study_ai_left(u, s):  # AI requests left today for own-course help; None when not limited
-    if u.role != "student" or (u.self_registered and u.ai_key): return None
+    if is_staff(u) or (u.self_registered and u.ai_key): return None
     return max(0, STUDY_AI_DAILY - s.query(func.count(StudyAICall.id)).filter(StudyAICall.user_id == u.id, StudyAICall.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar())
 def study_ai_status(u, s): return {"ai_available": bool(key_for(u, s)), "ai_left": study_ai_left(u, s), "ai_own_key": bool(u.self_registered)}
 def study_ai_key(u, s):
     key = key_or_fail(u, s)
-    if not (u.self_registered and u.ai_key) and u.role == "student":
+    if not (u.self_registered and u.ai_key) and not is_staff(u):
         if s.query(func.count(StudyAICall.id)).filter(StudyAICall.user_id == u.id, StudyAICall.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= STUDY_AI_DAILY:
             raise HTTPException(429, f"You have used today's {STUDY_AI_DAILY} AI requests for your own courses. Try again tomorrow.")
     return key
