@@ -7,7 +7,8 @@ import kotlinx.serialization.json.JsonObject
 // The shapes the server sends. Only what the app shows is read; anything new the server adds is ignored.
 
 @Serializable data class Config(val name: String = "Zigora", val self_registration: Boolean = false, val email_reset: Boolean = false, val version: String? = null)
-@Serializable data class Me(val id: Int, val name: String, val role: String, val must_change: Boolean = false, val self_registered: Boolean = false, val placed: Boolean = true, val lang: String = "en")
+@Serializable data class Me(val id: Int, val name: String, val role: String, val must_change: Boolean = false, val self_registered: Boolean = false, val placed: Boolean = true, val lang: String = "en",
+                            val username: String? = null, val relation: String? = null, val level: String? = null, val ai_off: Boolean = false)  // relation: a guardian's "parent" or "teacher"; ai_off: a school student with no parent's or teacher's key
 @Serializable data class Msg(val message: String = "", val ok: Boolean = true)
 @Serializable data class RegStatus(val open: Boolean = false, val domains: List<String> = emptyList())
 @Serializable data class LoginOut(val token: String, val user: Me)
@@ -32,7 +33,7 @@ import kotlinx.serialization.json.JsonObject
                                    val my_notes: String? = null, val frame_url: String? = null, val status: String = "not_started", val learning_due_at: String? = null,
                                    val bookmarked: Boolean = false, val nav: Nav? = null)
 @Serializable data class Learning(val status: String = "not_started")
-@Serializable data class AiStatus(val available: Boolean = false, val own_key: Boolean = false, val vision: Boolean = false, val ocr: Boolean = false, val plan: String = "college")
+@Serializable data class AiStatus(val available: Boolean = false, val own_key: Boolean = false, val vision: Boolean = false, val ocr: Boolean = false, val plan: String = "college", val off: Boolean = false)
 @Serializable data class You(val order: List<String> = emptyList(), val question_first: Boolean = false, val level: String? = null)
 /** a topic step: the gist, why, example, exam angle, quick check or "more simply". data holds the step's own JSON */
 @Serializable data class Step(val text: String = "", val cached: Boolean = false, val id: Int? = null, val data: JsonObject? = null, val you: You? = null, val own_notes: Boolean = false)
@@ -137,3 +138,14 @@ import kotlinx.serialization.json.JsonObject
                                     val completed: Boolean = false, val has_explain: Boolean = false, val can_edit: Boolean = false, val ai_available: Boolean = false,
                                     val ai_left: Int? = null, val ai_own_key: Boolean = false, val prev: NavTopic? = null, val next: NavTopic? = null, val position: Int = 0,
                                     val total: Int = 0, val attempts: List<SAttempt> = emptyList())
+
+// ---- sign-up for school or college, parents and teachers (role "guardian") and the students they look after
+@Serializable data class ProgOpt(val id: Int, val name: String, val term: String = "Semester", val terms: List<Int> = emptyList())
+@Serializable data class ProgOpts(val school: List<ProgOpt> = emptyList(), val college: List<ProgOpt> = emptyList())
+@Serializable data class GStudent(val id: Int, val name: String, val username: String? = null, val place: String = "", val status: String = "active", val active: Boolean = true)
+@Serializable data class GStudents(val students: List<GStudent> = emptyList())
+@Serializable data class GCourse(val course: String, val topics: Int = 0, val completed: Int = 0, val opened: Int = 0, val last_active: String? = null,
+                                 val tests: Int = 0, val tests_taken: Int = 0, val test_average: Int? = null)
+@Serializable data class GProgress(val name: String, val username: String? = null, val place: String = "", val courses: List<GCourse> = emptyList())
+@Serializable data class Invitation(val id: Int, val name: String, val relation: String? = null, val institution: String = "")
+@Serializable data class Invitations(val invitations: List<Invitation> = emptyList())

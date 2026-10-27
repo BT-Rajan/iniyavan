@@ -241,7 +241,7 @@ private fun DigestToggle(initial: Boolean) {
 /** My AI key: save or remove a self-registered person's own DeepSeek key (checked with DeepSeek first, stored encrypted) */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MyKeyScreen(back: () -> Unit) {
+fun MyKeyScreen(guardian: Boolean = false, back: () -> Unit) {  // guardian: a parent's or teacher's key, which covers their school students
     val a = api(); val scope = rememberCoroutineScope()
     val k = rememberLoad("key") { get("/me/ai-key", app.zigora.data.KeyState.serializer()) }
     var key by remember { mutableStateOf("") }
@@ -253,7 +253,7 @@ fun MyKeyScreen(back: () -> Unit) {
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Loaded(k) { st ->
                 Text(if (st.key_set) stringResource(R.string.key_on, st.key_hint) else stringResource(R.string.key_off), style = MaterialTheme.typography.titleMedium)
-                Quiet(stringResource(R.string.key_explain))
+                Quiet(if (guardian) tl("Your DeepSeek key powers AI help for the school students linked to you. Usage is billed to your DeepSeek account. The key is stored encrypted and never shown to them.") else stringResource(R.string.key_explain))
                 androidx.compose.material3.OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.deepseek_key)) },
                     placeholder = { Text(stringResource(if (st.key_set) R.string.key_replace else R.string.key_placeholder)) },
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
@@ -267,7 +267,7 @@ fun MyKeyScreen(back: () -> Unit) {
             }
         }
     }
-    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.remove_key_q)) }, text = { Text(stringResource(R.string.remove_key_body)) },
+    if (confirm) AlertDialog(onDismissRequest = { confirm = false }, title = { Text(stringResource(R.string.remove_key_q)) }, text = { Text(if (guardian) tl("AI help turns off for your school students, unless another parent or teacher linked to them has a key.") else stringResource(R.string.remove_key_body)) },
         confirmButton = { TextButton(onClick = { confirm = false; scope.launch { runCatching { a.raw("DELETE", "/me/ai-key") }; k.reload() } }) { Text(stringResource(R.string.remove_key)) } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.cancel)) } })
 }
