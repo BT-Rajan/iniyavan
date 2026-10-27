@@ -1866,5 +1866,11 @@
 "No such invitation": "لا توجد دعوة كهذه",
 "A parent can have up to 8 children here": "يمكن لوليّ الأمر إضافة 8 أطفال كحدّ أقصى هنا",
 "If a student signs in as {who}, they will see your invitation and can accept it.": "إذا كان هناك طالب يسجّل الدخول باسم {who}، فسيرى دعوتك ويمكنه قبولها.",
-"Add between 1 and {n} at a time": "أضف من 1 إلى {n} في كل مرة"
+"Add between 1 and {n} at a time": "أضف من 1 إلى {n} في كل مرة",
+"Password changed. Tell them the new one.": "تم تغيير كلمة المرور. أخبره بكلمة المرور الجديدة.",
+"Forgot their password?": "نسي كلمة المرور؟",
+"They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.": "يسجّل الدخول باسم مستخدم، فلا يوجد بريد إلكتروني لإعادة تعيينها منه. عيّن كلمة مرور جديدة هنا وأخبره بها.",
+"Set a new password": "تعيين كلمة مرور جديدة",
+"Sign in with a username? Ask your parent or teacher to set a new password for you.": "تسجّل الدخول باسم مستخدم؟ اطلب من وليّ أمرك أو معلّمك تعيين كلمة مرور جديدة لك.",
+"This student has their own email and can reset their password from the sign-in page.": "لدى هذا الطالب بريده الإلكتروني الخاص ويمكنه إعادة تعيين كلمة المرور من صفحة تسجيل الدخول."
 }

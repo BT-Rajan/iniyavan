@@ -868,7 +868,18 @@ def student_progress(sid: int, u: User = Depends(guardian_only), s: Session = De
         tids, reads, done, last, qids, bests = course_stats(c, [x], s); b = bests[x.id]
         rows.append({"course": c.name, "topics": len(tids), "completed": done[x.id], "opened": reads[x.id], "last_active": utc_iso(last.get(x.id)),
                      "tests": len(qids), "tests_taken": len(b), "test_average": round(sum(b.values()) / len(b)) if b else None})
-    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows}
+    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows, "can_reset": not x.email}  # a username account: no email to reset from
+class StudentPwIn(BaseModel): password: str
+@app.put("/api/guardian/students/{sid}/password")
+def set_student_password(sid: int, b: StudentPwIn, u: User = Depends(guardian_only), s: Session = Depends(db)):
+    """A child or student who signs in with a username has no email to reset a forgotten password from: a parent or teacher they're linked to sets a new one.
+    Their old sign-ins end, since a token is tied to the password."""
+    if my_link(s, u.id, sid).status != "active": raise HTTPException(403, "The student has not accepted your invitation yet")
+    x = s.get(User, sid)
+    if x.email: raise HTTPException(403, "This student has their own email and can reset their password from the sign-in page.")
+    if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters for the password")
+    if b.password.strip().lower() == (x.username or ""): raise HTTPException(400, "A password can't be the username")
+    x.pw = hp(b.password); x.must_change = False; s.commit(); return {"ok": True}
 @app.get("/api/me/invitations")
 def my_invitations(u: User = Depends(me), s: Session = Depends(db)):
     return {"invitations": [{"id": l.id, "name": g.name, "relation": g.relation, "institution": g.institution or ""} for l, g in invitations(s, u.id)]}
@@ -3144,6 +3155,7 @@ LITE_SEARCH_KINDS = ("search", "photo", "doubt")  # asking the AI a question; ev
 def pro_active(u): return bool(u.pro_until and u.pro_until > dt.datetime.utcnow())
 def ai_plan(u):  # school students: "family" on a parent's or teacher's key, else "off"
     if school_learner(u): return "family" if guardian_key(u, object_session(u)) else "off"
+    if u.role == "guardian": return "own" if u.ai_key else "off"  # a parent or teacher never uses the college's key
     return "college" if not u.self_registered else "own" if u.ai_key else "pro" if pro_active(u) else "lite"
 def lite_limits(s):
     def num(k, d):

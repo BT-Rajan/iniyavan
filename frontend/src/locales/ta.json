@@ -1866,5 +1866,11 @@
 "No such invitation": "அப்படி ஒரு அழைப்பு இல்லை",
 "A parent can have up to 8 children here": "ஒரு பெற்றோர் இங்கு அதிகபட்சம் 8 குழந்தைகளைச் சேர்க்கலாம்",
 "If a student signs in as {who}, they will see your invitation and can accept it.": "{who} என உள்நுழையும் மாணவர் இருந்தால், அவர்கள் உங்கள் அழைப்பைப் பார்த்து ஏற்கலாம்.",
-"Add between 1 and {n} at a time": "ஒரே நேரத்தில் 1 முதல் {n} வரை சேர்க்கவும்"
+"Add between 1 and {n} at a time": "ஒரே நேரத்தில் 1 முதல் {n} வரை சேர்க்கவும்",
+"Password changed. Tell them the new one.": "கடவுச்சொல் மாற்றப்பட்டது. புதியதை அவர்களிடம் சொல்லுங்கள்.",
+"Forgot their password?": "அவர்கள் கடவுச்சொல்லை மறந்துவிட்டார்களா?",
+"They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.": "அவர்கள் பயனர்பெயருடன் உள்நுழைவதால், மீட்டமைக்க மின்னஞ்சல் இல்லை. இங்கே புதியதை அமைத்து அவர்களிடம் சொல்லுங்கள்.",
+"Set a new password": "புதிய கடவுச்சொல்லை அமை",
+"Sign in with a username? Ask your parent or teacher to set a new password for you.": "பயனர்பெயருடன் உள்நுழைகிறீர்களா? புதிய கடவுச்சொல்லை அமைக்க உங்கள் பெற்றோர் அல்லது ஆசிரியரிடம் கேளுங்கள்.",
+"This student has their own email and can reset their password from the sign-in page.": "இந்த மாணவருக்குச் சொந்த மின்னஞ்சல் உள்ளது; உள்நுழைவுப் பக்கத்திலிருந்து கடவுச்சொல்லை மீட்டமைக்கலாம்."
 }

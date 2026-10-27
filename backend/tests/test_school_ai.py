@@ -45,4 +45,4 @@ def test_others_keep_the_rules_they_had(env):
     assert key(i["Added"]) == "sk-college-key-0000000000"  # a school student the admin added uses the school's own key
     assert key(i["Mum"]) is None  # a parent never uses the college's key themselves
     set_key(i["Mum"], "sk-parent-key-2222222222222"); assert key(i["Mum"]) == "sk-parent-key-2222222222222"
-    assert env.c.get("/api/ai/status", headers=login(env, "mum@x.com")).json()["off"] is False
+    assert env.c.get("/api/ai/status", headers=login(env, "mum@x.com")).json()["off"] is False and env.c.get("/api/ai/status", headers=login(env, "mum@x.com")).json()["plan"] == "own"

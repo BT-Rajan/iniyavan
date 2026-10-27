@@ -103,7 +103,7 @@ function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
   const go=async()=>{setB(true);try{const r=await api('/login',{method:'POST',body:f});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
   const forgot=async()=>{setB(true);try{setSent((await api('/forgot',{method:'POST',body:{email:f.email}})).message)}catch(e){toast(e.message)}setB(false)}
   if(mode==='register')return <Register onIn={onIn} toast={toast} msg={msg} appName={appName} logo={logo} back={()=>setMode('in')}/>
-  if(mode==='forgot')return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Forgot your password?")}</h1>{sent?<p>{sent}</p>:<><p>{tl("Enter your account email and we will send a link to choose a new one.")}</p>
+  if(mode==='forgot')return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Forgot your password?")}</h1>{sent?<p>{sent}</p>:<><p>{tl("Enter your account email and we will send a link to choose a new one.")}</p><p className="known">{tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>
     <label>{tl("Email")}</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
     <button className="btn" disabled={b||!f.email} onClick={forgot}>{tl("Send reset link")}</button></>}
     <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>{tl("Back to sign in")}</button><Toast msg={msg}/></div>
@@ -111,7 +111,7 @@ function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
     <label>{tl("Email or username")}</label><input type="text" autoCapitalize="none" autoComplete="username" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
     <label>{tl("Password")}</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>{tl("Sign in")}</button>
-    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>{tl("Forgot password?")}</button>:<p className="known">{tl("Forgot your password? Ask your admin to reset it.")}</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>{tl("Create an account")}</button>}<Toast msg={msg}/></div>}
+    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>{tl("Forgot password?")}</button>:<p className="known">{tl("Forgot your password? Ask your admin to reset it.")} {tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>{tl("Create an account")}</button>}<Toast msg={msg}/></div>}
 
 const KID={name:'',username:'',password:'',program_id:'',semester:''}
 function Place({opts,level,v,set,id}){  // a program of the chosen level and one of its open terms; "not listed" leaves it for an admin
@@ -205,11 +205,15 @@ function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher
       {!parent&&<button className="btn ghost" onClick={()=>setAdd([...add,{...KID,program_id:add[add.length-1].program_id,semester:add[add.length-1].semester}])}>{tl("Add another student")}</button>}
       <button className="btn" disabled={b||!ok} onClick={save}>{tl("Save")}</button><button className="btn ghost" onClick={()=>setAdd(null)}>{tl("Cancel")}</button></Sheet>}</div></>}
 function StudentProgress({id,back,toast}){  // what a parent or teacher sees: per course, topics learned and opened, tests, last studied. Never their notes
-  const [d,setD]=useState(null);useEffect(()=>{api(`/guardian/students/${id}/progress`).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  const [d,setD]=useState(null),[pw,setPw]=useState(''),[b,setB]=useState(false);useEffect(()=>{api(`/guardian/students/${id}/progress`).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  const setPass=async()=>{setB(true);try{await api(`/guardian/students/${id}/password`,{method:'PUT',body:{password:pw}});setPw('');toast(tl("Password changed. Tell them the new one."))}catch(e){toast(e.message)}setB(false)}
   return <><Bar title={d?d.name:tl("Loading")} sub={d?.place} back={back}/><div className="main">
     {!d&&<Skeleton rows={2}/>}{d&&!d.courses.length&&<p className="known">{tl("No courses yet. They appear once an admin places them in a program.")}</p>}
     {d?.courses.map(c=><div className="row" key={c.course}><div style={{flex:1}}>{c.course}<small>{tl("{done} of {n} topics learned · {opened} opened",{done:c.completed,n:c.topics,opened:c.opened})}{c.tests?' · '+tl("tests {taken} of {n}",{taken:c.tests_taken,n:c.tests})+(c.test_average!=null?', '+tl("average {p}%",{p:c.test_average}):''):''}{' · '+(c.last_active?tl("last studied {when}",{when:day(c.last_active)}):tl("not started yet"))}</small><Bar2 v={c.topics?100*c.completed/c.topics:0}/></div></div>)}
-    {d&&<p className="known">{tl("You see progress only, never their own notes or highlights.")}</p>}</div></>}
+    {d&&<p className="known">{tl("You see progress only, never their own notes or highlights.")}</p>}
+    {d?.can_reset&&<><h3 className="sec">{tl("Forgot their password?")}</h3><p className="known" style={{marginTop:0}}>{tl("They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.")}</p>
+      <label htmlFor="spw">{tl("New password")}</label><input id="spw" type="password" autoComplete="new-password" value={pw} onChange={e=>setPw(e.target.value)}/>
+      <button className="btn ghost" disabled={b||pw.length<8} onClick={setPass}>{tl("Set a new password")}</button></>}</div></>}
 function Invitations(){  // a teacher asked to follow this student's progress; nothing is shared until they accept
   const [list,setList]=useState([]),load=()=>api('/me/invitations').then(r=>setList(r.invitations)).catch(()=>{});useEffect(()=>{load()},[])
   const answer=async(x,a)=>{try{await api(`/me/invitations/${x.id}/${a}`,{method:'POST'});load()}catch{/* the list reloads either way */load()}}
