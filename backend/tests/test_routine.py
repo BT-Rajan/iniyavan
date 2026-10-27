@@ -27,6 +27,7 @@ def test_no_routine_and_validation(env):
         assert env.c.put("/api/me/routine", headers=env.stu, json={"minutes": 30, **bad}).status_code == 400
     assert routine(env, h=env.fac).status_code == 403 and routine(env, h=env.admin).status_code == 403
     v = routine(env, minutes=45, at="19:30").json(); assert v["routine"] == {"days": ALL, "minutes": 45, "at": "19:30", "new_per_session": 2}
+    assert v["next_day"] == main.next_study_day(ALL, today()) and v["next_day"]["in"] == 1  # the app shows this instead of working it out from the phone's clock
 
 def test_session_picks_started_then_deadline_then_each_course_in_turn(env):
     i = setup(env); env.c.post(f"/api/topics/{i['t']['Rusting']}/read", headers=env.stu)  # started
@@ -110,3 +111,9 @@ def test_home_streak_uses_the_routine(env):
     assert env.c.get("/api/me/today", headers=env.stu).json()["streak"] == 1
     rest = list("1111111"); rest[(t - dt.timedelta(days=2)).weekday()] = "0"; routine(env, days="".join(rest))
     assert env.c.get("/api/me/today", headers=env.stu).json()["streak"] == 2 and env.c.get("/api/study/me", headers=env.stu).json()["streak"] == 2
+
+def test_next_study_day_is_counted_by_the_server_day():
+    fri = dt.date(2026, 10, 23)  # a Friday
+    assert main.next_study_day("1111111", fri) == {"in": 1, "weekday": 5}  # tomorrow, Saturday
+    assert main.next_study_day("1000100", fri) == {"in": 3, "weekday": 0}  # Mon and Fri: the next is Monday
+    assert main.next_study_day("0000100", fri) == {"in": 7, "weekday": 4}  # only Fridays: a week away

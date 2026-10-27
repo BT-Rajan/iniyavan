@@ -75,6 +75,7 @@ import app.zigora.data.Highlight
 import app.zigora.data.Highlights
 import app.zigora.data.Insights
 import app.zigora.data.LearnerOut
+import app.zigora.data.NextDay
 import app.zigora.data.PlanOut
 import app.zigora.data.ProgramNode
 import app.zigora.data.Revision
@@ -380,7 +381,8 @@ fun QImage(src: String) { if (src.isNotEmpty()) AsyncImage(api().base + src, nul
 // ---- the study routine and today's session
 
 private fun weekday(i: Int) = DayOfWeek.of(i + 1).getDisplayName(TextStyle.SHORT, Locale.getDefault())  // Monday first, as the server counts
-private fun nextStudyDay(days: String): String {
+private fun nextStudyDay(days: String, next: NextDay?): String {
+    if (next != null && next.inDays > 0) return if (next.inDays == 1) tl("tomorrow") else weekday(next.weekday)  // the server counts days the way the college does
     for (k in 1..7) { val d = LocalDate.now().plusDays(k.toLong()); val i = d.dayOfWeek.value - 1; if (days.getOrNull(i) == '1') return if (k == 1) tl("tomorrow") else weekday(i) }
     return ""
 }
@@ -464,7 +466,7 @@ fun SessionCard(v: SessionOut, onRoutine: () -> Unit, open: (SessionItem) -> Uni
             when {
                 ss == null -> {
                     Text(tl("Rest day"), style = MaterialTheme.typography.headlineSmall)
-                    Text(tl("Your next session is {nextStudyDay}.", "nextStudyDay" to nextStudyDay(r.days)))
+                    Text(tl("Your next session is {nextStudyDay}.", "nextStudyDay" to nextStudyDay(r.days, v.next_day)))
                     Button(enabled = !busy, onClick = { scope.launch {
                         busy = true; runCatching { a.send("POST", "/me/session", null, SessionOut.serializer()) }.onSuccess(changed); busy = false
                     } }) { Text(tl("Study anyway")) }
@@ -483,7 +485,7 @@ fun SessionCard(v: SessionOut, onRoutine: () -> Unit, open: (SessionItem) -> Uni
                     if (!ss.done && left.isNotEmpty()) Button(onClick = { open(left[0]) }, Modifier.fillMaxWidth()) {
                         Text((if (left.size == ss.items.size) tl("Start") else tl("Continue")) + ": " + left[0].title, maxLines = 1)
                     }
-                    if (ss.done) Text(tl("See you {nextStudyDay}.", "nextStudyDay" to nextStudyDay(r.days)))
+                    if (ss.done) Text(tl("See you {nextStudyDay}.", "nextStudyDay" to nextStudyDay(r.days, v.next_day)))
                 }
             }
             v.plan?.let { p ->

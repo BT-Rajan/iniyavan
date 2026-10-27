@@ -1,5 +1,6 @@
 package app.zigora.data
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -101,7 +102,8 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class RoutineOut(val days: String = "1111110", val minutes: Int = 30, val at: String? = null, val new_per_session: Int = 1)
 @Serializable data class PlanOut(val left: Int = 0, val finish: String? = null, val late: Int = 0, val advice: String? = null)
 @Serializable data class SessionOut(val routine: RoutineOut? = null, val session: DaySession? = null, val planned_today: Boolean = false, val studied_today: Boolean = false,
-                                    val missed: Int = 0, val streak: Int = 0, val plan: PlanOut? = null)
+                                    val missed: Int = 0, val streak: Int = 0, val plan: PlanOut? = null, val next_day: NextDay? = null)
+@Serializable data class NextDay(@SerialName("in") val inDays: Int = 0, val weekday: Int = 0)  // the next study day, counted by the server's day (weekday 0 = Monday)
 
 @Serializable data class Source(val name: String = "", val kind: String = "", val words: Int = 0, val paras: Int = 0, val status: String = "", val done: Int = 0, val pages: Int = 0, val error: String = "", val note: String = "")
 @Serializable data class SylTopic(val id: Int, val title: String, val has_notes: Boolean = false)
