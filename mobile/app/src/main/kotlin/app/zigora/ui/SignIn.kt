@@ -47,6 +47,7 @@ import app.zigora.data.Config
 import app.zigora.data.LoginOut
 import app.zigora.data.Me
 import app.zigora.data.Msg
+import app.zigora.data.ProgOpts
 import app.zigora.data.RegStatus
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
@@ -69,6 +70,12 @@ fun SignIn(done: (Me) -> Unit) {
     var info by rememberSaveable { mutableStateOf("") }
     val reg = rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver(save = { it.toList() }, restore = { it.toMutableStateList() })) { mutableStateListOf("", "", "", "", "") } // name, institution, ID, phone, (unused)
     var domains by remember { mutableStateOf(emptyList<String>()) }
+    var level by rememberSaveable { mutableStateOf("") }  // school or college
+    var who by rememberSaveable { mutableStateOf("") }  // student, parent or teacher
+    var prog by rememberSaveable { mutableStateOf<Int?>(null) }
+    var sem by rememberSaveable { mutableStateOf<Int?>(null) }
+    val kids = remember { mutableStateListOf(NewStudent()) }
+    var opts by remember { mutableStateOf(ProgOpts()) }
     var code by rememberSaveable { mutableStateOf("") }
     var wait by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(wait) { if (wait > 0) { kotlinx.coroutines.delay(1000); wait-- } }
@@ -95,7 +102,7 @@ fun SignIn(done: (Me) -> Unit) {
         app.store.token = r.token; done(r.user)
     }
     if (!editing && college == null) LaunchedEffect(Unit) { check() }
-    LaunchedEffect(mode) { if (mode == "register") runCatching { domains = app.api.get("/register/status", RegStatus.serializer()).domains } }
+    LaunchedEffect(mode) { if (mode == "register") { runCatching { domains = app.api.get("/register/status", RegStatus.serializer()).domains }; runCatching { opts = app.api.get("/register/options", ProgOpts.serializer()) } } }
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
@@ -106,7 +113,7 @@ fun SignIn(done: (Me) -> Unit) {
             Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 val emailField = @Composable {
                     OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.EmailAddress + ContentType.Username },
-                        label = { Text(stringResource(R.string.email)) }, singleLine = true,
+                        label = { Text(if (mode == "in") tl("Email or username") else stringResource(R.string.email)) }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next))
                 }
                 val error = @Composable { if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
@@ -121,25 +128,55 @@ fun SignIn(done: (Me) -> Unit) {
                         }
                         back()
                     }
-                    "register" -> {
+                    "register" -> {  // 1. who is studying: school or college
                         Text(stringResource(R.string.create_account), style = MaterialTheme.typography.titleLarge)
-                        Quiet(stringResource(R.string.register_lead) + if (domains.isNotEmpty()) " " + stringResource(R.string.use_institution_email, domains.joinToString(", ") { "@$it" }) else "")
-                        listOf(R.string.full_name to 0, R.string.institution to 1, R.string.id_number to 2).forEach { (l, i) ->
-                            OutlinedTextField(reg[i], { reg[i] = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(l)) }, singleLine = true,
-                                placeholder = if (i == 2) ({ Text(stringResource(R.string.id_number_hint)) }) else null)
+                        Quiet(tl("Who is studying?"))
+                        Pick(tl("A school student"), tl("Grade 1 to Grade 12")) { level = "school"; mode = "who" }
+                        Pick(tl("A college student"), tl("College or university")) { level = "college"; mode = "who" }
+                        back()
+                    }
+                    "who" -> {  // 2. who is signing up
+                        Text(tl("Who is signing up?"), style = MaterialTheme.typography.titleLarge)
+                        Quiet(if (level == "school") tl("For a school student") else tl("For a college student"))
+                        Pick(tl("I'm the student"), tl("An account for me")) { who = "student"; mode = "form" }
+                        Pick(tl("A parent"), tl("Accounts for one or more of my children")) { who = "parent"; mode = "form" }
+                        Pick(tl("A teacher"), tl("I add or invite my students after signing up")) { who = "teacher"; mode = "form" }
+                        TextButton(onClick = { mode = "register" }, modifier = Modifier.fillMaxWidth()) { Text(tl("Back")) }
+                    }
+                    "form" -> {  // 3. the details; a parent adds each child, who signs in with a username
+                        val school = level == "school"
+                        Text(when (who) { "parent" -> tl("Your details"); "teacher" -> tl("Teacher sign-up"); else -> stringResource(R.string.create_account) }, style = MaterialTheme.typography.titleLarge)
+                        Quiet(stringResource(R.string.register_lead) + if (who != "parent" && domains.isNotEmpty()) " " + stringResource(R.string.use_institution_email, domains.joinToString(", ") { "@$it" }) else "")
+                        OutlinedTextField(reg[0], { reg[0] = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.full_name)) }, singleLine = true)
+                        if (who != "parent") OutlinedTextField(reg[1], { reg[1] = it }, Modifier.fillMaxWidth(), label = { Text(if (school) tl("School") else tl("College")) }, singleLine = true)
+                        if (who == "student") {
+                            OutlinedTextField(reg[2], { reg[2] = it }, Modifier.fillMaxWidth(), label = { Text(if (school) tl("Roll number (optional)") else stringResource(R.string.id_number)) },
+                                singleLine = true, placeholder = { Text(stringResource(R.string.id_number_hint)) })
+                            PlacePicker(opts, level, prog, sem) { p, s -> prog = p; sem = s }
                         }
                         emailField()
                         OutlinedTextField(reg[3], { reg[3] = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.PhoneNumber }, label = { Text(stringResource(R.string.phone)) },
                             singleLine = true, placeholder = { Text("+91 98765 43210") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
                         OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.NewPassword }, label = { Text(stringResource(R.string.password)) },
-                            singleLine = true, visualTransformation = PasswordVisualTransformation(), supportingText = { Text(stringResource(R.string.register_password_note)) })
+                            singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                            supportingText = { Text(if (who == "student" && !school) stringResource(R.string.register_password_note) else tl("At least 8 characters.")) })
+                        if (who == "parent") {
+                            Text(tl("Your children"), style = MaterialTheme.typography.titleMedium)
+                            Quiet(tl("Each child signs in with their own username and password. They don't need an email."))
+                            StudentRows(kids, opts, level, { n -> tl("Child {n}", "n" to n) }, tl("Add another child"), 8)
+                        }
                         error()
-                        val ok = reg.take(4).all { it.isNotBlank() } && email.isNotBlank() && pw.isNotEmpty()
+                        val ok = reg[0].isNotBlank() && email.isNotBlank() && reg[3].isNotBlank() && pw.isNotEmpty() && (who == "parent" || reg[1].isNotBlank()) &&
+                                 (who != "student" || school || reg[2].isNotBlank()) && (who != "student" || prog == null || sem != null) && (who != "parent" || kids.all { it.ok })
                         Button(enabled = !busy && ok, modifier = Modifier.fillMaxWidth(), onClick = { act {
-                            info = app.api.send("POST", "/register/start", buildJsonObject { put("name", reg[0]); put("institution", reg[1]); put("id_number", reg[2]); put("email", email.trim()); put("phone", reg[3]); put("password", pw) }, Msg.serializer()).message
+                            info = app.api.send("POST", "/register/start", buildJsonObject {
+                                put("name", reg[0]); put("institution", if (who == "parent") "" else reg[1]); put("id_number", if (who == "student") reg[2] else ""); put("email", email.trim()); put("phone", reg[3]); put("password", pw)
+                                put("level", level); put("who", who); put("program_id", if (who == "student") prog else null); put("semester", if (who == "student") sem else null)
+                                put("children", studentsJson(if (who == "parent") kids else emptyList()))
+                            }, Msg.serializer()).message
                             code = ""; wait = 30; mode = "code"
                         } }) { Text(stringResource(R.string.send_me_code)) }
-                        back()
+                        TextButton(onClick = { mode = "who"; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(tl("Back")) }
                     }
                     "code" -> {
                         Text(stringResource(R.string.enter_code), style = MaterialTheme.typography.titleLarge)
@@ -155,7 +192,7 @@ fun SignIn(done: (Me) -> Unit) {
                         TextButton(enabled = wait == 0, modifier = Modifier.fillMaxWidth(), onClick = { act {
                             app.api.raw("POST", "/register/resend", buildJsonObject { put("email", email.trim()) }); wait = 30; code = ""; info = app.getString(R.string.new_code_coming)
                         } }) { Text(if (wait > 0) stringResource(R.string.new_code_in, wait) else stringResource(R.string.send_new_code)) }
-                        TextButton(onClick = { mode = "register"; code = ""; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.change_my_details)) }
+                        TextButton(onClick = { mode = "form"; code = ""; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.change_my_details)) }
                     }
                     else -> {
                         Text(stringResource(R.string.signin_lead), Modifier.fillMaxWidth().padding(bottom = 8.dp), style = MaterialTheme.typography.bodyLarge,
@@ -183,6 +220,12 @@ fun SignIn(done: (Me) -> Unit) {
             }
         }
     }
+}
+
+/** a big choice on the sign-up steps: a title and a line under it */
+@Composable
+private fun Pick(title: String, sub: String, onClick: () -> Unit) = Panel(onClick = onClick) {
+    Text(title, style = MaterialTheme.typography.titleMedium); Quiet(sub)
 }
 
 @Composable

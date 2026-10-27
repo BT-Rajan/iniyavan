@@ -73,7 +73,12 @@ fun coursesOf(tree: List<ProgramNode>): List<CourseNode> {
     return out.values.toList()
 }
 
-fun firstName(n: String) = n.trim().split(" ").firstOrNull().orEmpty()
+fun firstName(n: String): String {  // as on the web: a title stays with the surname ("Dr. A. Kumar" -> "Dr. Kumar"), skipping initials
+    val w = n.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    if (w.isEmpty()) return ""
+    if (!Regex("^(dr|prof|mr|mrs|ms|miss)\\.?$", RegexOption.IGNORE_CASE).matches(w[0])) return w[0]
+    return w.drop(1).firstOrNull { it.replace(".", "").length > 1 }?.let { w[0] + " " + it } ?: w[0]
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,13 +93,14 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
     val session = rememberLoad("session") { get("/me/session", app.zigora.data.SessionOut.serializer()) }
     var sess by remember { mutableStateOf<app.zigora.data.SessionOut?>(null) }
     androidx.compose.runtime.LaunchedEffect(session.state) { (session.state as? Load.Ok)?.value?.let { sess = it } }
+    val aiOff = rememberAiOff()
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val h = LocalTime.now().hour
     val hi = stringResource(if (h < 12) R.string.good_morning else if (h < 17) R.string.good_afternoon else R.string.good_evening, firstName(me.name))
     Scaffold(Modifier.nestedScroll(scroll.nestedScrollConnection), topBar = {
         LargeTopAppBar(title = { Text(hi) }, scrollBehavior = scroll, actions = {
             IconButton(onClick = openSearch) { Icon(Icons.Outlined.Search, stringResource(R.string.tab_search)) }
-            IconButton(onClick = openPhoto) { Icon(Icons.Outlined.CameraAlt, stringResource(R.string.ask_photo)) }
+            if (!aiOff) IconButton(onClick = openPhoto) { Icon(Icons.Outlined.CameraAlt, stringResource(R.string.ask_photo)) }  // asking from a photo is AI
             val unread = (notes.state as? Load.Ok)?.value?.items?.count { it.unread } ?: 0
             IconButton(onClick = openNotes) {
                 BadgedBox(badge = { if (unread > 0) Badge { Text("$unread") } }) { Icon(Icons.Outlined.Notifications, stringResource(R.string.notifications)) }
@@ -104,6 +110,7 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
         PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload(); session.reload() }, modifier = Modifier.padding(pad)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 UpdateCard()
+                InvitationsCard()
                 sess?.let { SessionCard(it, openRoutine, openSession) { n -> sess = n } }
                 (today.state as? Load.Ok)?.value?.takeIf { sess?.routine == null }?.let { t ->  // with a routine, its session says what is next
                     val f = t.focus.filter { it.kind == "resume" }.maxByOrNull { it.last_read.orEmpty() } ?: t.focus.firstOrNull { it.kind == "next" }

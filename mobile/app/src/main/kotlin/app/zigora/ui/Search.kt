@@ -73,10 +73,11 @@ fun SearchScreen(initial: String, back: () -> Unit, openTopic: (Int) -> Unit, op
         try { answer = a.send("POST", "/search/ai", buildJsonObject { put("q", q.trim()); put("refresh", refresh) }, Answer.serializer()) } catch (e: Exception) { msg = e.message.orEmpty() }
         asking = false
     }
+    val aiOff = rememberAiOff()  // a school student with no parent's or teacher's key: topics only
     LaunchedEffect(initial) { if (initial.isNotBlank()) look() else focus.requestFocus() }
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_search)) },
         navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } }, actions = {
-        IconButton(onClick = openPhoto) { Icon(Icons.Outlined.CameraAlt, stringResource(R.string.ask_photo)) } }) }) { pad ->
+        if (!aiOff) IconButton(onClick = openPhoto) { Icon(Icons.Outlined.CameraAlt, stringResource(R.string.ask_photo)) } }) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true, placeholder = { Text(stringResource(R.string.search_hint)) },
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
@@ -96,7 +97,8 @@ fun SearchScreen(initial: String, back: () -> Unit, openTopic: (Int) -> Unit, op
                 }
                 Gap(8)
                 val ans = answer
-                if (ans == null) {
+                if (aiOff) Quiet(tl(AI_OFF))
+                else if (ans == null) {
                     if (!f.confident || f.results.isEmpty()) Quiet(stringResource(R.string.not_covered))
                     FilledTonalButton(onClick = { askAi(false) }, enabled = !asking) {
                         Icon(Icons.Outlined.AutoAwesome, null); Text("  " + stringResource(if (asking) R.string.thinking else R.string.ask_ai))

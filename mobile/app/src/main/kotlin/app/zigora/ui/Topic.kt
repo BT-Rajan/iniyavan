@@ -134,8 +134,9 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
             Loaded(topic) { t ->
                 val aiOn = (ai.state as? Load.Ok)?.value?.available == true
+                val aiOff = (ai.state as? Load.Ok)?.value?.off == true  // no parent's or teacher's key: the notes only
                 if (aiOn) Steps(id, student)
-                Body(t, me, aiOn, known, openReader = { openReader(id) }, openMaterial = { openMaterial(t.course_id, t.course) })
+                Body(t, me, aiOn, aiOff, known, openReader = { openReader(id) }, openMaterial = { openMaterial(t.course_id, t.course) })
                 if (student && aiOn) {
                     SectionTitle(stringResource(R.string.test_yourself))
                     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {  // buttons go to a new line rather than squeeze their text
@@ -282,9 +283,10 @@ private fun SelfMark(id: Int, onSimpler: (() -> Unit)?) {
 /** the notes (the reference), and AI help on request: Explain and a sample answer */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Body(t: TopicFull, me: Me, aiOn: Boolean, known: List<String>, openReader: () -> Unit, openMaterial: () -> Unit) {
+private fun Body(t: TopicFull, me: Me, aiOn: Boolean, aiOff: Boolean, known: List<String>, openReader: () -> Unit, openMaterial: () -> Unit) {
     var tab by rememberSaveable(t.id) { mutableIntStateOf(0) }
     Gap(12)
+    if (aiOff) { Quiet(tl(AI_OFF), Modifier.padding(bottom = 8.dp)); Notes(t, me, aiOn, openReader, openMaterial); return }  // no Explain or Sample answer tabs
     SecondaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface) {
         listOf(R.string.tab_notes, R.string.tab_explain, R.string.tab_answer).forEachIndexed { i, s -> Tab(tab == i, onClick = { tab = i }, text = { Text(stringResource(s), maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }) }
     }
