@@ -507,9 +507,10 @@ def check_place(s, level, pid, sem):  # a program of the chosen level and one of
     if not p or p.archived_at is not None or program_level(p) != level: raise HTTPException(400, "Choose a program from the list")
     if sem not in open_terms(s, p): raise HTTPException(400, f"Choose a {term_label(p).lower()} from the list")
     return p.id, sem
-def clean_children(b, s):  # a parent adds each child with their own sign-in name and password
+def clean_children(b, s, most=None):  # a parent adds each child (or a teacher each student) with their own sign-in name and password
     if b.who != "parent": return []
-    if not 1 <= len(b.children) <= MAX_CHILDREN: raise HTTPException(400, f"Add between 1 and {MAX_CHILDREN} children")
+    most = most or MAX_CHILDREN
+    if not 1 <= len(b.children) <= most: raise HTTPException(400, f"Add between 1 and {most} children")
     out, seen = [], set()
     for c in b.children:
         name, un = " ".join(c.name.split()), c.username.strip().lower()
@@ -527,8 +528,9 @@ def same_id(s, inst, idn):
 def register_status(s: Session = Depends(db)): return {"open": reg_open(s), "domains": allowed_domains(s)}
 @app.get("/api/register/options")
 def register_options(s: Session = Depends(db)):  # the programs someone signing up can pick, by school or college, with the terms open in each
+    return program_options(s) if reg_open(s) else {"school": [], "college": []}
+def program_options(s):
     out = {"school": [], "college": []}
-    if not reg_open(s): return out
     for p in s.query(Program).filter(Program.archived_at.is_(None)).order_by(Program.name):
         terms = open_terms(s, p)
         if terms: out[program_level(p)].append({"id": p.id, "name": p.name, "term": term_label(p), "terms": terms})
@@ -819,9 +821,66 @@ def health():
     return {"ok": True, "db": True}
 @app.get("/api/me")
 def whoami(u: User = Depends(me)): return me_json(u)
-@app.get("/api/guardian/students")
-def my_students(u: User = Depends(me), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
+def guardian_only(u: User = Depends(me)):
     if u.role != "guardian": raise HTTPException(403, "For parents and teachers")
+    return u
+def invitations(s, sid): return s.query(GuardianLink, User).join(User, User.id == GuardianLink.guardian_id).filter(GuardianLink.student_id == sid, GuardianLink.status == "invited", User.active == True).all()  # noqa: E712
+def my_link(s, gid, sid):
+    l = s.query(GuardianLink).filter_by(guardian_id=gid, student_id=sid).first()
+    if not l: raise HTTPException(404, "Not one of your students")
+    return l
+MAX_PARENT_KIDS, MAX_CLASS = 8, 60  # children per parent; students a teacher adds in one go
+class NewStudentsIn(BaseModel): students: list[ChildIn]
+@app.post("/api/guardian/students")
+def add_students(b: NewStudentsIn, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a teacher adds a class, or a parent another child: each signs in with a username
+    have = s.query(func.count(GuardianLink.id)).filter(GuardianLink.guardian_id == u.id).scalar()
+    top = MAX_PARENT_KIDS - have if u.relation == "parent" else MAX_CLASS
+    if not 1 <= len(b.students) <= max(0, top): raise HTTPException(400, f"Add between 1 and {max(0, top)} at a time" if top > 0 else f"A parent can have up to {MAX_PARENT_KIDS} children here")
+    kids = clean_children(RegisterIn(name="-", email="-", phone="-", password="-", who="parent", level=u.level or "school", children=b.students), s, MAX_CLASS)
+    for k in kids:
+        c = User(name=k["name"], email=None, username=k["username"], pw=k["pw"], role="student", level=u.level, active=True, must_change=False, program_id=k["program_id"], semester=k["semester"], self_registered=True)
+        s.add(c); s.flush(); s.add(GuardianLink(guardian_id=u.id, student_id=c.id, status="active"))
+    s.commit(); return my_students(u, s)
+class InviteIn(BaseModel): login: str
+@app.get("/api/guardian/options")
+def guardian_options(u: User = Depends(guardian_only), s: Session = Depends(db)): return program_options(s)  # for adding students, even when sign-up is closed
+@app.post("/api/guardian/invite")
+def invite_student(b: InviteIn, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a student who already has an account sees the invitation and decides
+    who = b.login.strip().lower()[:190]
+    if u.relation != "teacher": raise HTTPException(403, "Teachers invite students. A parent adds their children.")
+    if s.query(func.count(GuardianLink.id)).filter(GuardianLink.guardian_id == u.id, GuardianLink.status == "invited", GuardianLink.created_at >= dt.datetime.utcnow() - dt.timedelta(days=1)).scalar() >= MAX_CLASS:
+        raise HTTPException(429, "Too many invitations today. Try again tomorrow.")
+    x = s.query(User).filter(User.email == who if "@" in who else User.username == who).first()
+    if x and x.role == "student" and x.active and x.id != u.id and not s.query(GuardianLink.id).filter_by(guardian_id=u.id, student_id=x.id).first():
+        s.add(GuardianLink(guardian_id=u.id, student_id=x.id, status="invited")); s.commit()
+    return {"ok": True, "message": f"If a student signs in as {who}, they will see your invitation and can accept it."}  # the same answer either way, so this can't be used to find out who has an account
+@app.delete("/api/guardian/students/{sid}")
+def unlink_student(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):  # stop following a student; their account and progress stay
+    s.delete(my_link(s, u.id, sid)); s.commit(); return {"ok": True}
+@app.get("/api/guardian/students/{sid}/progress")
+def student_progress(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):  # read-only: per course, topics learned and opened, tests and when they last studied
+    if my_link(s, u.id, sid).status != "active": raise HTTPException(403, "The student has not accepted your invitation yet")
+    x = s.get(User, sid); sems = {m.id: m for m in s.query(Semester)}; links = defaultdict(list)
+    for l in s.query(CourseLink): links[l.course_id].append(l.semester_id)
+    rows = []
+    for c in s.query(Course).order_by(Course.name):
+        if course_off(s, c) or not course_audience(c, [x], sems, links): continue
+        tids, reads, done, last, qids, bests = course_stats(c, [x], s); b = bests[x.id]
+        rows.append({"course": c.name, "topics": len(tids), "completed": done[x.id], "opened": reads[x.id], "last_active": utc_iso(last.get(x.id)),
+                     "tests": len(qids), "tests_taken": len(b), "test_average": round(sum(b.values()) / len(b)) if b else None})
+    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows}
+@app.get("/api/me/invitations")
+def my_invitations(u: User = Depends(me), s: Session = Depends(db)):
+    return {"invitations": [{"id": l.id, "name": g.name, "relation": g.relation, "institution": g.institution or ""} for l, g in invitations(s, u.id)]}
+@app.post("/api/me/invitations/{lid}/{answer}")
+def answer_invitation(lid: int, answer: str, u: User = Depends(me), s: Session = Depends(db)):  # accepting lets the teacher see progress (and use their AI key for a school student)
+    l = s.get(GuardianLink, lid)
+    if not l or l.student_id != u.id or l.status != "invited" or answer not in ("accept", "decline"): raise HTTPException(404, "No such invitation")
+    if answer == "accept": l.status = "active"
+    else: s.delete(l)
+    s.commit(); return {"ok": True}
+@app.get("/api/guardian/students")
+def my_students(u: User = Depends(guardian_only), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
     row = lambda x, st: {"id": x.id, "name": x.name, "username": x.username, "place": place_line(s, x), "status": st, "active": bool(x.active)}
     return {"students": [row(x, "active") for x in guardian_students(s, u.id)] + [row(x, "invited") for x in guardian_students(s, u.id, "invited")]}
 LANGS = {"en": "English", "ar": "Arabic", "ta": "Tamil"}
@@ -4651,8 +4710,10 @@ def stop_routine(u: User = Depends(me), s: Session = Depends(db)):  # back to st
 # ---- notifications: worked out from what needs doing now, with each person's seen ones remembered, and an optional daily email ----
 STUDENT_NOTES = ("due_soon", "quiz_new")  # a teacher's date coming up and a new test; no reminders about being late or scoring low
 def notes_for(u, s):  # [{key, text, sub}]: staff get what needs attention, students their deadlines and tests. The key changes when the item does
+    if u.role == "guardian": return []
     if u.role == "student":
-        return [{"key": f"{i['kind']}:{i.get('quiz_id') or i.get('id')}"[:120], "text": i.get("title") or "", "sub": i.get("reason") or ""}
+        asks = [{"key": f"invite:{l.id}", "text": f"{g.name} wants to follow your progress", "sub": "Accept or decline on Home"} for l, g in invitations(s, u.id)]
+        return asks + [{"key": f"{i['kind']}:{i.get('quiz_id') or i.get('id')}"[:120], "text": i.get("title") or "", "sub": i.get("reason") or ""}
                 for i in my_today(u=u, s=s)["focus"] if i.get("kind") in STUDENT_NOTES]
     return [{"key": f"{a['kind']}:{a['count']}"[:120], "text": a["text"], "sub": ""} for a in overview(u=u, s=s)["attention"]]
 @app.get("/api/me/notifications")

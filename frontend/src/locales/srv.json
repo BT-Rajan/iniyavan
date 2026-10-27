@@ -98,5 +98,17 @@
 [
 "^The username (?<u>\\S+) was taken meanwhile\\. Go back, change it and ask for a new code\\.$",
 "The username {u} was taken meanwhile. Go back, change it and ask for a new code."
+],
+[
+"^(?<name>.+) wants to follow your progress$",
+"{name} wants to follow your progress"
+],
+[
+"^If a student signs in as (?<who>\\S+), they will see your invitation and can accept it\\.$",
+"If a student signs in as {who}, they will see your invitation and can accept it."
+],
+[
+"^Add between 1 and (?<n>\\d+) at a time$",
+"Add between 1 and {n} at a time"
 ]
 ]
