@@ -4497,13 +4497,17 @@ def make_session(u, s, r, today, now):
     try: s.commit()
     except IntegrityError: s.rollback()  # made by a request that came at the same moment; one session either way
     return s.query(DaySession).filter_by(user_id=u.id, day=today).one()
+def next_study_day(days, today):  # the next study day after today, counted by the students' day (DAY_OFFSET), not the phone's clock
+    k = next(k for k in range(1, 8) if days[(today + dt.timedelta(days=k)).weekday()] == "1")  # a routine always has a study day, so within 7
+    return {"in": k, "weekday": (today + dt.timedelta(days=k)).weekday()}  # weekday 0 = Monday
 def session_view(u, s, r, ds, today, now):
     days = study_days(s, u.id, today - dt.timedelta(days=60)); missed, d = 0, today - dt.timedelta(days=1)
     since = max(today - dt.timedelta(days=14), local_day(r.started_at or r.updated_at or dt.datetime.utcnow()) + dt.timedelta(days=1))  # the day it was set up doesn't count
     while d >= since and d not in days:  # study days missed since they last studied, and only since the routine began
         missed += r.days[d.weekday()] == "1"; d -= dt.timedelta(days=1)
     out = {"routine": routine_view(r), "planned_today": r.days[today.weekday()] == "1", "studied_today": today in days, "missed": missed,
-           "streak": streak_of(days, today, r.days), "plan": plan_advice(r, study_queues(u, s), today), "session": None}
+           "streak": streak_of(days, today, r.days), "plan": plan_advice(r, study_queues(u, s), today), "session": None,
+           "next_day": next_study_day(r.days, today)}
     if ds:
         items = [x for x in json.loads(ds.items or "[]") if item_alive(x, s)]  # a topic deleted or hidden since the morning just drops out
         for x in items: x["done"] = item_done(x, u, s, now)

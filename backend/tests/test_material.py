@@ -147,3 +147,15 @@ def test_explain_uses_the_students_own_notes_privately(env, monkeypatch):
     with Session_() as s: assert s.query(StudyAICall).filter_by(kind="t_explain").count() == 1 and s.query(main.PrivateAnswer).count() == 1
     r = env.c.get(f"/api/topics/{h}/ai/explain", headers=s2).json(); assert "own_notes" not in r and "Boiling removes" not in FakeAI.calls[-1][1]  # a classmate without notes gets the shared answer
     with Session_() as s: assert s.query(main.AICache).count() == 1
+
+def test_a_topic_moved_to_another_course_leaves_the_old_filing_and_keeps_its_note(env, monkeypatch):
+    i = setup(env, monkeypatch); r = i["t"]["Rusting"]
+    env.c.post(url(i, "/text"), headers=env.stu, json={"text": NOTES}); env.c.post(url(i, "/match"), headers=env.stu, json={"method": "headings"}); env.c.post(url(i, "/save"), headers=env.stu)
+    tools = env.c.get(f"/api/topics/{i['t']['Fitting']}", headers=env.admin).json()["unit_id"]
+    assert env.c.put(f"/api/topics/{r}", headers=env.admin, json={"title": "Rusting", "unit_id": tools}).status_code == 200  # the admin moves it to Workshop
+    v = env.c.get(url(i), headers=env.stu).json()
+    assert r not in [x["topic_id"] for x in v["sections"]] and (v["topics"], v["covered"]) == (3, 2)  # it is no longer this course's topic
+    secs = v["sections"]; secs[0]["topic_id"] = i["t"]["Galvanising"]
+    assert env.c.put(url(i, "/sections"), headers=env.stu, json={"sections": secs}).status_code == 200  # changing a part and saving again still works
+    assert env.c.post(url(i, "/save"), headers=env.stu).status_code == 200
+    assert env.c.get(f"/api/topics/{r}", headers=env.stu).json()["my_notes"].startswith("# Rusting")  # the note stays with its topic in the new course
