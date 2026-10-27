@@ -68,18 +68,19 @@ export default function App(){
   if(resetTok)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast(tl("Password changed. You are signed in."))}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/></AuthFrame>
   if(!user)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/></AuthFrame>
   if(user.must_change)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
-  const student=user.role==='student',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
+  const student=user.role==='student',guardian=user.role==='guardian',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
   const links=student?[['learn',GraduationCap,tl("My courses")],['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
+    :guardian?[['about',Info,tl("About")]]  // a parent or teacher: their students on Home
     :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
     :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role}}>
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
-    {page!=='search'&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
+    {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
-    {page==='home'&&!student&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}}/>}
+    {page==='home'&&guardian&&<GuardianHome user={user} toast={toast}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role} onRoutine={()=>go('routine')}/>}{page==='saved'&&student&&<Saved toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
@@ -107,33 +108,74 @@ function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
     <button className="btn" disabled={b||!f.email} onClick={forgot}>{tl("Send reset link")}</button></>}
     <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>{tl("Back to sign in")}</button><Toast msg={msg}/></div>
   return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Sign in")}</h1><p>{tl("Use the account your institution created for you.")}</p>
-    <label>{tl("Email")}</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
+    <label>{tl("Email or username")}</label><input type="text" autoCapitalize="none" autoComplete="username" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
     <label>{tl("Password")}</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>{tl("Sign in")}</button>
     {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>{tl("Forgot password?")}</button>:<p className="known">{tl("Forgot your password? Ask your admin to reset it.")}</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>{tl("Create an account")}</button>}<Toast msg={msg}/></div>}
 
-function Register({onIn,toast,msg,appName,logo,back}){
-  const [f,setF]=useState({name:'',institution:'',id_number:'',email:'',phone:'',password:''}),[stage,setStage]=useState('form'),[code,setCode]=useState(''),[b,setB]=useState(false),[wait,setWait]=useState(0),[info,setInfo]=useState(''),[st,setSt]=useState({domains:[]})
-  useEffect(()=>{api('/register/status').then(setSt).catch(()=>{})},[])
+const KID={name:'',username:'',password:'',program_id:'',semester:''}
+function Place({opts,level,v,set,id}){  // a program of the chosen level and one of its open terms; "not listed" leaves it for an admin
+  const ps=opts[level]||[],p=ps.find(x=>String(x.id)===String(v.program_id))
+  return <><label htmlFor={id+'p'}>{level==='school'?tl("School board or program"):tl("Program")}</label>
+    <select id={id+'p'} value={v.program_id} onChange={e=>set({program_id:e.target.value,semester:''})}><option value="">{tl("Not listed: my admin will place me")}</option>{ps.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
+    {p&&<><label htmlFor={id+'t'}>{tl(p.term)}</label><select id={id+'t'} value={v.semester} onChange={e=>set({semester:e.target.value})}><option value="">{tl("Choose")}</option>{p.terms.map(n=><option key={n} value={n}>{tl(p.term)} {n}</option>)}</select></>}</>}
+function Register({onIn,toast,msg,appName,logo,back}){  // school or college, then who is signing up, then the details; a code by email confirms it
+  const [level,setLevel]=useState(''),[who,setWho]=useState(''),[opts,setOpts]=useState({school:[],college:[]})
+  const [f,setF]=useState({name:'',institution:'',id_number:'',email:'',phone:'',password:'',program_id:'',semester:''}),[kids,setKids]=useState([{...KID}])
+  const [stage,setStage]=useState('level'),[code,setCode]=useState(''),[b,setB]=useState(false),[wait,setWait]=useState(0),[info,setInfo]=useState(''),[st,setSt]=useState({domains:[]})
+  useEffect(()=>{api('/register/status').then(setSt).catch(()=>{});api('/register/options').then(setOpts).catch(()=>{})},[])
   useEffect(()=>{if(wait<=0)return;const t=setTimeout(()=>setWait(wait-1),1000);return()=>clearTimeout(t)},[wait])
-  const set=k=>e=>setF({...f,[k]:e.target.value}),ok=Object.values(f).every(v=>v.trim())
-  const start=async()=>{setB(true);try{const r=await api('/register/start',{method:'POST',body:f});setInfo(r.message);setStage('code');setWait(30)}catch(e){toast(e.message)}setB(false)}
+  const set=k=>e=>setF({...f,[k]:e.target.value}),setKid=(i,o)=>setKids(kids.map((k,j)=>j===i?{...k,...o}:k))
+  const placed=x=>!x.program_id||!!x.semester,num=v=>v===''?null:+v
+  const ok=['name','email','phone','password'].every(k=>f[k].trim())&&(who==='parent'||f.institution.trim())&&(who!=='student'||level==='school'||f.id_number.trim())
+    &&(who!=='student'||placed(f))&&(who!=='parent'||kids.every(k=>k.name.trim()&&k.username.trim()&&k.password&&placed(k)))
+  const body=()=>({...f,level,who,program_id:who==='student'?num(f.program_id):null,semester:who==='student'?num(f.semester):null,
+    children:who==='parent'?kids.map(k=>({...k,program_id:num(k.program_id),semester:num(k.semester)})):[]})
+  const start=async()=>{setB(true);try{const r=await api('/register/start',{method:'POST',body:body()});setInfo(r.message);setStage('code');setWait(30)}catch(e){toast(e.message)}setB(false)}
   const verify=async()=>{setB(true);try{const r=await api('/register/verify',{method:'POST',body:{email:f.email,code}});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
   const resend=async()=>{try{await api('/register/resend',{method:'POST',body:{email:f.email}});toast(tl("A new code is on its way"));setWait(30);setCode('')}catch(e){toast(e.message)}}
-  if(stage==='code')return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Enter the code")}</h1><p>{info}</p>
+  const head=<Lockup logo={logo} name={appName}/>,foot=<Toast msg={msg}/>
+  if(stage==='code')return <div className="login">{head}<h1>{tl("Enter the code")}</h1><p>{info}</p>
     <label htmlFor="otp">{tl("6-digit code")}</label><input id="otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} onKeyDown={e=>e.key==='Enter'&&code.length===6&&verify()} style={{letterSpacing:'.4em',fontSize:22,textAlign:'center'}}/>
     <button className="btn" disabled={b||code.length!==6} onClick={verify}>{tl("Verify and create my account")}</button>
     <button className="btn ghost" disabled={wait>0} onClick={resend}>{wait>0?tl("Send a new code in {wait}s",{wait:wait}):tl("Send a new code")}</button>
-    <button className="btn ghost" onClick={()=>{setStage('form');setCode('')}}>{tl("Change my details")}</button><Toast msg={msg}/></div>
-  return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Create an account")}</h1><p>{tl("We will email you a code to confirm your address.")}{st.domains.length>0&&tl(" Use your institution email ({domains}).",{domains:st.domains.map(d=>'@'+d).join(', ')})}</p>
+    <button className="btn ghost" onClick={()=>{setStage('form');setCode('')}}>{tl("Change my details")}</button>{foot}</div>
+  if(stage==='level')return <div className="login">{head}<h1>{tl("Create an account")}</h1><p>{tl("Who is studying?")}</p>
+    <button className="btn choice" onClick={()=>{setLevel('school');setStage('who')}}><b>{tl("A school student")}</b><small>{tl("Grade 1 to Grade 12")}</small></button>
+    <button className="btn choice" onClick={()=>{setLevel('college');setStage('who')}}><b>{tl("A college student")}</b><small>{tl("College or university")}</small></button>
+    <button className="btn ghost" onClick={back}>{tl("Back to sign in")}</button>{foot}</div>
+  if(stage==='who')return <div className="login">{head}<h1>{tl("Who is signing up?")}</h1><p>{level==='school'?tl("For a school student"):tl("For a college student")}</p>
+    {[['student',tl("I'm the student"),tl("An account for me")],['parent',tl("A parent"),tl("Accounts for one or more of my children")],['teacher',tl("A teacher"),tl("I add or invite my students after signing up")]]
+      .map(([k,l,d])=><button key={k} className="btn choice" onClick={()=>{setWho(k);setStage('form')}}><b>{l}</b><small>{d}</small></button>)}
+    <button className="btn ghost" onClick={()=>setStage('level')}>{tl("Back")}</button>{foot}</div>
+  const school=level==='school'
+  return <div className="login">{head}<h1>{who==='parent'?tl("Your details"):who==='teacher'?tl("Teacher sign-up"):tl("Create an account")}</h1><p>{tl("We will email you a code to confirm your address.")}{who!=='parent'&&st.domains.length>0&&tl(" Use your institution email ({domains}).",{domains:st.domains.map(d=>'@'+d).join(', ')})}</p>
     <label htmlFor="rn">{tl("Full name")}</label><input id="rn" autoComplete="name" value={f.name} onChange={set('name')}/>
-    <label htmlFor="ri">{tl("Institution")}</label><input id="ri" autoComplete="organization" value={f.institution} onChange={set('institution')}/>
-    <label htmlFor="rid">{tl("ID number")}</label><input id="rid" value={f.id_number} onChange={set('id_number')} placeholder={tl("Roll or employee number")}/>
+    {who!=='parent'&&<><label htmlFor="ri">{school?tl("School"):tl("College")}</label><input id="ri" autoComplete="organization" value={f.institution} onChange={set('institution')}/></>}
+    {who==='student'&&<><label htmlFor="rid">{school?tl("Roll number (optional)"):tl("ID number")}</label><input id="rid" value={f.id_number} onChange={set('id_number')} placeholder={tl("Roll or employee number")}/>
+      <Place id="me" opts={opts} level={level} v={f} set={o=>setF({...f,...o})}/></>}
     <label htmlFor="re">{tl("Email")}</label><input id="re" type="email" autoComplete="email" value={f.email} onChange={set('email')}/>
     <label htmlFor="rp">{tl("Phone")}</label><input id="rp" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} placeholder="+91 98765 43210"/>
-    <label htmlFor="rw">{tl("Password")}</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')} onKeyDown={e=>e.key==='Enter'&&ok&&start()}/>
-    <p className="known">{tl("At least 8 characters. AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more.")}</p>
-    <button className="btn" disabled={b||!ok} onClick={start}>{tl("Send me a code")}</button><button className="btn ghost" onClick={back}>{tl("Back to sign in")}</button><Toast msg={msg}/></div>}
+    <label htmlFor="rw">{tl("Password")}</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
+    <p className="known">{tl("At least 8 characters.")}{who==='student'&&!school?' '+tl("AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more."):''}</p>
+    {who==='parent'&&<><h3 className="sec">{tl("Your children")}</h3><p className="known" style={{marginTop:0}}>{tl("Each child signs in with their own username and password. They don't need an email.")}</p>
+      {kids.map((k,i)=><div className="qbox" key={i}><b>{tl("Child {n}",{n:i+1})}</b>
+        <label htmlFor={'kn'+i}>{tl("Name")}</label><input id={'kn'+i} value={k.name} onChange={e=>setKid(i,{name:e.target.value})}/>
+        <label htmlFor={'ku'+i}>{tl("Username")}</label><input id={'ku'+i} autoCapitalize="none" autoComplete="off" value={k.username} onChange={e=>setKid(i,{username:e.target.value.toLowerCase().replace(/\s/g,'')})} placeholder="kavin.r"/>
+        <label htmlFor={'kw'+i}>{tl("Password")}</label><input id={'kw'+i} type="password" autoComplete="new-password" value={k.password} onChange={e=>setKid(i,{password:e.target.value})}/>
+        <Place id={'k'+i} opts={opts} level={level} v={k} set={o=>setKid(i,o)}/>
+        {kids.length>1&&<button className="tool" onClick={()=>setKids(kids.filter((_,j)=>j!==i))}>{tl("Remove this child")}</button>}</div>)}
+      {kids.length<8&&<button className="btn ghost" onClick={()=>setKids([...kids,{...KID}])}>{tl("Add another child")}</button>}</>}
+    <button className="btn" disabled={b||!ok} onClick={start}>{tl("Send me a code")}</button><button className="btn ghost" onClick={()=>setStage('who')}>{tl("Back")}</button>{foot}</div>}
+function GuardianHome({user,toast}){  // a parent's children, or a teacher's students, and how each signs in
+  const [d,setD]=useState(null);useEffect(()=>{api('/guardian/students').then(setD).catch(e=>toast(e.message))},[toast])
+  const parent=user.relation==='parent'
+  return <><Bar title={tl("Hello, {name}",{name:firstName(user.name)})}/><div className="main">
+    <h3 className="sec first">{parent?tl("Your children"):tl("Your students")}</h3>
+    {!d&&<Skeleton rows={2}/>}
+    {d&&!d.students.length&&<p className="known">{parent?tl("No children are linked to your account yet."):tl("No students yet. Adding and inviting students is coming soon.")}</p>}
+    {d?.students.map(x=><div className="row" key={x.id}><div>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}<small>{x.username?tl("Signs in as {username}",{username:x.username}):''}{x.username?' · ':''}{x.place||tl("Waiting for an admin to place them")}</small></div></div>)}
+    {parent&&d?.students.length>0&&<p className="known">{tl("Each child signs in with their own username and password on the sign-in page.")}</p>}</div></>}
 
 function MyAiKey({toast}){
   const confirm=useConfirm()

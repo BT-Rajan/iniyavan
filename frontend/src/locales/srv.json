@@ -82,5 +82,21 @@
 [
 "^Owner (?<name>.+) is disabled$",
 "Owner {name} is disabled"
+],
+[
+"^Usernames are 3 to 30 letters, numbers, dots, dashes or underscores, starting with a letter: (?<u>.+)$",
+"Usernames are 3 to 30 letters, numbers, dots, dashes or underscores, starting with a letter: {u}"
+],
+[
+"^The username (?<u>\\S+) is taken\\. Choose another\\.$",
+"The username {u} is taken. Choose another."
+],
+[
+"^Use at least 8 characters for (?<name>.+)'s password$",
+"Use at least 8 characters for {name}'s password"
+],
+[
+"^The username (?<u>\\S+) was taken meanwhile\\. Go back, change it and ask for a new code\\.$",
+"The username {u} was taken meanwhile. Go back, change it and ask for a new code."
 ]
 ]
