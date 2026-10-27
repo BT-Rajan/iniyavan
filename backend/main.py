@@ -782,7 +782,7 @@ def place_line(s, u):  # "B.E. Mechanical · Semester 3", or "" when not placed 
 def guardian_students(s, gid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.student_id == User.id).filter(GuardianLink.guardian_id == gid, GuardianLink.status == status).all()
 def guardians_of(s, sid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.guardian_id == User.id).filter(GuardianLink.student_id == sid, GuardianLink.status == status).all()
 def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": is_staff(u) or bool(u.program_id), "lang": u.lang or "en",
-                     "username": u.username, "relation": u.relation, "level": stage_of(u)}
+                     "username": u.username, "relation": u.relation, "level": stage_of(u), "ai_off": school_learner(u) and not guardian_key(u, object_session(u))}
 @app.post("/api/login")
 def login(b: Login, request: Request, s: Session = Depends(db)):
     global DUMMY
@@ -1248,12 +1248,22 @@ async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
     return checked(out), (r.usage.input_tokens or 0) + (r.usage.output_tokens or 0)
 def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
     return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
+def school_learner(u): return u.role == "student" and bool(u.self_registered) and stage_of(u) == "school"  # signed up as a school student, or added by a parent
+def guardian_key(u, s):  # a school student's AI runs on a linked parent's or teacher's own key, a parent's first; never the college's
+    if s is None: return None
+    for g in sorted(guardians_of(s, u.id), key=lambda g: (g.relation != "parent", g.id)):
+        if g.active and g.ai_key: return unseal(g.ai_key)
+    return None
 def key_for(u, s):  # a self-registered person's own key when they saved one; otherwise the admin's (for lite people, within the free daily allowance)
+    if school_learner(u): return guardian_key(u, s)  # without one they study without AI
+    if u.role == "guardian": return unseal(u.ai_key) if u.ai_key else None  # a parent's or teacher's key is for their students; they never use the college's
     return unseal(u.ai_key) if u.self_registered and u.ai_key else ai_key(s)
+def ai_off(u, s): return school_learner(u) and not guardian_key(u, s)  # the app hides AI altogether, rather than offering it and failing
 NEEDS_OWN_KEY = "Add your own DeepSeek API key under AI key in the menu to use AI help."
+NEEDS_GUARDIAN_KEY = "AI help is off. A parent or teacher can turn it on by adding their AI key to their account."
 @app.get("/api/ai/status")
 def ai_status(u: User = Depends(me), s: Session = Depends(db)):
-    return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered), "vision": vision_on(u, s), "ocr": ocr_ready(), "plan": ai_plan(u)}
+    return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered) and not school_learner(u), "vision": vision_on(u, s), "ocr": ocr_ready(), "plan": ai_plan(u), "off": ai_off(u, s)}
 class OwnKey(BaseModel): key: str
 KEY_TRIES = 10  # saving a key checks it with DeepSeek; at most this many tries an hour per person
 @app.get("/api/me/ai-key")
@@ -1263,6 +1273,7 @@ def my_ai_key(u: User = Depends(me)):
 @app.put("/api/me/ai-key")
 async def set_my_ai_key(b: OwnKey, u: User = Depends(me), s: Session = Depends(db)):
     if not u.self_registered: raise HTTPException(403, "Your account uses the key your admin saved. You do not need your own.")
+    if school_learner(u): raise HTTPException(403, "A parent or teacher adds the AI key for school students.")
     if s.query(func.count(AuditLog.id)).filter(AuditLog.user_id == u.id, AuditLog.method == "PUT", AuditLog.path == "/api/me/ai-key",
                                                 AuditLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=1)).scalar() >= KEY_TRIES:
         raise HTTPException(429, "Too many tries. Wait an hour, then save your key again.")  # each try asks DeepSeek, so this must not become a way to test stolen keys
@@ -3063,6 +3074,7 @@ MAX_PROMPT = 4000
 def prompt_for(s, kind): return setting(s, "prompt_" + kind).strip() or PROMPTS[kind]
 def key_or_fail(u, s):  # without a key AI is off, even for saved answers
     key = key_for(u, s)
+    if not key and school_learner(u): raise HTTPException(503, NEEDS_GUARDIAN_KEY)
     if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
     if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")
     return key
@@ -3071,7 +3083,9 @@ def key_or_fail(u, s):  # without a key AI is off, even for saved answers
 # ---- Students the college added are not affected. Saved answers never count: they cost nothing.
 LITE_SEARCH_KINDS = ("search", "photo", "doubt")  # asking the AI a question; everything else (topic steps, explanations, own courses, translations) is learning time
 def pro_active(u): return bool(u.pro_until and u.pro_until > dt.datetime.utcnow())
-def ai_plan(u): return "college" if not u.self_registered else "own" if u.ai_key else "pro" if pro_active(u) else "lite"
+def ai_plan(u):  # school students: "family" on a parent's or teacher's key, else "off"
+    if school_learner(u): return "family" if guardian_key(u, object_session(u)) else "off"
+    return "college" if not u.self_registered else "own" if u.ai_key else "pro" if pro_active(u) else "lite"
 def lite_limits(s):
     def num(k, d):
         try: return max(0, int(setting(s, k) or d))
@@ -3718,7 +3732,7 @@ STUDY_PROMPTS = {
 def study_ai_left(u, s):  # AI requests left today for own-course help; None when not limited
     if is_staff(u) or (u.self_registered and u.ai_key): return None
     return max(0, STUDY_AI_DAILY - s.query(func.count(StudyAICall.id)).filter(StudyAICall.user_id == u.id, StudyAICall.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar())
-def study_ai_status(u, s): return {"ai_available": bool(key_for(u, s)), "ai_left": study_ai_left(u, s), "ai_own_key": bool(u.self_registered)}
+def study_ai_status(u, s): return {"ai_available": bool(key_for(u, s)), "ai_left": study_ai_left(u, s), "ai_own_key": bool(u.self_registered) and not school_learner(u), "ai_off": ai_off(u, s)}
 def study_ai_key(u, s):
     key = key_or_fail(u, s)
     if not (u.self_registered and u.ai_key) and not is_staff(u):
