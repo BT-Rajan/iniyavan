@@ -18,7 +18,7 @@ import {t as tl,L,LANGS,locale,applyLang,firstLang,loadLang,srv,getLang} from '.
 
 const api=async(p,o={})=>{const t=localStorage.t
   const r=await fetch('/api'+p,{...o,headers:{'Content-Type':'application/json',...(t&&{Authorization:'Bearer '+t})},body:o.body&&JSON.stringify(o.body)})
-  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(typeof j.detail==='string'?tl(j.detail):tl('Something went wrong'));return j}  // the server's messages are looked up like any other text
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(typeof j.detail==='string'?srv(j.detail):tl('Something went wrong'));return j}  // the server's messages are looked up like any other text
 const TEMPLATE=`program,semester,course,unit,topic,content,question_pattern,sample_content,guideline
 B.E. Mechanical Engineering,Semester 3,Thermodynamics,Unit 1: Basic concepts,First law of thermodynamics,"Energy can change form but is never created or destroyed.","2 marks: define. 13 marks: derive and solve a numerical.","Q: State the first law for a closed system.","Introduction, labelled diagram, steps, units, conclusion"
 ,,,,Zeroth law of thermodynamics,"If A and B are each in equilibrium with C, they are in equilibrium with each other.","2 marks: state the law.","Q: State the zeroth law.","Definition, one example, significance"
@@ -167,19 +167,55 @@ function Register({onIn,toast,msg,appName,logo,back}){  // school or college, th
         {kids.length>1&&<button className="tool" onClick={()=>setKids(kids.filter((_,j)=>j!==i))}>{tl("Remove this child")}</button>}</div>)}
       {kids.length<8&&<button className="btn ghost" onClick={()=>setKids([...kids,{...KID}])}>{tl("Add another child")}</button>}</>}
     <button className="btn" disabled={b||!ok} onClick={start}>{tl("Send me a code")}</button><button className="btn ghost" onClick={()=>setStage('who')}>{tl("Back")}</button>{foot}</div>}
-function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher's students, how each signs in, and whether their AI is on
-  const [d,setD]=useState(null),[k,setK]=useState(null);useEffect(()=>{api('/guardian/students').then(setD).catch(e=>toast(e.message));api('/me/ai-key').then(setK).catch(()=>{})},[toast])
-  const parent=user.relation==='parent'
+function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher's students: add them, invite them (teachers), see their progress, and the AI key that covers them
+  const confirm=useConfirm()
+  const [d,setD]=useState(null),[k,setK]=useState(null),[opts,setOpts]=useState({school:[],college:[]}),[add,setAdd]=useState(null),[inv,setInv]=useState(''),[sent,setSent]=useState(''),[see,setSee]=useState(null),[b,setB]=useState(false)
+  const load=()=>api('/guardian/students').then(setD).catch(e=>toast(e.message))
+  useEffect(()=>{load();api('/me/ai-key').then(setK).catch(()=>{});api('/guardian/options').then(setOpts).catch(()=>{})},[])
+  if(see)return <StudentProgress id={see} back={()=>setSee(null)} toast={toast}/>
+  const parent=user.relation==='parent',level=user.level||'school',num=v=>v===''?null:+v,setRow=(i,o)=>setAdd(add.map((x,j)=>j===i?{...x,...o}:x))
+  const ok=add&&add.every(x=>x.name.trim()&&x.username.trim()&&x.password&&(!x.program_id||x.semester))
+  const save=async()=>{setB(true);try{setD(await api('/guardian/students',{method:'POST',body:{students:add.map(x=>({...x,program_id:num(x.program_id),semester:num(x.semester)}))}}));setAdd(null);toast(parent?tl("Added. They can sign in now."):tl("Students added. They can sign in now."))}catch(e){toast(e.message)}setB(false)}
+  const invite=async()=>{setB(true);try{setSent(srv((await api('/guardian/invite',{method:'POST',body:{login:inv}})).message));setInv('');load()}catch(e){toast(e.message)}setB(false)}
+  const drop=async x=>{if(!await confirm({title:tl("Stop following {name}?",{name:x.name}),body:tl("Their account and progress stay. You no longer see their progress, and your AI key no longer covers them."),ok:tl("Stop following"),danger:true}))return
+    try{await api('/guardian/students/'+x.id,{method:'DELETE'});load()}catch(e){toast(e.message)}}
   return <><Bar title={tl("Hello, {name}",{name:firstName(user.name)})}/><div className="main">
     <h3 className="sec first">{parent?tl("Your children"):tl("Your students")}</h3>
     {!d&&<Skeleton rows={2}/>}
-    {d&&!d.students.length&&<p className="known">{parent?tl("No children are linked to your account yet."):tl("No students yet. Adding and inviting students is coming soon.")}</p>}
-    {d?.students.map(x=><div className="row" key={x.id}><div>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}<small>{x.username?tl("Signs in as {username}",{username:x.username}):''}{x.username?' · ':''}{x.place||tl("Waiting for an admin to place them")}</small></div></div>)}
+    {d&&!d.students.length&&<p className="known">{parent?tl("No children are linked to your account yet."):tl("No students yet. Add your class, or invite students who already have an account.")}</p>}
+    {d?.students.map(x=><div className="card" key={x.id}><button className="hit" disabled={x.status!=='active'} onClick={()=>setSee(x.id)} aria-label={x.status==='active'?tl("See {name}'s progress",{name:x.name}):x.name}>
+      <div style={{flex:1}}><b>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}</b><span>{x.username?tl("Signs in as {username}",{username:x.username})+' · ':''}{x.place||tl("Waiting for an admin to place them")}</span></div>{x.status==='active'&&<ChevronRight size={18}/>}</button>
+      {!parent&&<button className="ic sm" aria-label={tl("Stop following {name}?",{name:x.name})} onClick={()=>drop(x)}><X size={16}/></button>}</div>)}
     {parent&&d?.students.length>0&&<p className="known">{tl("Each child signs in with their own username and password on the sign-in page.")}</p>}
-    {k&&user.level==='school'&&<><h3 className="sec">{tl("AI help")}</h3><div className="qbox" style={{marginTop:0}}>
+    <button className="btn ghost" onClick={()=>setAdd([{...KID}])}>{parent?tl("Add a child"):tl("Add students")}</button>
+    {!parent&&<><h3 className="sec">{tl("Invite a student")}</h3><p className="known" style={{marginTop:0}}>{tl("For a student who already has an account. They see your invitation and choose whether to accept.")}</p>
+      <label htmlFor="ginv">{tl("Their email or username")}</label><input id="ginv" autoCapitalize="none" value={inv} onChange={e=>setInv(e.target.value)} onKeyDown={e=>e.key==='Enter'&&inv.trim()&&invite()}/>
+      <button className="btn" disabled={b||!inv.trim()} onClick={invite}>{tl("Send invitation")}</button>{sent&&<p className="known" role="status">{sent}</p>}</>}
+    {k&&level==='school'&&<><h3 className="sec">{tl("AI help")}</h3><div className="qbox" style={{marginTop:0}}>
       <b>{k.key_set?tl("On, with your key {hint}",{hint:k.key_hint}):tl("Off")}</b>
       <p className="known" style={{margin:'6px 0 0'}}>{k.key_set?(parent?tl("Your children's AI help runs on your DeepSeek key."):tl("Your students' AI help runs on your DeepSeek key, unless a parent has added theirs.")):(parent?tl("School students use AI only with a parent's or teacher's key. Add your DeepSeek key to turn it on for your children."):tl("School students use AI only with a parent's or teacher's key. Add your DeepSeek key to turn it on for your students."))}</p>
-      <button className="btn ghost" onClick={onKey}>{k.key_set?tl("Change the key"):tl("Add an AI key")}</button></div></>}</div></>}
+      <button className="btn ghost" onClick={onKey}>{k.key_set?tl("Change the key"):tl("Add an AI key")}</button></div></>}
+    {add&&<Sheet close={()=>setAdd(null)}><h3>{parent?tl("Add a child"):tl("Add students")}</h3><p className="known" style={{marginTop:0}}>{tl("Each one signs in with the username and password you give them. They don't need an email.")}</p>
+      {add.map((x,i)=><div className="qbox" key={i}><b>{(parent?tl("Child {n}",{n:i+1}):tl("Student {n}",{n:i+1}))}</b>
+        <label htmlFor={'an'+i}>{tl("Name")}</label><input id={'an'+i} value={x.name} onChange={e=>setRow(i,{name:e.target.value})}/>
+        <label htmlFor={'au'+i}>{tl("Username")}</label><input id={'au'+i} autoCapitalize="none" autoComplete="off" value={x.username} onChange={e=>setRow(i,{username:e.target.value.toLowerCase().replace(/\s/g,'')})}/>
+        <label htmlFor={'aw'+i}>{tl("Password")}</label><input id={'aw'+i} type="password" autoComplete="new-password" value={x.password} onChange={e=>setRow(i,{password:e.target.value})}/>
+        <Place id={'a'+i} opts={opts} level={level} v={x} set={o=>setRow(i,o)}/>
+        {add.length>1&&<button className="tool" onClick={()=>setAdd(add.filter((_,j)=>j!==i))}>{tl("Remove")}</button>}</div>)}
+      {!parent&&<button className="btn ghost" onClick={()=>setAdd([...add,{...KID,program_id:add[add.length-1].program_id,semester:add[add.length-1].semester}])}>{tl("Add another student")}</button>}
+      <button className="btn" disabled={b||!ok} onClick={save}>{tl("Save")}</button><button className="btn ghost" onClick={()=>setAdd(null)}>{tl("Cancel")}</button></Sheet>}</div></>}
+function StudentProgress({id,back,toast}){  // what a parent or teacher sees: per course, topics learned and opened, tests, last studied. Never their notes
+  const [d,setD]=useState(null);useEffect(()=>{api(`/guardian/students/${id}/progress`).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  return <><Bar title={d?d.name:tl("Loading")} sub={d?.place} back={back}/><div className="main">
+    {!d&&<Skeleton rows={2}/>}{d&&!d.courses.length&&<p className="known">{tl("No courses yet. They appear once an admin places them in a program.")}</p>}
+    {d?.courses.map(c=><div className="row" key={c.course}><div style={{flex:1}}>{c.course}<small>{tl("{done} of {n} topics learned · {opened} opened",{done:c.completed,n:c.topics,opened:c.opened})}{c.tests?' · '+tl("tests {taken} of {n}",{taken:c.tests_taken,n:c.tests})+(c.test_average!=null?', '+tl("average {p}%",{p:c.test_average}):''):''}{' · '+(c.last_active?tl("last studied {when}",{when:day(c.last_active)}):tl("not started yet"))}</small><Bar2 v={c.topics?100*c.completed/c.topics:0}/></div></div>)}
+    {d&&<p className="known">{tl("You see progress only, never their own notes or highlights.")}</p>}</div></>}
+function Invitations(){  // a teacher asked to follow this student's progress; nothing is shared until they accept
+  const [list,setList]=useState([]),load=()=>api('/me/invitations').then(r=>setList(r.invitations)).catch(()=>{});useEffect(()=>{load()},[])
+  const answer=async(x,a)=>{try{await api(`/me/invitations/${x.id}/${a}`,{method:'POST'});load()}catch{/* the list reloads either way */load()}}
+  return list.map(x=><div className="qbox" key={x.id} style={{marginTop:0,marginBottom:12}}><b>{tl("{name} wants to follow your progress",{name:x.name})}</b>
+    <p className="known" style={{margin:'6px 0 0'}}>{x.institution?x.institution+' · ':''}{tl("They would see which topics you have learned and your test scores, never your notes. For school students, their AI key can also give you AI help.")}</p>
+    <div className="two"><button className="btn" onClick={()=>answer(x,'accept')}>{tl("Accept")}</button><button className="btn ghost" onClick={()=>answer(x,'decline')}>{tl("Decline")}</button></div></div>)}
 
 function MyAiKey({toast}){
   const confirm=useConfirm(),g=useContext(Ctx).role==='guardian'  // a parent's or teacher's key is for the school students linked to them
@@ -479,6 +515,7 @@ function Dashboard({user,toast,onOpen,onStudy,onRoutine}){
     if(at===undefined){seen.set(c.id,courses.length);courses.push(item)}else if(courses[at].c.archived&&!c.archived)courses[at]=item}  // a course shown twice counts once, and a live place wins over an archived one
   const resume=(today?.focus||[]).filter(f=>f.kind==='resume').sort((a,b)=>(b.last_read||'').localeCompare(a.last_read||''))[0]||(today?.focus||[]).find(f=>f.kind==='next')
   return <><Bar title={tl(hi,{name:firstName(user.name)})}/><div className="main">
+    <Invitations/>
     <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic} onLoad={setSess}/>
     {!sess?.routine&&resume&&<div className="card"><button className="hit" onClick={()=>setTopic(resume.topic_id)}><span className="dot" style={{background:'var(--acc)'}}><Play size={18}/></span><div><b>{resume.title}</b><span>{resume.kind==='resume'?tl("Where you left off"):tl("Up next, if you like")} · {resume.course}</span></div><ChevronRight size={18}/></button></div>}
     <RecallCard open={setTopic}/>
