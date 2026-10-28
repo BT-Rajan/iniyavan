@@ -77,3 +77,12 @@ def test_csv_export_and_formula_injection_guard(env):
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv") and "attachment" in r.headers["content-disposition"]
     rows = list(csv.reader(io.StringIO(r.text.lstrip("\ufeff")))); assert rows[0][0] == "Name" and rows[1][0].startswith("'=HYPERLINK")
     c = env.c.get("/api/reports/courses?format=csv", headers=env.admin); assert c.text.lstrip("\ufeff").splitlines()[0].startswith("Program,Semester,Course")
+
+def test_drafts_count_nowhere_as_topics_or_reads(env):
+    i, unit = setup(env)
+    env.c.post("/api/topics", headers=env.fac, json={"title": "Draft one", "unit_id": unit, "published": False})
+    read("stu@x.com", "Water"); read("stu@x.com", "Draft one")  # a draft the student opened before it was unpublished
+    rows = env.c.get("/api/admin/reports/students", headers=env.admin).json()["items"]
+    assert {r["email"]: r["topics_read"] for r in rows}["stu@x.com"] == 1  # only the live topic counts as read
+    o = env.c.get("/api/overview", headers=env.fac).json(); course = [r for r in env.c.get("/api/reports/courses", headers=env.fac).json() if r["course"] == "Chem"][0]
+    assert o["drafts"] == 1 and o["topics"] == course["topics"]  # Home's topic count matches the course row; the draft is counted on its own
