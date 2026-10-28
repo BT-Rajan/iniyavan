@@ -37,6 +37,9 @@ The app is called Zigora (formerly Eng Tutor). The name comes from `APP_NAME` in
 ## Managing users from the terminal
 `./manage.sh add --name "Name" --email a@b.com [--role admin]` (prompts for the password), `passwd`, `enable`, `disable`, `role`, `list`. Use `VENV=/path/to/venv` if your venv is not `./venv`.
 
+## Sign in with Google
+Off until a Web client ID is set (Settings → Access, or `GOOGLE_CLIENT_ID` in `.env`). Works on the web and in the Android app; an account with the same email is linked on its first Google sign-in, and with self-registration on a new Google email can sign up without a code. Setup steps for the Google Cloud project (owned by Cogzidel Technologies): [docs/google-sign-in.md](docs/google-sign-in.md).
+
 ## Admins and passwords
 No account is created automatically. Create or reset the admin (creates it if missing, otherwise resets the password and makes sure it is an active admin):
 `./manage.sh admin --email you@example.com`. Reset any user with `./manage.sh passwd --email x@y.com`, or from the Admin tab in the app (Reset).

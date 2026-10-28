@@ -17,6 +17,8 @@ markdown = "0.39.0"
 robolectric = "4.17"
 roborazzi = "1.77.0"
 androidxJunit = "1.3.0"
+credentials = "1.5.0"
+googleid = "1.1.1"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -48,6 +50,9 @@ roborazzi-compose = { group = "io.github.takahirom.roborazzi", name = "roborazzi
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 compose-ui-test = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
+credentials-play = { group = "androidx.credentials", name = "credentials-play-services-auth", version.ref = "credentials" }
+googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

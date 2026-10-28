@@ -10,7 +10,7 @@ import main, uvicorn  # noqa: E402
 
 main.upgrade_schema()
 with main.Session_() as s:
-    s.merge(main.Setting(k="self_registration", v="1")); s.merge(main.Setting(k="deepseek_key", v="sk-college-key-not-for-school-children"))
+    s.merge(main.Setting(k="self_registration", v="1")); s.merge(main.Setting(k="google_client_id", v="1234567890-screens.apps.googleusercontent.com")); s.merge(main.Setting(k="deepseek_key", v="sk-college-key-not-for-school-children"))
     sch = main.Program(name="State Board", pattern="grade"); s.add(sch); s.flush()
     g6 = main.Semester(name="Grade 6", program_id=sch.id, semester_no=6); s.add(g6); s.flush()
     co = main.Course(name="Science", semester_id=g6.id, program_id=sch.id); s.add(co); s.flush()

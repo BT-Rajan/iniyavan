@@ -480,3 +480,5 @@ html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:in
 
 /* MCQ bank editor and notes */
 .optedit{display:flex;align-items:center;gap:8px;margin:6px 0}.optedit input:not([type=radio]){flex:1;min-width:0}.opts{border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:12px 0}.known.warn{color:var(--warn)}
+/* Sign in with Google: Google draws its own button in this box; a thin "or" line above it */
+.gbtn{display:flex;justify-content:center;min-height:44px;margin:4px 0 8px}.orline{display:flex;align-items:center;gap:10px;margin:12px 0 8px;color:var(--mut);font-size:13px}.orline:before,.orline:after{content:"";flex:1;border-top:1px solid var(--line)}

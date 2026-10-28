@@ -1,5 +1,8 @@
 package app.zigora.ui
 
+import app.zigora.data.json
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -61,6 +64,9 @@ fun SignIn(done: (Me) -> Unit) {
     var college by rememberSaveable { mutableStateOf<String?>(null) }
     var canRegister by rememberSaveable { mutableStateOf(false) }
     var canReset by rememberSaveable { mutableStateOf(false) }
+    var googleId by rememberSaveable { mutableStateOf<String?>(null) }  // set when the server offers Sign in with Google
+    var gTicket by rememberSaveable { mutableStateOf<String?>(null) }  // a Google email with no account yet: sign-up goes on without an email code
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var editing by rememberSaveable { mutableStateOf(app.store.server.isEmpty()) }
     var mode by rememberSaveable { mutableStateOf("in") } // in, forgot, register, code: the same steps as the web's sign-in page
     var email by rememberSaveable { mutableStateOf("") }
@@ -86,7 +92,7 @@ fun SignIn(done: (Me) -> Unit) {
         // "learn.college.edu", "169.58.13.213:5252" or a copied link to the web app: https is tried first, then plain http
         for (s in serverCandidates(typed)) {
             app.store.server = s
-            try { val c = app.api.get("/config", Config.serializer()); college = c.name; app.store.appName = c.name; canRegister = c.self_registration; canReset = c.email_reset; server = s; editing = false; msg = ""; return true }
+            try { val c = app.api.get("/config", Config.serializer()); college = c.name; app.store.appName = c.name; canRegister = c.self_registration; canReset = c.email_reset; googleId = c.google_client_id; server = s; editing = false; msg = ""; return true }
             catch (e: Exception) { msg = e.message.orEmpty() }
         }
         return false
@@ -100,6 +106,24 @@ fun SignIn(done: (Me) -> Unit) {
     fun go() = act {
         val r = app.api.send("POST", "/login", buildJsonObject { put("email", email.trim()); put("password", pw) }, LoginOut.serializer())
         app.store.token = r.token; done(r.user)
+    }
+    fun google() = act {  // Google's own sheet picks the account; the server checks the ID token it hands back
+        val id = googleId ?: return@act
+        val token = try {
+            val req = androidx.credentials.GetCredentialRequest.Builder()
+                .addCredentialOption(com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption.Builder(id).build()).build()
+            val cred = androidx.credentials.CredentialManager.create(ctx).getCredential(ctx, req).credential
+            if (cred is androidx.credentials.CustomCredential && cred.type == com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL)
+                com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(cred.data).idToken
+            else { msg = tl("Google sign-in didn't work. Try again."); return@act }
+        } catch (e: androidx.credentials.exceptions.GetCredentialCancellationException) { return@act }  // they closed Google's sheet
+        catch (e: androidx.credentials.exceptions.GetCredentialException) { msg = tl("Google sign-in didn't work. Try again."); return@act }
+        val r = app.api.raw("POST", "/login/google", buildJsonObject { put("credential", token) }).jsonObject
+        if (r["token"] != null) { val out = json.decodeFromJsonElement(LoginOut.serializer(), r); app.store.token = out.token; done(out.user) }
+        else {  // no account with this Google email: sign up, with the email Google checked and no password to choose
+            gTicket = r["ticket"]?.jsonPrimitive?.content; email = r["email"]?.jsonPrimitive?.content.orEmpty()
+            reg[0] = r["name"]?.jsonPrimitive?.content.orEmpty(); mode = "register"
+        }
     }
     if (!editing && college == null) LaunchedEffect(Unit) { check() }
     LaunchedEffect(mode) { if (mode == "register") { runCatching { domains = app.api.get("/register/status", RegStatus.serializer()).domains }; runCatching { opts = app.api.get("/register/options", ProgOpts.serializer()) } } }
@@ -117,7 +141,7 @@ fun SignIn(done: (Me) -> Unit) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next))
                 }
                 val error = @Composable { if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                val back = @Composable { TextButton(onClick = { mode = "in"; msg = ""; info = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.back_to_sign_in)) } }
+                val back = @Composable { TextButton(onClick = { mode = "in"; msg = ""; info = ""; if (gTicket != null) { gTicket = null; email = "" } }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.back_to_sign_in)) } }
                 when (mode) {
                     "forgot" -> {
                         Text(stringResource(R.string.forgot_title), style = MaterialTheme.typography.titleLarge)
@@ -146,7 +170,8 @@ fun SignIn(done: (Me) -> Unit) {
                     "form" -> {  // 3. the details; a parent adds each child, who signs in with a username
                         val school = level == "school"
                         Text(when (who) { "parent" -> tl("Your details"); "teacher" -> tl("Teacher sign-up"); else -> stringResource(R.string.create_account) }, style = MaterialTheme.typography.titleLarge)
-                        Quiet(stringResource(R.string.register_lead) + if (who != "parent" && domains.isNotEmpty()) " " + stringResource(R.string.use_institution_email, domains.joinToString(", ") { "@$it" }) else "")
+                        Quiet(if (gTicket != null) tl("Signing up with your Google account {email}.", "email" to email)
+                              else stringResource(R.string.register_lead) + if (who != "parent" && domains.isNotEmpty()) " " + stringResource(R.string.use_institution_email, domains.joinToString(", ") { "@$it" }) else "")
                         OutlinedTextField(reg[0], { reg[0] = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.full_name)) }, singleLine = true)
                         if (who != "parent") OutlinedTextField(reg[1], { reg[1] = it }, Modifier.fillMaxWidth(), label = { Text(if (school) tl("School") else tl("College")) }, singleLine = true)
                         if (who == "student") {
@@ -154,21 +179,31 @@ fun SignIn(done: (Me) -> Unit) {
                                 singleLine = true, placeholder = { Text(stringResource(R.string.id_number_hint)) })
                             PlacePicker(opts, level, prog, sem) { p, s -> prog = p; sem = s }
                         }
-                        emailField()
+                        if (gTicket == null) emailField()
                         OutlinedTextField(reg[3], { reg[3] = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.PhoneNumber }, label = { Text(stringResource(R.string.phone)) },
                             singleLine = true, placeholder = { Text("+91 98765 43210") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
-                        OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.NewPassword }, label = { Text(stringResource(R.string.password)) },
+                        if (gTicket == null) OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.NewPassword }, label = { Text(stringResource(R.string.password)) },
                             singleLine = true, visualTransformation = PasswordVisualTransformation(),
                             supportingText = { Text(if (who == "student" && !school) stringResource(R.string.register_password_note) else tl("At least 8 characters.")) })
+                        else Quiet(tl("You sign in with Google. You can set a password later with “Forgot password?”."))
                         if (who == "parent") {
                             Text(tl("Your children"), style = MaterialTheme.typography.titleMedium)
                             Quiet(tl("Each child signs in with their own username and password. They don't need an email."))
                             StudentRows(kids, opts, level, { n -> tl("Child {n}", "n" to n) }, tl("Add another child"), 8)
                         }
                         error()
-                        val ok = reg[0].isNotBlank() && email.isNotBlank() && reg[3].isNotBlank() && pw.isNotEmpty() && (who == "parent" || reg[1].isNotBlank()) &&
+                        val ok = reg[0].isNotBlank() && (gTicket != null || (email.isNotBlank() && pw.isNotEmpty())) && reg[3].isNotBlank() && (who == "parent" || reg[1].isNotBlank()) &&
                                  (who != "student" || school || reg[2].isNotBlank()) && (who != "student" || prog == null || sem != null) && (who != "parent" || kids.all { it.ok })
-                        Button(enabled = !busy && ok, modifier = Modifier.fillMaxWidth(), onClick = { act {
+                        val ticket = gTicket
+                        if (ticket != null) Button(enabled = !busy && ok, modifier = Modifier.fillMaxWidth(), onClick = { act {
+                            val r = app.api.send("POST", "/register/google", buildJsonObject {
+                                put("ticket", ticket); put("name", reg[0]); put("institution", if (who == "parent") "" else reg[1]); put("id_number", if (who == "student") reg[2] else ""); put("phone", reg[3])
+                                put("level", level); put("who", who); put("program_id", if (who == "student") prog else null); put("semester", if (who == "student") sem else null)
+                                put("children", studentsJson(if (who == "parent") kids else emptyList())); put("lang", app.resources.configuration.locales[0].language)
+                            }, LoginOut.serializer())
+                            app.store.token = r.token; done(r.user)
+                        } }) { Text(tl("Create my account")) }
+                        else Button(enabled = !busy && ok, modifier = Modifier.fillMaxWidth(), onClick = { act {
                             info = app.api.send("POST", "/register/start", buildJsonObject {
                                 put("name", reg[0]); put("institution", if (who == "parent") "" else reg[1]); put("id_number", if (who == "student") reg[2] else ""); put("email", email.trim()); put("phone", reg[3]); put("password", pw)
                                 put("level", level); put("who", who); put("program_id", if (who == "student") prog else null); put("semester", if (who == "student") sem else null)
@@ -210,6 +245,9 @@ fun SignIn(done: (Me) -> Unit) {
                         error()
                         Button(onClick = { go() }, enabled = !busy && email.isNotBlank() && pw.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
                             Text(stringResource(if (busy) R.string.signing_in else R.string.sign_in))
+                        }
+                        if (!editing && googleId != null) androidx.compose.material3.OutlinedButton(onClick = { google() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                            Text(tl("Sign in with Google"))
                         }
                         if (!editing) {
                             if (canReset) TextButton(onClick = { mode = "forgot"; msg = ""; info = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.forgot_password_q)) }

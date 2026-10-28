@@ -44,6 +44,7 @@ class User(Base):
     pro_until = Column(DateTime, nullable=True)  # a self-registered person an admin made "pro": the college's AI key with the usual limits until then
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
     digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)
+    google_sub = Column(String(64), unique=True, nullable=True)  # the Google account that signs in to this one (Google's own id for it, which never changes)
     username = Column(String(40), unique=True, nullable=True)  # sign-in name for a child a parent or teacher created (no email of their own); lower case
     relation = Column(String(10), nullable=True)  # a guardian's relation to the students they manage: "parent" or "teacher"
     level = Column(String(8), nullable=True)  # "school" or "college", chosen at sign-up; a student placed in a program takes it from the program instead
@@ -316,8 +317,9 @@ app = FastAPI(title=APP_NAME)
 ORIGINS = [o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if o.strip()]  # the app is same-origin; set this only for a separate front-end
 if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # the app bundle is ~850 KB; compressed it is about a quarter of that
-CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
-       "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+GSI = "https://accounts.google.com/gsi/"  # Sign in with Google: its script, the frame with its button, and its style, as Google's own CSP guide lists them
+CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' " + GSI + "style; font-src 'self' data:; "
+       "script-src 'self' " + GSI + "client; frame-src " + GSI + "; connect-src 'self' " + GSI + "; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
 FRAME_PATH = re.compile(r"^/api/(topics/\d+/frame|frame-preview/[\w-]+)$")
 SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/|^/api/me/lang$")  # student reading activity is already tracked as progress; a language choice is only a preference
 def audit_write(uid, method, path, status):
@@ -344,7 +346,8 @@ async def secure_headers(request: Request, call_next):
     return r
 
 @app.get("/api/config")
-def config(s: Session = Depends(db)): return {"self_registration": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on(s)}
+def config(s: Session = Depends(db)): return {"self_registration": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on(s),
+                                               "google_client_id": (google_ids(s) or [None])[0]}  # public by design: Google's button needs it
 class Branding(BaseModel): name: str | None = None; logo_url: str | None = None; remove_logo: bool = False
 LOGO_URL = re.compile(r"/api/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)")
 @app.put("/api/admin/branding")
@@ -640,22 +643,48 @@ def register_verify(b: VerifyIn, bg: BackgroundTasks, s: Session = Depends(db)):
     kids = json.loads(p.children or "[]")
     for k in kids:  # someone may have taken a username since the code was sent
         if s.query(User.id).filter_by(username=k["username"]).first(): raise HTTPException(400, f"The username {k['username']} was taken meanwhile. Go back, change it and ask for a new code.")
-    guardian = (p.who or "student") != "student"
-    u = User(name=p.name, email=email, pw=p.pw, lang=None if ui_lang(b.lang) == "en" else b.lang, role="guardian" if guardian else "student", relation=p.who if guardian else None, level=p.level, active=True, must_change=False,
-             institution=p.institution or None, id_number=p.id_number or None, phone=p.phone, self_registered=True,
-             program_id=None if guardian else p.program_id, semester=None if guardian else p.semester)
+    s.delete(p)
+    u = new_account(s, bg, bad, name=p.name, email=email, pw=p.pw, lang=b.lang, who=p.who, level=p.level, institution=p.institution, id_number=p.id_number, phone=p.phone,
+                    program_id=p.program_id, semester=p.semester, kids=kids)
+    return {"token": make_token(u), "user": me_json(u)}
+def new_account(s, bg, bad, *, name, email, pw, lang, who, level, institution, id_number, phone, program_id, semester, kids, google_sub=None):
+    """The account someone signed up for, with a parent's children or a teacher's students, then the welcome email. Both ways in end here:
+    an emailed code, or Google (which has already checked the email)."""
+    guardian = (who or "student") != "student"
+    u = User(name=name, email=email, pw=pw, lang=None if ui_lang(lang) == "en" else lang, role="guardian" if guardian else "student", relation=who if guardian else None, level=level, active=True,
+             must_change=False, institution=institution or None, id_number=id_number or None, phone=phone, self_registered=True, google_sub=google_sub,
+             program_id=None if guardian else program_id, semester=None if guardian else semester)
     s.add(u); s.flush()
     for k in kids:  # each child signs in on their own with the username their parent chose
-        c = User(name=k["name"], email=None, username=k["username"], pw=k["pw"], role="student", level=p.level, active=True, must_change=False,
+        c = User(name=k["name"], email=None, username=k["username"], pw=k["pw"], role="student", level=level, active=True, must_change=False,
                  program_id=k["program_id"], semester=k["semester"], self_registered=True)
         s.add(c); s.flush(); s.add(GuardianLink(guardian_id=u.id, student_id=c.id, status="active"))
-    s.delete(p)
     try: s.commit()
     except IntegrityError: s.rollback(); raise bad
     names = "".join(f"\n  {k['name']}: {k['username']}" for k in kids)
     notify(s, u, "welcome", "Welcome to {app}", "Your {app} account is ready. Sign in with {email}." if not kids else
            "Your {app} account is ready. Sign in with {email}.\n\nYour children sign in with these usernames and the passwords you chose:{names}" if u.relation == "parent" else
            "Your {app} account is ready. Sign in with {email}.\n\nYour students sign in with these usernames and the passwords you chose:{names}", run=bg.add_task, email=email, names=names)
+    return u
+class GoogleSignupIn(RegisterIn): ticket: str; email: str = ""; password: str = ""  # the email comes from Google; there is no password to choose
+@app.post("/api/register/google")
+def register_google(b: GoogleSignupIn, bg: BackgroundTasks, s: Session = Depends(db)):
+    """Sign-up after Sign in with Google found no account: the same details as the form, but the email is the one Google checked, so no code is
+    sent. The account has no password anyone knows; "Forgot your password?" can give it one later."""
+    if not reg_open(s): raise HTTPException(403, "Self-registration is not open here. Ask your admin for an account.")
+    expired = HTTPException(400, "Your Google sign-in has expired. Sign in with Google again.")
+    try: t = jwt.decode(b.ticket, SECRET, algorithms=["HS256"])
+    except jwt.InvalidTokenError: raise expired
+    if t.get("use") != "gsignup" or not t.get("email") or not t.get("sub"): raise expired
+    b.email, b.password = t["email"], secrets.token_urlsafe(24)
+    name, inst, idn, email, phone = clean_registration(b, s)
+    taken = HTTPException(409, "An account already uses this Google account or email. Sign in with Google.")
+    if s.query(User.id).filter(or_(User.email == email, User.google_sub == t["sub"])).first(): raise taken
+    if idn and same_id(s, inst, idn): raise HTTPException(400, "An account already exists for that institution ID. Sign in, or ask your admin.")
+    pid, sem = check_place(s, b.level, b.program_id, b.semester) if b.who == "student" and b.level else (None, None)
+    kids = clean_children(b, s)
+    u = new_account(s, bg, taken, name=name, email=email, pw=hp(b.password), lang=b.lang, who=b.who, level=b.level, institution=inst, id_number=idn, phone=phone,
+                    program_id=pid, semester=sem, kids=kids, google_sub=str(t["sub"])[:64])
     return {"token": make_token(u), "user": me_json(u)}
 @app.post("/api/register/resend")
 def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
@@ -679,6 +708,10 @@ def _addcol(table, col, typ):
     def go(c):
         if col not in [x["name"] for x in inspect(c).get_columns(table)]: c.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
     return go
+def google_columns(c):  # users.google_sub, one Google account per account (a unique index lets any number of accounts have none)
+    _addcol("users", "google_sub", "VARCHAR(64) NULL")(c); ins = inspect(c)
+    if not any(x["column_names"] == ["google_sub"] for x in ins.get_indexes("users") + ins.get_unique_constraints("users")):
+        c.execute(text("CREATE UNIQUE INDEX ix_users_google_sub ON users (google_sub)"))
 # Copied parent ids (subjects.course_id = program, topics.subject_id / quizzes.course_id = course) are re-derived from the real parent,
 # but only where that parent exists; rows with a missing parent are left alone and reported. Plain SQL that MariaDB and SQLite both accept.
 REPAIRS = [
@@ -805,7 +838,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0027_users_guardians", guardian_columns),
               ("0028_pending_onboarding", lambda c: [_addcol("pending_registrations", col, typ)(c) for col, typ in (("who", "VARCHAR(10) NULL"), ("level", "VARCHAR(8) NULL"),
                                                      ("program_id", "INTEGER NULL"), ("semester", "INTEGER NULL"), ("children", "TEXT NULL"))]),
-              ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__]))]  # new tables only
+              ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__])),  # new tables only
+              ("0030_users_google", lambda c: google_columns(c))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -858,7 +892,7 @@ def place_line(s, u):  # "B.E. Mechanical · Semester 3", or "" when not placed 
 def guardian_students(s, gid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.student_id == User.id).filter(GuardianLink.guardian_id == gid, GuardianLink.status == status).all()
 def guardians_of(s, sid, status="active"): return s.query(User).join(GuardianLink, GuardianLink.guardian_id == User.id).filter(GuardianLink.student_id == sid, GuardianLink.status == status).all()
 def me_json(u): return {"id": u.id, "name": u.name, "role": u.role, "must_change": bool(u.must_change), "self_registered": bool(u.self_registered), "placed": is_staff(u) or bool(u.program_id), "lang": u.lang or "en",
-                     "username": u.username, "relation": u.relation, "level": stage_of(u), "ai_off": school_learner(u) and not guardian_key(u, object_session(u))}
+                     "username": u.username, "relation": u.relation, "level": stage_of(u), "google": bool(u.google_sub), "ai_off": school_learner(u) and not guardian_key(u, object_session(u))}
 @app.post("/api/login")
 def login(b: Login, request: Request, s: Session = Depends(db)):
     global DUMMY
@@ -870,6 +904,42 @@ def login(b: Login, request: Request, s: Session = Depends(db)):
     clear_fails(s, email, ip)
     if stale(u.pw) and not u.must_change: u.pw = hp(b.password); s.commit()  # quietly upgrade old hashes
     return {"token": make_token(u), "user": me_json(u)}
+# ---- Sign in with Google. Google's button gives the app an ID token for the person's verified email; the server checks its signature against
+# ---- Google's published keys, that it was issued for this site's client ID (Settings > Google sign-in; the client is created in Cogzidel
+# ---- Technologies' Google Cloud project), by Google, and not expired. It signs in the account that uses that Google account, or the one with that
+# ---- email (which then becomes linked). An email with no account may start sign-up instead, when sign-up is open.
+GOOGLE_KEYS, GOOGLE_ISSUERS, GSIGNUP_MINUTES = "https://www.googleapis.com/oauth2/v3/certs", ("accounts.google.com", "https://accounts.google.com"), 30
+GOOGLE_ID = re.compile(r"[0-9]+-[0-9a-z]+\.apps\.googleusercontent\.com")
+_google_jwks = None
+def google_ids(s):  # the client IDs a token may be for: the web client first (the apps on Android ask for a token for it too)
+    return [x.strip() for x in (setting(s, "google_client_id") or os.getenv("GOOGLE_CLIENT_ID") or "").split(",") if x.strip()]
+def google_claims(token, audiences):
+    """The checked claims of a Google ID token. Raises jwt.PyJWKClientError when Google's keys can't be fetched, jwt.InvalidTokenError otherwise."""
+    global _google_jwks
+    if _google_jwks is None: _google_jwks = jwt.PyJWKClient(GOOGLE_KEYS, cache_keys=True, lifespan=3600, timeout=10)
+    c = jwt.decode(token, _google_jwks.get_signing_key_from_jwt(token).key, algorithms=["RS256"], audience=audiences, options={"require": ["exp", "iat", "sub", "iss", "aud"]})
+    if c.get("iss") not in GOOGLE_ISSUERS: raise jwt.InvalidIssuerError("not Google")
+    return c
+class GoogleIn(BaseModel): credential: str
+@app.post("/api/login/google")
+def login_google(b: GoogleIn, request: Request, s: Session = Depends(db)):
+    ids = google_ids(s)
+    if not ids: raise HTTPException(404, "Sign in with Google is not set up here. Use your email and password.")
+    ip = client_ip(request); key = f"google:{ip}"[:190]; throttle(s, key, ip)  # bad tokens from one network wait a while; nobody else is held up
+    try: c = google_claims(b.credential.strip()[:4096], ids)
+    except jwt.PyJWKClientError: raise HTTPException(503, "Google could not be reached. Try again in a moment, or use your password.")
+    except jwt.InvalidTokenError: note_fail(s, key, ip); raise HTTPException(401, "Google sign-in didn't work. Try again.")
+    email, sub = str(c.get("email") or "").strip().lower()[:190], str(c["sub"])[:64]
+    if not email or c.get("email_verified") is not True: raise HTTPException(401, "Your Google account's email isn't verified, so it can't be used here.")
+    u = s.query(User).filter_by(google_sub=sub).first() or s.query(User).filter_by(email=email).first()
+    if u:
+        if u.google_sub and u.google_sub != sub: raise HTTPException(409, "This account is linked to a different Google account. Use that one, or your password.")
+        if not u.active: raise HTTPException(403, "Account disabled. Ask your admin.")
+        if not u.google_sub: u.google_sub = sub  # linked: from now on this Google account signs in here, even if its email changes
+        s.commit(); return {"token": make_token(u), "user": me_json(u)}
+    if not reg_open(s): raise HTTPException(404, "No account uses this Google email. Ask your admin for an account, or sign in with your password.")
+    ticket = jwt.encode({"use": "gsignup", "sub": sub, "email": email, "exp": dt.datetime.utcnow() + dt.timedelta(minutes=GSIGNUP_MINUTES)}, SECRET)  # never a sign-in: me() refuses any token with "use"
+    return {"new": True, "ticket": ticket, "email": email, "name": str(c.get("name") or "")[:100]}
 AUDIT_ACTIONS = {"created": ["POST"], "changed": ["PUT", "PATCH"], "deleted": ["DELETE"]}
 @app.get("/api/admin/audit")
 def audit_list(q: str = "", action: str = "", result: str = "", days: int = 0, sort: str = "newest", format: str = "json", limit: int = 100, offset: int = 0,
@@ -1127,7 +1197,8 @@ USORT = {"name": (func.lower(User.name),), "role": (User.role, func.lower(User.n
          "semester": (func.coalesce(User.semester, 99), func.lower(User.name)), "newest": (User.id.desc(),)}
 def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester,
                            "self_registered": bool(u.self_registered), "institution": u.institution, "id_number": u.id_number, "phone": u.phone, "own_ai_key": bool(u.ai_key),
-                           "plan": ai_plan(u), "pro_until": utc_iso(u.pro_until) if pro_active(u) else None, "relation": u.relation, "username": u.username}
+                           "plan": ai_plan(u), "pro_until": utc_iso(u.pro_until) if pro_active(u) else None, "relation": u.relation, "username": u.username,
+                           "google": bool(u.google_sub)}
 @app.get("/api/admin/users")
 def users(q: str = "", program_id: int | None = None, semester: int | None = None, role: str = "", order: str = "role", limit: int = 50, offset: int = 0, plan: str = "",
           _: User = Depends(admin), s: Session = Depends(db)):
@@ -1484,11 +1555,12 @@ class Cfg(BaseModel):
     vision_key: str | None = None; vision_model: str | None = None; remove_vision_key: bool = False
     budget_deepseek: int | None = None; budget_claude: int | None = None  # tokens a month on the college's keys; 0 means no limit
     lite_searches: int | None = None; lite_minutes: int | None = None  # the free daily allowance of self-registered (lite) people
+    google_client_id: str | None = None  # Sign in with Google: the web client ID (more, comma separated); empty turns it off
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
     k = ai_key(s)
     vk = vision_key(s)
-    return {"mail_on": mail_on(s), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
+    return {"mail_on": mail_on(s), "google_client_id": ",".join(google_ids(s)), "google_from_env": not setting(s, "google_client_id") and bool(os.getenv("GOOGLE_CLIENT_ID")), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
             "vision_set": bool(vk), "vision_hint": ("…" + vk[-4:]) if vk else "", "vision_model": setting(s, "vision_model", VISION_MODEL), "ocr": ocr_ready(),
             "budget": {p: budget(s, p) for p in ("deepseek", "claude")},
             "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count(),
@@ -1506,6 +1578,11 @@ def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     for k, v in (("vision_key", b.vision_key), ("vision_model", b.vision_model)):
         if v and v.strip() and not (k == "vision_key" and b.remove_vision_key): s.merge(Setting(k=k, v=v.strip()))
     if b.self_registration is not None: s.merge(Setting(k="self_registration", v="1" if b.self_registration else "0"))
+    if b.google_client_id is not None:
+        ids = [x.strip() for x in b.google_client_id.split(",") if x.strip()]
+        if any(not GOOGLE_ID.fullmatch(x) for x in ids): raise HTTPException(400, "A Google client ID looks like 123456789-abc123.apps.googleusercontent.com")
+        if ids: s.merge(Setting(k="google_client_id", v=",".join(ids)))
+        else: s.query(Setting).filter_by(k="google_client_id").delete()
     for k, v in (("lite_searches", b.lite_searches), ("lite_minutes", b.lite_minutes)):
         if v is not None:
             if not 0 <= v <= 1000: raise HTTPException(400, "Enter a number from 0 to 1000")

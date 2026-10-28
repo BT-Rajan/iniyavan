@@ -53,21 +53,21 @@ const AuthFrame=({logo,name,children,lang,pick})=><div className="auth"><div cla
   <div className="bands"><i style={{background:'#722f99'}}/><i style={{background:'#c5c1c1'}}/><i style={{background:'#fee7c8'}}/><i style={{background:'#ff9292'}}/></div></aside>{children}</div>
 
 export default function App(){
-  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Zigora'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null),[findQ,setFindQ]=useState({q:'',n:0}),[lang,setLangS]=useState(()=>applyLang(firstLang())),picked=useRef(false)
+  const [user,setUser]=useState(null),[ready,setReady]=useState(false),[pageSel,setPage]=useState(null),[msg,setMsg]=useState(''),[open,setOpen]=useState(false),[name,setName]=useState('Zigora'),[canReset,setCanReset]=useState(false),[canReg,setCanReg]=useState(false),[googleId,setGoogleId]=useState(null),[resetTok,setResetTok]=useState(()=>(/^#reset=([\w-]+)$/.exec(location.hash)||[])[1]||null),[start,setStart]=useState(null),[logo,setLogo]=useState(null),[theme,setTheme]=useState(readTheme),[ask,setAsk]=useState(null),[studyStart,setStudyStart]=useState(null),[findQ,setFindQ]=useState({q:'',n:0}),[lang,setLangS]=useState(()=>applyLang(firstLang())),picked=useRef(false)
   const confirm=useCallback(o=>new Promise(res=>setAsk({o,res})),[])  // in-app replacement for window.confirm: await confirm({title,body,ok,danger})
   const toast=useCallback(m=>{setMsg(m);setTimeout(()=>setMsg(''),2800)},[])
   const pickLang=useCallback(async l=>{picked.current=true;await loadLang(l).catch(()=>{});setLangS(applyLang(l));api('/me/lang',{method:'PUT',body:{lang:l}}).catch(()=>{/* signed out: kept on this device until sign-in */})},[])
   useEffect(()=>{if(!user)return  // signed in: a language picked just now goes to the account; otherwise the account's language is used
     if(picked.current&&user.lang!==lang)api('/me/lang',{method:'PUT',body:{lang}}).catch(()=>{})
     else if(!picked.current&&user.lang&&user.lang!==lang)loadLang(user.lang).catch(()=>{}).then(()=>setLangS(applyLang(user.lang)))},[user])
-  useEffect(()=>{Promise.allSettled([loadLang(lang),api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
+  useEffect(()=>{Promise.allSettled([loadLang(lang),api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);setGoogleId(c.google_client_id||null);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
   useEffect(()=>{applyTheme(theme);if(theme!=='system')return;const m=matchMedia('(prefers-color-scheme: dark)'),f=()=>applyTheme('system');m.addEventListener('change',f);return()=>m.removeEventListener('change',f)},[theme])
   const pickTheme=t=>{setTheme(t);try{t==='system'?localStorage.removeItem('theme'):localStorage.theme=t}catch{/* private mode: the choice lasts until the page closes */}}
   useEffect(()=>{const k=e=>e.key==='Escape'&&setOpen(false);addEventListener('keydown',k);return()=>removeEventListener('keydown',k)},[])
   useEffect(()=>{document.body.style.overflow=open?'hidden':''},[open])
   if(!ready)return null
   if(resetTok)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ResetPassword token={resetTok} toast={toast} msg={msg} canReset={canReset} appName={name} logo={logo} done={u=>{history.replaceState(null,'',location.pathname);setResetTok(null);setUser(u);toast(tl("Password changed. You are signed in."))}} leave={()=>{history.replaceState(null,'',location.pathname);setResetTok(null)}}/></AuthFrame>
-  if(!user)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg}/></AuthFrame>
+  if(!user)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><Login onIn={setUser} toast={toast} msg={msg} appName={name} logo={logo} canReset={canReset} canReg={canReg} googleId={googleId}/></AuthFrame>
   if(user.must_change)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',guardian=user.role==='guardian',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
@@ -100,11 +100,24 @@ export default function App(){
     {ask&&<Confirm o={ask.o} answer={ok=>{ask.res(ok);setAsk(null)}}/>}
   </Ctx.Provider>}
 
-function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
-  const [f,setF]=useState({email:'',password:''}),[b,setB]=useState(false),[mode,setMode]=useState('in'),[sent,setSent]=useState('')
+// Sign in with Google: Google's own button (its script loads only when an admin has set the client ID); it hands back an ID token the server checks
+let gsiLoad=null
+function GoogleButton({clientId,onCredential,text='signin_with'}){
+  const box=useRef(null),cb=useRef(onCredential);cb.current=onCredential
+  useEffect(()=>{let gone=false
+    gsiLoad=gsiLoad||new Promise((ok,no)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.async=true;s.onload=ok;s.onerror=()=>{gsiLoad=null;no()};document.head.appendChild(s)})
+    gsiLoad.then(()=>{if(gone||!box.current)return;const g=window.google.accounts.id
+      g.initialize({client_id:clientId,callback:r=>cb.current(r.credential),ux_mode:'popup',use_fedcm_for_prompt:true})
+      g.renderButton(box.current,{theme:'outline',size:'large',shape:'pill',text,width:Math.min(box.current.offsetWidth||320,400),locale:getLang()})}).catch(()=>{})
+    return()=>{gone=true}},[clientId,text])
+  return <div className="gbtn" ref={box}/>}
+function Login({onIn,toast,msg,appName,logo,canReset,canReg,googleId}){
+  const [f,setF]=useState({email:'',password:''}),[b,setB]=useState(false),[mode,setMode]=useState('in'),[sent,setSent]=useState(''),[gsign,setGsign]=useState(null)
+  const withGoogle=async credential=>{setB(true);try{const r=await api('/login/google',{method:'POST',body:{credential}})
+    if(r.token){localStorage.t=r.token;onIn(r.user)}else if(r.new){setGsign(r);setMode('register')}}catch(e){toast(e.message)}setB(false)}
   const go=async()=>{setB(true);try{const r=await api('/login',{method:'POST',body:f});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
   const forgot=async()=>{setB(true);try{setSent((await api('/forgot',{method:'POST',body:{email:f.email}})).message)}catch(e){toast(e.message)}setB(false)}
-  if(mode==='register')return <Register onIn={onIn} toast={toast} msg={msg} appName={appName} logo={logo} back={()=>setMode('in')}/>
+  if(mode==='register')return <Register onIn={onIn} toast={toast} msg={msg} appName={appName} logo={logo} google={gsign} back={()=>{setMode('in');setGsign(null)}}/>
   if(mode==='forgot')return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Forgot your password?")}</h1>{sent?<p>{sent}</p>:<><p>{tl("Enter your account email and we will send a link to choose a new one.")}</p><p className="known">{tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>
     <label>{tl("Email")}</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
     <button className="btn" disabled={b||!f.email} onClick={forgot}>{tl("Send reset link")}</button></>}
@@ -113,6 +126,7 @@ function Login({onIn,toast,msg,appName,logo,canReset,canReg}){
     <label>{tl("Email or username")}</label><input type="text" autoCapitalize="none" autoComplete="username" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
     <label>{tl("Password")}</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
     <button className="btn" disabled={b} onClick={go}>{tl("Sign in")}</button>
+    {googleId&&<><div className="orline"><span>{tl("or")}</span></div><GoogleButton clientId={googleId} onCredential={withGoogle}/></>}
     {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>{tl("Forgot password?")}</button>:<p className="known">{tl("Forgot your password? Ask your admin to reset it.")} {tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>{tl("Create an account")}</button>}<Toast msg={msg}/></div>}
 
 const KID={name:'',username:'',password:'',program_id:'',semester:''}
@@ -121,19 +135,20 @@ function Place({opts,level,v,set,id}){  // a program of the chosen level and one
   return <><label htmlFor={id+'p'}>{level==='school'?tl("School board or program"):tl("Program")}</label>
     <select id={id+'p'} value={v.program_id} onChange={e=>set({program_id:e.target.value,semester:''})}><option value="">{tl("Not listed: my admin will place me")}</option>{ps.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
     {p&&<><label htmlFor={id+'t'}>{tl(p.term)}</label><select id={id+'t'} value={v.semester} onChange={e=>set({semester:e.target.value})}><option value="">{tl("Choose")}</option>{p.terms.map(n=><option key={n} value={n}>{tl(p.term)} {n}</option>)}</select></>}</>}
-function Register({onIn,toast,msg,appName,logo,back}){  // school or college, then who is signing up, then the details; a code by email confirms it
+function Register({onIn,toast,msg,appName,logo,back,google}){  // school or college, then who is signing up, then the details; a code by email confirms it (none after Google, which checked the email)
   const [level,setLevel]=useState(''),[who,setWho]=useState(''),[opts,setOpts]=useState({school:[],college:[]})
-  const [f,setF]=useState({name:'',institution:'',id_number:'',email:'',phone:'',password:'',program_id:'',semester:''}),[kids,setKids]=useState([{...KID}])
+  const [f,setF]=useState({name:google?.name||'',institution:'',id_number:'',email:google?.email||'',phone:'',password:'',program_id:'',semester:''}),[kids,setKids]=useState([{...KID}])
   const [stage,setStage]=useState('level'),[code,setCode]=useState(''),[b,setB]=useState(false),[wait,setWait]=useState(0),[info,setInfo]=useState(''),[st,setSt]=useState({domains:[]})
   useEffect(()=>{api('/register/status').then(setSt).catch(()=>{});api('/register/options').then(setOpts).catch(()=>{})},[])
   useEffect(()=>{if(wait<=0)return;const t=setTimeout(()=>setWait(wait-1),1000);return()=>clearTimeout(t)},[wait])
   const set=k=>e=>setF({...f,[k]:e.target.value}),setKid=(i,o)=>setKids(kids.map((k,j)=>j===i?{...k,...o}:k))
   const placed=x=>!x.program_id||!!x.semester,num=v=>v===''?null:+v
-  const ok=['name','email','phone','password'].every(k=>f[k].trim())&&(who==='parent'||f.institution.trim())&&(who!=='student'||level==='school'||f.id_number.trim())
+  const ok=(google?['name','phone']:['name','email','phone','password']).every(k=>f[k].trim())&&(who==='parent'||f.institution.trim())&&(who!=='student'||level==='school'||f.id_number.trim())
     &&(who!=='student'||placed(f))&&(who!=='parent'||kids.every(k=>k.name.trim()&&k.username.trim()&&k.password&&placed(k)))
   const body=()=>({...f,lang:getLang(),level,who,program_id:who==='student'?num(f.program_id):null,semester:who==='student'?num(f.semester):null,
     children:who==='parent'?kids.map(k=>({...k,program_id:num(k.program_id),semester:num(k.semester)})):[]})
-  const start=async()=>{setB(true);try{const r=await api('/register/start',{method:'POST',body:body()});setInfo(r.message);setStage('code');setWait(30)}catch(e){toast(e.message)}setB(false)}
+  const start=async()=>{setB(true);try{if(google){const r=await api('/register/google',{method:'POST',body:{...body(),ticket:google.ticket}});localStorage.t=r.token;onIn(r.user)}
+    else{const r=await api('/register/start',{method:'POST',body:body()});setInfo(r.message);setStage('code');setWait(30)}}catch(e){toast(e.message)}setB(false)}
   const verify=async()=>{setB(true);try{const r=await api('/register/verify',{method:'POST',body:{email:f.email,code,lang:getLang()}});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
   const resend=async()=>{try{await api('/register/resend',{method:'POST',body:{email:f.email,lang:getLang()}});toast(tl("A new code is on its way"));setWait(30);setCode('')}catch(e){toast(e.message)}}
   const head=<Lockup logo={logo} name={appName}/>,foot=<Toast msg={msg}/>
@@ -151,15 +166,15 @@ function Register({onIn,toast,msg,appName,logo,back}){  // school or college, th
       .map(([k,l,d])=><button key={k} className="btn choice" onClick={()=>{setWho(k);setStage('form')}}><b>{l}</b><small>{d}</small></button>)}
     <button className="btn ghost" onClick={()=>setStage('level')}>{tl("Back")}</button>{foot}</div>
   const school=level==='school'
-  return <div className="login">{head}<h1>{who==='parent'?tl("Your details"):who==='teacher'?tl("Teacher sign-up"):tl("Create an account")}</h1><p>{tl("We will email you a code to confirm your address.")}{who!=='parent'&&st.domains.length>0&&tl(" Use your institution email ({domains}).",{domains:st.domains.map(d=>'@'+d).join(', ')})}</p>
+  return <div className="login">{head}<h1>{who==='parent'?tl("Your details"):who==='teacher'?tl("Teacher sign-up"):tl("Create an account")}</h1><p>{google?tl("Signing up with your Google account {email}.",{email:google.email}):tl("We will email you a code to confirm your address.")}{!google&&who!=='parent'&&st.domains.length>0&&tl(" Use your institution email ({domains}).",{domains:st.domains.map(d=>'@'+d).join(', ')})}</p>
     <label htmlFor="rn">{tl("Full name")}</label><input id="rn" autoComplete="name" value={f.name} onChange={set('name')}/>
     {who!=='parent'&&<><label htmlFor="ri">{school?tl("School"):tl("College")}</label><input id="ri" autoComplete="organization" value={f.institution} onChange={set('institution')}/></>}
     {who==='student'&&<><label htmlFor="rid">{school?tl("Roll number (optional)"):tl("ID number")}</label><input id="rid" value={f.id_number} onChange={set('id_number')} placeholder={tl("Roll or employee number")}/>
       <Place id="me" opts={opts} level={level} v={f} set={o=>setF({...f,...o})}/></>}
-    <label htmlFor="re">{tl("Email")}</label><input id="re" type="email" autoComplete="email" value={f.email} onChange={set('email')}/>
+    {!google&&<><label htmlFor="re">{tl("Email")}</label><input id="re" type="email" autoComplete="email" value={f.email} onChange={set('email')}/></>}
     <label htmlFor="rp">{tl("Phone")}</label><input id="rp" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} placeholder="+91 98765 43210"/>
-    <label htmlFor="rw">{tl("Password")}</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/>
-    <p className="known">{tl("At least 8 characters.")}{who==='student'&&!school?' '+tl("AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more."):''}</p>
+    {!google&&<><label htmlFor="rw">{tl("Password")}</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/></>}
+    <p className="known">{google?tl("You sign in with Google. You can set a password later with “Forgot password?”."):tl("At least 8 characters.")}{who==='student'&&!school?' '+tl("AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more."):''}</p>
     {who==='parent'&&<><h3 className="sec">{tl("Your children")}</h3><p className="known" style={{marginTop:0}}>{tl("Each child signs in with their own username and password. They don't need an email.")}</p>
       {kids.map((k,i)=><div className="qbox" key={i}><b>{tl("Child {n}",{n:i+1})}</b>
         <label htmlFor={'kn'+i}>{tl("Name")}</label><input id={'kn'+i} value={k.name} onChange={e=>setKid(i,{name:e.target.value})}/>
@@ -168,7 +183,7 @@ function Register({onIn,toast,msg,appName,logo,back}){  // school or college, th
         <Place id={'k'+i} opts={opts} level={level} v={k} set={o=>setKid(i,o)}/>
         {kids.length>1&&<button className="tool" onClick={()=>setKids(kids.filter((_,j)=>j!==i))}>{tl("Remove this child")}</button>}</div>)}
       {kids.length<8&&<button className="btn ghost" onClick={()=>setKids([...kids,{...KID}])}>{tl("Add another child")}</button>}</>}
-    <button className="btn" disabled={b||!ok} onClick={start}>{tl("Send me a code")}</button><button className="btn ghost" onClick={()=>setStage('who')}>{tl("Back")}</button>{foot}</div>}
+    <button className="btn" disabled={b||!ok} onClick={start}>{google?tl("Create my account"):tl("Send me a code")}</button><button className="btn ghost" onClick={()=>setStage('who')}>{tl("Back")}</button>{foot}</div>}
 function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher's students: add them, invite them (teachers), see their progress, and the AI key that covers them
   const confirm=useConfirm()
   const [d,setD]=useState(null),[k,setK]=useState(null),[opts,setOpts]=useState({school:[],college:[]}),[add,setAdd]=useState(null),[inv,setInv]=useState(''),[sent,setSent]=useState(''),[see,setSee]=useState(null),[b,setB]=useState(false)
@@ -273,6 +288,12 @@ function SelfReg({cfg,run}){
     <h3 className="sec">{tl("Free daily AI for self-registered people (Lite)")}</h3>
     <p className="known">{tl("They use your DeepSeek key within this allowance each day. Beyond it they can add their own key, or ask you for more: make them Pro until a date from Users. Saved answers never count.")}</p>
     <LiteLimits cfg={cfg} run={run}/></>}
+function GoogleSetting({cfg,run}){  // Sign in with Google: the web client ID from the Google Cloud project; the button shows on the sign-in page once it is set
+  const [v,setV]=useState(null),shown=v??cfg.google_client_id??''
+  return <><h3 className="sec">{tl("Sign in with Google")}</h3>
+    <p className="known">{cfg.google_client_id?tl("On. The sign-in page shows Google's button. An account with the same email is linked the first time; with self-registration on, a new Google email can sign up without a code."):tl("Off. Paste the Web client ID from the Google Cloud project to turn it on.")}{cfg.google_from_env?' '+tl("It is set in the server's .env file."):''}</p>
+    <label htmlFor="gcid">{tl("Google Web client ID")}</label><input id="gcid" value={shown} onChange={e=>setV(e.target.value)} placeholder="123456789-abc123.apps.googleusercontent.com" autoComplete="off" spellCheck={false}/>
+    <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{google_client_id:shown.trim()}}).then(()=>setV(null)),shown.trim()?'Google sign-in is on':'Google sign-in is off')}>{tl("Save")}</button></>}
 function LiteLimits({cfg,run}){
   const [v,setV]=useState(null),cur=v||{searches:String(cfg.lite?.searches??10),minutes:String(cfg.lite?.minutes??20)}
   return <><div className="two"><div><label htmlFor="ls">{tl("AI searches a day")}</label><input id="ls" type="number" min="0" max="1000" value={cur.searches} onChange={e=>setV({...cur,searches:e.target.value})}/></div>
@@ -2081,7 +2102,7 @@ function AiConfig({toast,onBrand}){
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{budget_deepseek:+lim.deepseek||0,budget_claude:+lim.claude||0}}),'Allowance saved')}>{tl("Save allowance")}</button>
     <p className="known" style={{marginTop:20}}>{tl("One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {v} answers are saved so far, which has saved about {v2} tokens.",{v:(st.cached??0).toLocaleString(),v2:(st.tokens_saved??0).toLocaleString()})}</p>
     </>}{tab==='prompts'&&<PromptEditor toast={toast}/>}
-    {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/>
+    {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/><GoogleSetting cfg={cfg} run={run}/>
     <h3 className="sec">{tl("Password reset email")}</h3><p className="known">{cfg.mail_on?tl("On. People can reset their own password from the sign-in page."):tl("Off. The sign-in page tells people to ask an admin. Set up a sender under Email to turn it on.")}</p>
     {!cfg.mail_on&&<button className="btn ghost" onClick={()=>setTab('mail')}>{tl("Set up email")}</button>}</>}
     {tab==='mail'&&<MailSettings toast={toast} onSaved={load}/>}</div></>}

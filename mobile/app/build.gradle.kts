@@ -82,6 +82,9 @@ dependencies {
     implementation(libs.coil.okhttp)
     implementation(libs.markdown.m3)
     implementation(libs.markdown.coil)
+    implementation(libs.credentials)  // Sign in with Google, through Android's Credential Manager
+    implementation(libs.credentials.play)
+    implementation(libs.googleid)
     debugImplementation(libs.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(platform(libs.compose.bom))

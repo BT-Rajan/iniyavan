@@ -64,6 +64,12 @@ class AccountTest {
         assertTrue("a child's plan is not shown as Lite", none("Free each day"))
     }
 
+    @Test fun theSignInScreenOffersGoogle() {  // the server has a Google client ID: its button sits under Sign in (Google's own sheet can't open here)
+        app.store.server = server; app.store.signOut()
+        rule.setContent { ZigoraRoot(null) {} }
+        see("Sign in with Google"); see("Create an account"); shot("account-04-sign-in-with-google")
+    }
+
     @Test fun anAdminGivesMoreAi() {
         signIn("admin@x.com")
         rule.setContent { ZigoraRoot(null) {} }
