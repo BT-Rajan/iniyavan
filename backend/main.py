@@ -11,8 +11,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from guardrails import GUARDRAILS, GUARD_VERSION, SUPPORT, checked, crisis, fence
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Date, func, or_, and_, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, Boolean, UniqueConstraint, Date, func, or_, and_, inspect, text, case
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker, declarative_base, Session, object_session
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -760,7 +760,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0026_users_pro_until", _addcol("users", "pro_until", "DATETIME NULL")),
               ("0027_users_guardians", guardian_columns),
               ("0028_pending_onboarding", lambda c: [_addcol("pending_registrations", col, typ)(c) for col, typ in (("who", "VARCHAR(10) NULL"), ("level", "VARCHAR(8) NULL"),
-                                                     ("program_id", "INTEGER NULL"), ("semester", "INTEGER NULL"), ("children", "TEXT NULL"))])]
+                                                     ("program_id", "INTEGER NULL"), ("semester", "INTEGER NULL"), ("children", "TEXT NULL"))]),
+              ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__]))]  # new tables only
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -919,7 +920,8 @@ def student_progress(sid: int, u: User = Depends(guardian_only), s: Session = De
         tids, reads, done, last, qids, bests = course_stats(c, [x], s); b = bests[x.id]
         rows.append({"course": c.name, "topics": len(tids), "completed": done[x.id], "opened": reads[x.id], "last_active": utc_iso(last.get(x.id)),
                      "tests": len(qids), "tests_taken": len(b), "test_average": round(sum(b.values()) / len(b)) if b else None})
-    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows, "can_reset": not x.email, "program_id": x.program_id, "semester": x.semester}  # a username account: no email to reset from
+    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows, "can_reset": not x.email, "program_id": x.program_id, "semester": x.semester,  # a username account: no email to reset from
+            **({"mcq": mcq_summary(s, x.id)} if u.relation == "teacher" else {})}  # MCQ practice is a teacher's to see, not a parent's
 class StudentPwIn(BaseModel): password: str
 @app.put("/api/guardian/students/{sid}/password")
 def set_student_password(sid: int, b: StudentPwIn, bg: BackgroundTasks, u: User = Depends(guardian_only), s: Session = Depends(db)):
@@ -1159,6 +1161,7 @@ def delete_user(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
     if u.id == a.id: raise HTTPException(400, "You can't delete your own account")
+    s.query(McqAttemptItem).filter(McqAttemptItem.attempt_id.in_(s.query(McqAttempt.id).filter_by(user_id=uid))).delete(synchronize_session=False)  # their sets' questions first: they point at the sets, not the user
     for t in reversed(Base.metadata.sorted_tables):  # rows that point at this user, children before parents
         for fk in t.foreign_keys:
             if fk.column.table.name != "users": continue
@@ -3051,6 +3054,7 @@ def study_days(s, uid, since):  # {local day: activity count}: topics opened, to
     for (t,) in s.query(Progress.last_read).filter(Progress.user_id == uid, Progress.last_read.isnot(None)): days[local_day(t)] += 1  # opens made before day tracking began
     for (t,) in s.query(Attempt.at).filter(Attempt.user_id == uid): days[local_day(t)] += 1
     for (t,) in s.query(StudyAttempt.at).filter(StudyAttempt.user_id == uid): days[local_day(t)] += 1  # courses students build count toward the streak too
+    for (t,) in s.query(McqAttempt.submitted_at).filter(McqAttempt.user_id == uid, McqAttempt.status == "submitted"): days[local_day(t)] += 1  # each MCQ set once, when submitted
     for (t,) in s.query(StudyProgress.opened_at).filter(StudyProgress.user_id == uid, StudyProgress.opened_at.isnot(None)): days[local_day(t)] += 1
     return {d: n for d, n in days.items() if d >= since}
 def streak_of(days, today, plan=None):  # plan = a routine's days ("1111110"): then only a missed study day breaks the streak, rest days don't
@@ -3354,7 +3358,7 @@ def budget_or_fail(u, s, provider):
 async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60, kind="other", topic_id=None):
     size = len(system) + len(msg)
     if not own_key(u): budget_or_fail(u, s, "deepseek")
-    if kind not in LITE_SEARCH_KINDS: lite_time_or_fail(u, s)  # searches were counted when asked
+    if kind not in LITE_SEARCH_KINDS + ("mcq",): lite_time_or_fail(u, s)  # searches were counted when asked; an MCQ set is counted as a set
     try:
         out = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
         egress(s, u, kind, topic_id, size, True, out[1]); return out
@@ -4900,6 +4904,470 @@ async def android_refresh(request: Request):
 async def android_latest():  # public: the home page shows it before anyone signs in
     rel = await run_in_threadpool(android_release)
     return JSONResponse(rel or {"version": None}, headers={"Cache-Control": "public, max-age=3600"})
+# ---- MCQ practice: one engine behind two ways in, Practice (across topics) and Per topic. Questions come from a bank that admins and the faculty
+# ---- who own a course write or upload, and from the AI. A set is fixed when it starts: each question is copied into the attempt, so editing it later
+# ---- never changes an attempt, its answers or its score. The answer key leaves the server only after the set is submitted. Students get a number of
+# ---- sets (Lite: one per rolling 48 hours; everyone else: MCQ_PRO_PER_DAY per local day), shared by both ways in and counted when a set starts.
+# ---- Parents (and teachers who only follow students) have no MCQ practice: a teacher who follows a student sees a summary on their progress page.
+MCQ_STATUSES, MCQ_DIFFICULTY, MCQ_SOURCES = ("draft", "review", "published", "retired"), ("easy", "medium", "hard"), ("admin", "teacher", "ai")
+MCQ_LITE_HOURS, MCQ_PRO_PER_DAY = 48, 4
+MCQ_SIZE, MCQ_MIN_SET, MCQ_MAX_SIZE, MCQ_AI_OPTIONS = 10, 3, 20, 4
+MCQ_TEXT, MCQ_OPT, MCQ_BULK, MCQ_COHORT_MIN, MCQ_AI_HOURLY = 4000, 1000, 200, 5, 6  # AI_HOURLY: asks for a new AI set a student may make in an hour, failed ones included  # class figures go to the AI only when at least this many students make them up
+_rng = secrets.SystemRandom()
+class McqItem(Base):  # one question in the bank, always under a topic (its course, unit, semester and program come with it)
+    __tablename__ = "mcq_items"
+    id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); course_id = Column(Integer, index=True)
+    text = Column(Text); options = Column(Text); correct = Column(Integer); explanation = Column(Text)  # Markdown with maths; options is a JSON list
+    image = Column(String(300), nullable=True); option_images = Column(Text, nullable=True); explanation_image = Column(String(300), nullable=True)  # uploaded image urls only
+    difficulty = Column(String(10), default="medium"); keywords = Column(String(300), default="")
+    source = Column(String(10), default="teacher"); author_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    status = Column(String(10), default="draft", index=True); version = Column(Integer, default=1); sig = Column(String(40), index=True)
+    created_at = Column(DateTime, default=dt.datetime.utcnow); updated_at = Column(DateTime, default=dt.datetime.utcnow)
+class McqAttempt(Base):  # one set a person started: open, then submitted (scored once) or abandoned
+    __tablename__ = "mcq_attempts"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    mode = Column(String(10)); source = Column(String(10)); topic_id = Column(Integer, nullable=True); course_id = Column(Integer, nullable=True)
+    status = Column(String(10), default="open")
+    open_key = Column(Integer, unique=True, nullable=True)  # the person's id while the set is open: at most one open set each, even from two tabs at once
+    request_id = Column(String(64), nullable=True)  # the app's id for the request, so a retried request gets the same set
+    tier = Column(String(10), default="none")  # the limit it was counted under: lite, pro, or none (staff)
+    score = Column(Integer, nullable=True); total = Column(Integer, default=0); percent = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=dt.datetime.utcnow); submitted_at = Column(DateTime, nullable=True, index=True)
+    __table_args__ = (UniqueConstraint("user_id", "request_id"),)
+class McqAttemptItem(Base):  # a question as it was when the set started; the answer chosen; right or wrong once submitted
+    __tablename__ = "mcq_attempt_items"
+    id = Column(Integer, primary_key=True); attempt_id = Column(Integer, ForeignKey("mcq_attempts.id", ondelete="CASCADE"), index=True); pos = Column(Integer)
+    item_id = Column(Integer, nullable=True, index=True); version = Column(Integer, default=1); topic_id = Column(Integer, nullable=True, index=True)
+    snapshot = Column(Text); chosen = Column(Integer, nullable=True); ok = Column(Boolean, nullable=True)
+    __table_args__ = (UniqueConstraint("attempt_id", "pos"),)
+class McqQuota(Base):  # a person's set count: when the last set started, and how many started on the current local day. Changed by one conditional UPDATE only
+    __tablename__ = "mcq_quota"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    last_at = Column(DateTime, nullable=True); used = Column(Integer, default=0); day = Column(Date, nullable=True)  # used before day: MariaDB sets columns left to right
+
+def mcq_user(u: User = Depends(me)):  # every MCQ endpoint: students, faculty and admins
+    if u.role == "guardian": raise HTTPException(403, "MCQ practice is for students and teachers of a course. Parents don't have access to it.")
+    return u
+def mcq_tier(u):  # from the person's own account, never from the request: None for staff (no limit, as with the rest of the AI), else lite or pro
+    if is_staff(u): return None
+    return "lite" if ai_plan(u) in ("lite", "off") else "pro"
+def day_start(d): return dt.datetime.combine(d, dt.time()) - dt.timedelta(minutes=DAY_OFFSET)  # the UTC instant a local day begins
+def mcq_quota(u, s, now=None):
+    now = now or dt.datetime.utcnow(); tier = mcq_tier(u)
+    if tier is None: return {"tier": "staff", "limit": None, "used": 0, "left": None, "next_at": None, "window": None}
+    r = s.query(McqQuota).filter_by(user_id=u.id).populate_existing().first()
+    if tier == "lite":
+        busy = bool(r and r.last_at and r.last_at > now - dt.timedelta(hours=MCQ_LITE_HOURS))
+        return {"tier": "lite", "limit": 1, "used": int(busy), "left": 0 if busy else 1, "next_at": iso(r.last_at + dt.timedelta(hours=MCQ_LITE_HOURS)) if busy else None, "window": f"{MCQ_LITE_HOURS}h"}
+    today = local_day(now); used = (r.used or 0) if r and r.day == today else 0
+    return {"tier": "pro", "limit": MCQ_PRO_PER_DAY, "used": used, "left": max(0, MCQ_PRO_PER_DAY - used),
+            "next_at": iso(day_start(today + dt.timedelta(days=1))) if used >= MCQ_PRO_PER_DAY else None, "window": "day"}
+def mcq_limit_error(q, now=None):
+    now = now or dt.datetime.utcnow()
+    if q["tier"] == "lite":
+        hours = max(1, -(-int((dt.datetime.fromisoformat(q["next_at"][:-1]) - now).total_seconds()) // 3600))
+        return HTTPException(429, f"Lite includes one MCQ set every {MCQ_LITE_HOURS} hours. Your next set is free in {hours} {'hour' if hours == 1 else 'hours'}.")
+    return HTTPException(429, f"You have used today's {MCQ_PRO_PER_DAY} MCQ sets. More from tomorrow.")
+def mcq_reserve(u, s, now):
+    """Counts one set, in the transaction that makes the attempt. One conditional UPDATE does it, so two tabs, devices or retries at the same moment
+    can never both get the last set: the database lets one through and the other sees the new count. If making the attempt then fails, the rollback gives it back.
+    Call it with nothing else waiting to be saved: the person's count row is made (once) in a short transaction of its own first."""
+    tier = mcq_tier(u)
+    if tier is None: return "none"
+    mcq_quota_row(u, s); today = local_day(now); q = s.query(McqQuota).filter(McqQuota.user_id == u.id)
+    if tier == "lite": q = q.filter(or_(McqQuota.last_at.is_(None), McqQuota.last_at <= now - dt.timedelta(hours=MCQ_LITE_HOURS)))
+    else: q = q.filter(or_(McqQuota.day.is_(None), McqQuota.day != today, McqQuota.used < MCQ_PRO_PER_DAY))
+    n = q.update({McqQuota.last_at: now, McqQuota.used: case((McqQuota.day == today, McqQuota.used + 1), else_=1), McqQuota.day: today}, synchronize_session=False)
+    if n != 1:
+        s.rollback(); raise mcq_limit_error(mcq_quota(u, s, now), now)
+    return tier
+
+def mcq_quota_row(u, s):  # made in its own short transaction, before counting: the count is then one UPDATE that waits its turn, never a deadlock
+    if s.query(McqQuota.user_id).filter_by(user_id=u.id).first(): return
+    try: s.add(McqQuota(user_id=u.id, used=0)); s.commit()
+    except IntegrityError: s.rollback()  # another request made it first
+def mcq_busy(e): return "1213" in str(getattr(e, "orig", e)) or "Deadlock" in str(e) or "database is locked" in str(e)  # the database chose this request to give way
+def mcq_courses(u, s):  # the courses and live topics this person may practise: a student's own program's, every course for staff
+    out, seen = [], set()
+    for p in tree(u, s):
+        for sm in p["semesters"]:
+            if sm["archived"]: continue
+            for c in sm["courses"]:
+                if c["archived"] or c["id"] in seen: continue
+                seen.add(c["id"])
+                ts = [{"id": t["id"], "title": t["title"], "unit": un["name"]} for un in c["units"] if not un["archived"] for t in un["topics"] if t["published"] and not t["archived"]]
+                if ts: out.append({"id": c["id"], "name": c["name"], "program": p["name"], "semester": sm["name"], "topics": ts})
+    return out
+def mcq_scope(u, mode, topic_id, course_id, s):  # the topics a set may come from; every access rule of reading them applies
+    if mode == "topic":
+        t = s.get(Topic, topic_id or 0)
+        if not t or t.published is False: raise HTTPException(404, "Topic not found")
+        check_topic_access(u, t, s)
+        if topic_off(s, t): raise HTTPException(403, "This topic is unavailable right now")
+        return [t]
+    if course_id:
+        check_course_access(u, course_id, s); ids = [i for (i,) in live_topic_ids(s, [course_id])]
+    else: ids = [t["id"] for c in mcq_courses(u, s) for t in c["topics"]]
+    ts = s.query(Topic).filter(Topic.id.in_(ids or [0])).all()
+    if not ts: raise HTTPException(404, "There are no topics to practise here yet")
+    return ts
+MD_IMG = re.compile(r"!\[([^\]]*)\]\(([^)\s]*)[^)]*\)")
+def mcq_md(v, limit):  # Markdown with maths. React renders it without raw HTML; an image may only be one uploaded here, never an outside address
+    v = (v or "").replace("\x00", "").strip()[:limit]
+    return MD_IMG.sub(lambda m: m.group(0) if IMG_URL.fullmatch(m.group(2)) else m.group(1), v)
+def mcq_img(v):
+    v = (v or "").strip()
+    if v and not IMG_URL.fullmatch(v): raise HTTPException(400, "Images must be uploaded here first")
+    return v or None
+class McqItemIn(BaseModel):
+    topic_id: int; text: str = ""; options: list[str] = []; correct: int = -1; explanation: str = ""; difficulty: str = "medium"; keywords: str = ""
+    image: str = ""; option_images: list[str] = []; explanation_image: str = ""; status: str = "draft"
+def mcq_clean(b, label="Question"):  # checks a question for the bank and returns its columns
+    if len(b.options) > 6 or len(b.option_images) > 6: raise HTTPException(400, f"{label} needs 2 to 6 answers, each with text or an image")
+    opts = [mcq_md(o, MCQ_OPT) for o in b.options]; imgs = [mcq_img(x) for x in b.option_images][:len(opts)]; imgs += [None] * (len(opts) - len(imgs))
+    while opts and not opts[-1] and not imgs[-1]: opts.pop(); imgs.pop()  # empty answers at the end are not there
+    text, image = mcq_md(b.text, MCQ_TEXT), mcq_img(b.image)
+    if not text and not image: raise HTTPException(400, f"{label} has no text or image")
+    if not 2 <= len(opts) <= 6 or any(not o and not i for o, i in zip(opts, imgs)): raise HTTPException(400, f"{label} needs 2 to 6 answers, each with text or an image")
+    if len({o.lower() for o in opts if o}) != len([o for o in opts if o]): raise HTTPException(400, f"{label} has the same answer twice")
+    if not 0 <= b.correct < len(opts): raise HTTPException(400, f"{label}: mark which answer is correct")
+    if b.difficulty not in MCQ_DIFFICULTY: raise HTTPException(400, "Difficulty must be easy, medium or hard")
+    return {"text": text, "options": json.dumps(opts, ensure_ascii=False), "correct": b.correct, "explanation": mcq_md(b.explanation, MCQ_TEXT),
+            "image": image, "option_images": json.dumps(imgs) if any(imgs) else None, "explanation_image": mcq_img(b.explanation_image),
+            "difficulty": b.difficulty, "keywords": clean_tags(b.keywords)[:300], "sig": q_sig(text + "|" + (image or ""), opts, b.correct)}
+def mcq_snapshot(x, title):  # what an attempt keeps of a question: everything, as it is now
+    return {"item_id": x.id, "version": x.version or 1, "topic_id": x.topic_id, "topic": title, "text": x.text or "", "options": json.loads(x.options), "correct": x.correct,
+            "explanation": x.explanation or "", "image": x.image or "", "option_images": [v or "" for v in json.loads(x.option_images)] if x.option_images else [],
+            "explanation_image": x.explanation_image or "", "difficulty": x.difficulty or "medium", "keywords": x.keywords or ""}
+def mcq_row(x, names, titles, uses):  # a bank question for the people who manage it (they see the answer)
+    return {**mcq_snapshot(x, titles.get(x.topic_id, "")), "id": x.id, "course_id": x.course_id, "status": x.status, "source": x.source, "author": names.get(x.author_id, ""),
+            "created_at": iso(x.created_at), "updated_at": iso(x.updated_at), "uses": uses.get(x.id, 0)}
+
+def mcq_staff_item(iid, u, s):
+    x = s.get(McqItem, iid); t = s.get(Topic, x.topic_id) if x else None
+    if not x or not t: raise HTTPException(404, "Question not found")
+    need_edit(u, topic_course_id(t, s), s); return x, t
+def mcq_staff_topic(tid, u, s):
+    t = s.get(Topic, tid or 0)
+    if not t: raise HTTPException(400, "Choose a topic for the question")
+    cid = topic_course_id(t, s); need_edit(u, cid, s); return t, cid
+@app.get("/api/mcq/items")
+def mcq_items(course_id: int = 0, topic_id: int = 0, status: str = "", source: str = "", q: str = "", limit: int = 20, offset: int = 0, u: User = Depends(staff), s: Session = Depends(db)):
+    """The bank, for admins (all of it) and faculty (the courses they own)."""
+    qs = s.query(McqItem).join(Topic, Topic.id == McqItem.topic_id)
+    if u.role != "admin": qs = qs.filter(Topic.course_id.in_(s.query(Course.id).filter(Course.faculty_owner_id == u.id)))  # the topic's course now, should a unit have moved
+    if course_id: qs = qs.filter(Topic.course_id == course_id)
+    if topic_id: qs = qs.filter(McqItem.topic_id == topic_id)
+    if status in MCQ_STATUSES: qs = qs.filter(McqItem.status == status)
+    if source in MCQ_SOURCES: qs = qs.filter(McqItem.source == source)
+    for w in q.split()[:6]:
+        like = "%" + w.replace("%", "").replace("_", " ").strip() + "%"; qs = qs.filter(or_(McqItem.text.like(like), McqItem.keywords.like(like)))
+    total = qs.count(); rows = qs.order_by(McqItem.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
+    names = {x.id: x.name for x in s.query(User).filter(User.id.in_({r.author_id for r in rows if r.author_id} or {0}))}
+    titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({r.topic_id for r in rows} or {0}))}
+    uses = dict(s.query(McqAttemptItem.item_id, func.count(McqAttemptItem.id)).filter(McqAttemptItem.item_id.in_([r.id for r in rows] or [0])).group_by(McqAttemptItem.item_id).all())
+    return {"total": total, "items": [mcq_row(x, names, titles, uses) for x in rows]}
+@app.post("/api/mcq/items")
+def mcq_add(b: McqItemIn, u: User = Depends(staff), s: Session = Depends(db)):
+    t, cid = mcq_staff_topic(b.topic_id, u, s); v = mcq_clean(b)
+    if b.status not in ("draft", "published"): raise HTTPException(400, "A new question is saved as a draft or published")
+    if s.query(McqItem.id).filter_by(topic_id=t.id, sig=v["sig"]).first(): raise HTTPException(409, "That question is already in this topic")
+    now = dt.datetime.utcnow(); x = McqItem(topic_id=t.id, course_id=cid, source="admin" if u.role == "admin" else "teacher", author_id=u.id, status=b.status, version=1, created_at=now, updated_at=now, **v)
+    s.add(x); s.commit(); return {"id": x.id}
+@app.put("/api/mcq/items/{iid}")
+def mcq_edit(iid: int, b: McqItemIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """A new version: sets already started keep the copy they were given, so their answers and scores never change."""
+    x, _ = mcq_staff_item(iid, u, s); t, cid = mcq_staff_topic(b.topic_id, u, s); v = mcq_clean(b)
+    if s.query(McqItem.id).filter(McqItem.topic_id == t.id, McqItem.sig == v["sig"], McqItem.id != iid).first(): raise HTTPException(409, "That question is already in this topic")
+    before = mcq_snapshot(x, "")
+    for k, val in v.items(): setattr(x, k, val)
+    x.topic_id, x.course_id = t.id, cid
+    if mcq_snapshot(x, "") != before: x.version = (x.version or 1) + 1; x.updated_at = dt.datetime.utcnow()
+    s.commit(); return {"ok": True, "version": x.version}
+class McqStatusIn(BaseModel): status: str
+@app.post("/api/mcq/items/{iid}/status")
+def mcq_status(iid: int, b: McqStatusIn, u: User = Depends(staff), s: Session = Depends(db)):  # draft, review, published (students get it from the next set on) or retired
+    x, _ = mcq_staff_item(iid, u, s)
+    if b.status not in MCQ_STATUSES: raise HTTPException(400, "Unknown status")
+    x.status = b.status; x.updated_at = dt.datetime.utcnow(); s.commit(); return {"ok": True}
+@app.delete("/api/mcq/items/{iid}")
+def mcq_delete(iid: int, u: User = Depends(staff), s: Session = Depends(db)):
+    x, _ = mcq_staff_item(iid, u, s)
+    if s.query(McqAttemptItem.id).filter_by(item_id=iid).first(): raise HTTPException(409, "Students have had this question in a set. Retire it instead, so their results keep it.")
+    s.delete(x); s.commit(); return {"ok": True}
+class McqBulkIn(BaseModel): items: list[McqItemIn]; status: str = "draft"
+@app.post("/api/mcq/items/bulk")
+def mcq_bulk(b: McqBulkIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """Many questions at once (from a CSV read by /api/quizzes/parse-csv). All are checked first: one bad row saves nothing, so a file never half-lands."""
+    if not 1 <= len(b.items) <= MCQ_BULK: raise HTTPException(400, f"Upload 1 to {MCQ_BULK} questions at a time")
+    if b.status not in ("draft", "published"): raise HTTPException(400, "Uploaded questions are saved as drafts or published")
+    rows, seen, skipped, now = [], set(), 0, dt.datetime.utcnow()
+    for i, x in enumerate(b.items, 1):
+        t, cid = mcq_staff_topic(x.topic_id, u, s); v = mcq_clean(x, f"Question {i}")
+        if (t.id, v["sig"]) in seen or s.query(McqItem.id).filter_by(topic_id=t.id, sig=v["sig"]).first(): skipped += 1; continue
+        seen.add((t.id, v["sig"])); rows.append(McqItem(topic_id=t.id, course_id=cid, source="admin" if u.role == "admin" else "teacher", author_id=u.id, status=b.status, version=1, created_at=now, updated_at=now, **v))
+    s.add_all(rows); s.commit(); return {"added": len(rows), "skipped": skipped}
+
+# -- the AI: questions written strictly from a topic's own notes, shaped by how this student (and, in aggregate, their class) is doing
+PROMPTS["mcq"] = ("You write multiple-choice practice questions for a student, strictly from the topic notes you are given. Use only facts in the notes; never invent "
+                  "facts, formulas or syllabus content that is not there. Each question has exactly 4 different options, exactly one correct; wrong options are "
+                  "plausible. Give a short explanation of the right answer that points to the notes, a difficulty (easy, medium or hard), 2 to 5 keywords from "
+                  "the notes, and the number of the topic it comes from. Use $...$ for maths. Follow the guidance about the student when given. "
+                  'Reply with JSON only, exactly in this shape: {"questions":[{"topic":1,"text":"...","options":["...","...","...","..."],"correct":0,'
+                  '"explanation":"...","difficulty":"medium","keywords":["..."]}]}')
+PROMPT_INFO["mcq"] = ("MCQ practice sets", "Used when a student asks for a new AI set of MCQs, or staff ask the AI for draft questions. The topics' notes go with it, and for "
+                      "a student how they have done in practice (never names or contact details).")
+STOP = set("about above after again against also among another because been before being below between both cannot could does doing during each "
+           "either every from further have having here into itself just more most much must neither only other over same should since some such than that "
+           "their them then there these they this those through under until very were what when where which while whom whose will with within without would "
+           "your yours".split())
+def mcq_words(text): return {w for w in re.findall(r"[^\W\d_]{4,}", (text or "").lower()) if w not in STOP}
+MD_LINK = re.compile(r"(?<!!)\[([^\]]*)\]\([^)]*\)")
+def mcq_ai_md(v, limit): return MD_LINK.sub(r"\1", mcq_md(v, limit))  # the AI's text keeps no links: nothing in a question should send a student elsewhere
+def mcq_ai_valid(raw, topics, words, have):
+    """The AI's questions that pass every check: 4 different non-empty options, one correct, an explanation, a known difficulty, a topic of this set,
+    words that come from that topic's notes, and not already in the bank. Anything else is dropped."""
+    out, sigs = [], set(have)
+    for q in (raw or {}).get("questions") or [] if isinstance(raw, dict) else []:
+        if not isinstance(q, dict): continue
+        text, expl = mcq_ai_md(str(q.get("text") or ""), MCQ_TEXT), mcq_ai_md(str(q.get("explanation") or ""), MCQ_TEXT)
+        opts = [mcq_ai_md(str(o), MCQ_OPT) for o in q.get("options") or [] if isinstance(o, (str, int, float))]
+        c = q.get("correct")
+        if isinstance(c, str) and re.fullmatch(r"[A-Da-d]", c.strip()): c = "abcd".index(c.strip().lower())
+        try: k = int(c)
+        except (TypeError, ValueError): continue
+        try: ti = int(q.get("topic") or 1) - 1
+        except (TypeError, ValueError): ti = 0
+        if not 0 <= ti < len(topics): ti = 0
+        diff = str(q.get("difficulty") or "").strip().lower()
+        if not text or not expl or len(opts) != MCQ_AI_OPTIONS or not all(opts) or len({o.lower() for o in opts}) != len(opts) or not 0 <= k < len(opts) or diff not in MCQ_DIFFICULTY: continue
+        if not (mcq_words(text + " " + opts[k] + " " + expl) & words[ti]): continue  # off the topic: nothing in it comes from the notes
+        kw = q.get("keywords"); kw = ", ".join(str(w) for w in kw) if isinstance(kw, list) else str(kw or "")
+        sig = q_sig(text + "|", opts, k)
+        if sig in sigs: continue
+        sigs.add(sig); out.append({"topic": topics[ti], "text": text, "options": opts, "correct": k, "explanation": expl, "difficulty": diff, "keywords": clean_tags(kw)[:300], "sig": sig})
+    return out
+def mcq_student_lines(u, s, tids):  # this student's own practice, by topic: no names, no ids
+    rows = s.query(McqAttemptItem.topic_id, McqAttemptItem.ok, McqAttemptItem.snapshot).join(McqAttempt, McqAttempt.id == McqAttemptItem.attempt_id) \
+        .filter(McqAttempt.user_id == u.id, McqAttempt.status == "submitted", McqAttemptItem.topic_id.in_(tids or [0])).order_by(McqAttempt.id.desc()).limit(400).all()
+    by, missed = defaultdict(lambda: [0, 0]), defaultdict(lambda: defaultdict(int))
+    for tid, ok, snap in rows:
+        by[tid][0] += bool(ok); by[tid][1] += 1
+        if not ok:
+            for w in (json.loads(snap).get("keywords") or "").split(", "):
+                if w: missed[tid][w] += 1
+    return {tid: (round(100 * c / n), [w for w, _ in sorted(missed[tid].items(), key=lambda x: -x[1])[:6]]) for tid, (c, n) in by.items()}
+def mcq_class_lines(s, tids, uid):  # each topic's class result, only when MCQ_COHORT_MIN or more other students make it up, so nobody can be picked out
+    rows = s.query(McqAttemptItem.topic_id, McqAttempt.user_id, McqAttemptItem.ok).join(McqAttempt, McqAttempt.id == McqAttemptItem.attempt_id) \
+        .filter(McqAttempt.status == "submitted", McqAttempt.user_id != uid, McqAttempt.tier != "none", McqAttemptItem.topic_id.in_(tids or [0])).limit(20000).all()
+    who, by = defaultdict(set), defaultdict(lambda: [0, 0])
+    for tid, w, ok in rows: who[tid].add(w); by[tid][0] += bool(ok); by[tid][1] += 1
+    return {tid: round(100 * c / n) for tid, (c, n) in by.items() if len(who[tid]) >= MCQ_COHORT_MIN}
+def mcq_context(u, s, topics, student):
+    """What the AI is told: where each topic sits, its notes and what it asks for, keywords already used, and (for a student's own set) how they and,
+    in aggregate, their class have done. Never a name, an email or an id."""
+    parts, words = [], []
+    mine = mcq_student_lines(u, s, [t.id for t in topics]) if student else {}
+    cls = mcq_class_lines(s, [t.id for t in topics], u.id) if student else {}
+    for i, t in enumerate(topics, 1):
+        f = full(t, s); body = words_of(f["content"], f["content_format"])[:6000]
+        words.append(mcq_words(body + " " + t.title))
+        kws = sorted({w for (k,) in s.query(McqItem.keywords).filter(McqItem.topic_id == t.id, McqItem.status == "published").limit(200) for w in (k or "").split(", ") if w})[:20]
+        aims = "\n".join(x for x in ((t.question_pattern or "")[:800], (t.guideline or "")[:800]) if x.strip())
+        p = [f"Topic {i}: {t.title}", f"Program: {f['program']} · Class: {f['semester']} · Course: {f['course']} · Unit: {f['unit']}", f"Notes:\n{body}"]
+        if aims: p.append(f"What students are expected to learn:\n{aims}")
+        if kws: p.append("Keywords already used in the bank: " + ", ".join(kws))
+        if t.id in mine: p.append(f"This student scores {mine[t.id][0]}% on this topic in practice" + (f"; they miss questions on: {', '.join(mine[t.id][1])}" if mine[t.id][1] else "") + ".")
+        if t.id in cls: p.append(f"Their class averages {cls[t.id]}% on this topic.")
+        parts.append("\n".join(p))
+    return "\n\n".join(parts), words
+def mcq_pick_topics(u, s, topics, n=3):  # for an AI set across topics: this student's weakest first, then those they have not practised
+    mine = mcq_student_lines(u, s, [t.id for t in topics])
+    pool = sorted(topics, key=lambda t: (mine[t.id][0] if t.id in mine else 101, _rng.random()))
+    weak = [t for t in pool if t.id in mine and mine[t.id][0] < 80]; rest = [t for t in pool if t not in weak]
+    return (weak + rest)[:n]
+async def mcq_write(u, s, topics, size, student):
+    """Asks the AI for questions and keeps the ones that pass every check, trying once more when too few do. They are saved to the bank for staff
+    to review (never shown to other students until published). A failed or timed-out call raises before any set is counted."""
+    key = key_for(u, s)
+    if not key or ai_off(u, s): raise HTTPException(503, "New AI sets aren't available on your account. Practise with questions from the bank.")
+    if student and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "mcq", AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=1)).scalar() >= MCQ_AI_HOURLY:
+        raise HTTPException(429, "You have asked for a lot of AI sets this hour. Try again later, or practise with questions from the bank.")  # many tabs at once can't each call the AI
+    msg, words = mcq_context(u, s, topics, student)
+    if sum(len(w) for w in words) < 12: raise HTTPException(400, "These topics don't have enough notes to write questions from yet. Practise with questions from the bank.")
+    have = {sg for (sg,) in s.query(McqItem.sig).filter(McqItem.topic_id.in_([t.id for t in topics]))}
+    system = in_lang(u, prompt_for(s, "mcq")); got = []
+    for _ in range(2):  # a bounded second try when the first reply is unusable or too short
+        try: raw = ai_json((await ask_ai(u, s, key, system, msg + f"\n\nWrite {size} questions.", max_tokens=8000, timeout=90, kind="mcq", topic_id=topics[0].id))[0])
+        except HTTPException as e:
+            if e.status_code == 503: raise  # the provider is down or refused: no point asking again now
+            raw = None
+        got += mcq_ai_valid(raw, topics, words, have | {g["sig"] for g in got})
+        if len(got) >= size: break
+    if len(got) < min(size, max(MCQ_MIN_SET, size // 2)): raise HTTPException(502, "The AI didn't write enough usable questions. Nothing was used up; try again.")
+    now = dt.datetime.utcnow(); rows = []
+    for g in got[:size]:
+        t = g.pop("topic"); rows.append(McqItem(topic_id=t.id, course_id=topic_course_id(t, s), text=g["text"], options=json.dumps(g["options"], ensure_ascii=False), correct=g["correct"],
+                                                explanation=g["explanation"], difficulty=g["difficulty"], keywords=g["keywords"], sig=g["sig"], source="ai", author_id=None,
+                                                status="review", version=1, created_at=now, updated_at=now))
+    s.add_all(rows); s.commit()
+    return rows
+class McqGenIn(BaseModel): topic_id: int; count: int = 5
+@app.post("/api/mcq/generate")
+async def mcq_generate(b: McqGenIn, u: User = Depends(staff), s: Session = Depends(db)):  # staff: AI drafts for a topic, waiting for review; no student's data goes with them
+    t, _ = mcq_staff_topic(b.topic_id, u, s)
+    rows = await mcq_write(u, s, [t], min(max(b.count, 1), MCQ_MAX_SIZE), student=False)
+    return {"added": len(rows), "ids": [x.id for x in rows]}
+
+# -- sets: start (or resume), save answers, submit once, abandon
+def mcq_feedback(rows, titles):  # per topic: how this set went and whether to revisit it
+    by = defaultdict(lambda: [0, 0])
+    for r in rows: by[r.topic_id][0] += bool(r.ok); by[r.topic_id][1] += 1
+    out = [{"topic_id": tid, "topic": titles.get(tid, ""), "correct": c, "total": n, "percent": round(100 * c / n), "status": area_status(round(100 * c / n))} for tid, (c, n) in by.items()]
+    return sorted(out, key=lambda a: (a["percent"], a["topic"]))
+def mcq_view(at, s, resumed=False):
+    """A set as its owner sees it. Before it is submitted it carries no correct answers and no explanations: those stay on the server."""
+    rows = s.query(McqAttemptItem).filter_by(attempt_id=at.id).order_by(McqAttemptItem.pos).all(); done = at.status == "submitted"; qs = []
+    for r in rows:
+        x = json.loads(r.snapshot)
+        q = {"pos": r.pos, "topic_id": r.topic_id, "topic": x.get("topic", ""), "text": x["text"], "options": x["options"], "image": x.get("image", ""),
+             "option_images": x.get("option_images", []), "difficulty": x.get("difficulty", "medium"), "chosen": r.chosen}
+        if done: q.update(correct=x["correct"], explanation=x.get("explanation", ""), explanation_image=x.get("explanation_image", ""), ok=bool(r.ok))
+        qs.append(q)
+    out = {"id": at.id, "mode": at.mode, "source": at.source, "status": at.status, "topic_id": at.topic_id, "course_id": at.course_id, "total": at.total,
+           "created_at": iso(at.created_at), "submitted_at": iso(at.submitted_at), "resumed": resumed, "questions": qs}
+    if done:
+        titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({r.topic_id for r in rows} or {0}))}
+        titles.update({r.topic_id: json.loads(r.snapshot).get("topic", "") for r in rows if r.topic_id not in titles})
+        out.update(score=at.score, percent=at.percent, feedback=mcq_feedback(rows, titles))
+    return out
+def mcq_own(aid, u, s, read=False):  # a set is its owner's; admins, and faculty who own its course, may read a submitted one. Anyone else: not found
+    at = s.get(McqAttempt, aid)
+    if at and at.user_id == u.id: return at
+    if at and read and at.status == "submitted" and (u.role == "admin" or (u.role == "faculty" and at.course_id and can_edit(u, at.course_id, s))): return at
+    raise HTTPException(404, "Set not found")
+class McqStartIn(BaseModel): mode: str = "topic"; topic_id: int | None = None; course_id: int | None = None; source: str = "bank"; size: int = MCQ_SIZE; request_id: str = ""
+@app.post("/api/mcq/attempts")
+async def mcq_start(b: McqStartIn, u: User = Depends(mcq_user), s: Session = Depends(db)):
+    """Starts a set, or gives back the one already open (a retry, another tab, or coming back later) without counting another."""
+    rid = re.sub(r"[^A-Za-z0-9_-]", "", b.request_id or "")[:64] or None
+    def again():
+        hit = (s.query(McqAttempt).filter_by(user_id=u.id, request_id=rid).first() if rid else None) or s.query(McqAttempt).filter_by(user_id=u.id, status="open").first()
+        return mcq_view(hit, s, resumed=True) if hit else None
+    if (out := again()): return out
+    if b.mode not in ("practice", "topic") or b.source not in ("bank", "ai"): raise HTTPException(400, "Choose Practice or a topic, and the bank or a new AI set")
+    size = min(max(b.size, MCQ_MIN_SET), MCQ_MAX_SIZE); topics = mcq_scope(u, b.mode, b.topic_id, b.course_id, s)
+    q = mcq_quota(u, s)
+    if q["left"] == 0: raise mcq_limit_error(q)  # checked before any AI is asked; counted for real below
+    titles = {t.id: t.title for t in topics}
+    if b.source == "bank":
+        pool = s.query(McqItem).filter(McqItem.topic_id.in_(list(titles)), McqItem.status == "published").all()
+        recent = {i for (i,) in s.query(McqAttemptItem.item_id).join(McqAttempt, McqAttempt.id == McqAttemptItem.attempt_id)
+                  .filter(McqAttempt.user_id == u.id).order_by(McqAttempt.id.desc()).limit(MCQ_MAX_SIZE * 3)}
+        fresh, seen = [x for x in pool if x.id not in recent], [x for x in pool if x.id in recent]; _rng.shuffle(fresh); _rng.shuffle(seen)
+        items = (fresh + seen)[:size]
+        if len(items) < MCQ_MIN_SET: raise HTTPException(409, "There aren't enough published questions here yet. Try a new AI set, or another topic.")
+    else:
+        items = await mcq_write(u, s, topics if b.mode == "topic" else mcq_pick_topics(u, s, topics), size, student=True)
+        titles.update({t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({x.topic_id for x in items}))})
+    snaps = [mcq_snapshot(x, titles.get(x.topic_id, "")) for x in items]
+    cid = (topic_course_id(topics[0], s) if b.mode == "topic" else b.course_id) or None
+    for _ in range(3):
+        now = dt.datetime.utcnow()
+        try:
+            tier = mcq_reserve(u, s, now)
+            at = McqAttempt(user_id=u.id, mode=b.mode, source=b.source, topic_id=topics[0].id if b.mode == "topic" else None, course_id=cid, status="open", open_key=u.id,
+                            request_id=rid, tier=tier, total=len(snaps), created_at=now)
+            s.add(at); s.flush()
+            s.add_all([McqAttemptItem(attempt_id=at.id, pos=i, item_id=x["item_id"], version=x["version"], topic_id=x["topic_id"], snapshot=json.dumps(x, ensure_ascii=False)) for i, x in enumerate(snaps)])
+            s.commit(); return mcq_view(at, s)
+        except IntegrityError:  # another tab or retry made a set at the same moment: this one counted nothing (the rollback gave it back); theirs is resumed
+            s.rollback()
+            if (out := again()): return out
+            raise HTTPException(409, "Another set was being started. Try again.")
+        except OperationalError as e:  # the database made this request give way to another: nothing was counted; look again, then try again
+            s.rollback()
+            if not mcq_busy(e): raise
+            if (out := again()): return out
+    raise HTTPException(409, "Another set was being started. Try again.")
+@app.get("/api/mcq/attempts/{aid}")
+def mcq_get(aid: int, u: User = Depends(mcq_user), s: Session = Depends(db)): return mcq_view(mcq_own(aid, u, s, read=True), s)
+class McqAnswersIn(BaseModel): answers: dict[int, int | None] = {}
+def mcq_apply(at, b, s):  # chosen answers by position; each must be one of that question's options, or none
+    if len(b.answers) > MCQ_MAX_SIZE: raise HTTPException(400, "Too many answers")
+    rows = {r.pos: r for r in s.query(McqAttemptItem).filter_by(attempt_id=at.id)}
+    for pos, ch in b.answers.items():
+        r = rows.get(pos)
+        if r is None: raise HTTPException(400, "That question is not in this set")
+        if ch is not None and not 0 <= ch < len(json.loads(r.snapshot)["options"]): raise HTTPException(400, "That answer is not one of the choices")
+        r.chosen = ch
+    return [rows[k] for k in sorted(rows)]
+@app.put("/api/mcq/attempts/{aid}/answers")
+def mcq_save(aid: int, b: McqAnswersIn, u: User = Depends(mcq_user), s: Session = Depends(db)):  # saved as they go, so a refresh or another device carries on
+    at = mcq_own(aid, u, s)
+    if at.status != "open": raise HTTPException(409, "This set is finished")
+    rows = {r.pos: r.chosen for r in mcq_apply(at, b, s)}; s.rollback()  # checked; now written only while the set is still open, in the same statement,
+    still = s.query(McqAttempt.id).filter(McqAttempt.id == aid, McqAttempt.status == "open").exists()  # so a save that lands just after a submit changes nothing
+    for pos in {int(k) for k in b.answers}:
+        s.query(McqAttemptItem).filter(McqAttemptItem.attempt_id == aid, McqAttemptItem.pos == pos, still).update({McqAttemptItem.chosen: rows[pos]}, synchronize_session=False)
+    s.commit()
+    if s.query(McqAttempt.status).filter_by(id=aid).scalar() != "open": raise HTTPException(409, "This set is finished")
+    return {"ok": True}
+@app.post("/api/mcq/attempts/{aid}/submit")
+def mcq_submit(aid: int, b: McqAnswersIn, u: User = Depends(mcq_user), s: Session = Depends(db)):
+    """Scores the set on the server from its own copy of the questions. Only one submit can move it from open to submitted, so the score, the
+    result and the progress it adds are made exactly once; sending it again just returns the result."""
+    at = mcq_own(aid, u, s)
+    if at.status == "submitted": return {**mcq_view(at, s), "already": True}
+    if at.status != "open": raise HTTPException(409, "This set was abandoned. Start a new one.")
+    rows = mcq_apply(at, b, s); now = dt.datetime.utcnow()
+    for r in rows: r.ok = r.chosen is not None and r.chosen == json.loads(r.snapshot)["correct"]
+    score = sum(r.ok for r in rows); pct = round(100 * score / len(rows)) if rows else 0
+    n = s.query(McqAttempt).filter(McqAttempt.id == aid, McqAttempt.status == "open").update(
+        {McqAttempt.status: "submitted", McqAttempt.open_key: None, McqAttempt.submitted_at: now, McqAttempt.score: score, McqAttempt.percent: pct}, synchronize_session=False)
+    if n != 1:  # another submit got there first: keep theirs
+        s.rollback(); s.expire_all(); at = s.get(McqAttempt, aid)
+        if at.status == "submitted": return {**mcq_view(at, s), "already": True}
+        raise HTTPException(409, "This set was abandoned. Start a new one.")
+    s.commit(); s.refresh(at); return mcq_view(at, s)
+@app.post("/api/mcq/attempts/{aid}/abandon")
+def mcq_abandon(aid: int, u: User = Depends(mcq_user), s: Session = Depends(db)):  # leaves an open set; the set it used stays used
+    mcq_own(aid, u, s)
+    s.query(McqAttempt).filter(McqAttempt.id == aid, McqAttempt.status == "open").update({McqAttempt.status: "abandoned", McqAttempt.open_key: None}, synchronize_session=False)
+    s.commit(); return {"ok": True}
+@app.get("/api/mcq/attempts")
+def mcq_history(limit: int = 10, offset: int = 0, u: User = Depends(mcq_user), s: Session = Depends(db)):
+    qs = s.query(McqAttempt).filter(McqAttempt.user_id == u.id, McqAttempt.status != "open"); total = qs.count()
+    rows = qs.order_by(McqAttempt.id.desc()).offset(max(offset, 0)).limit(min(max(limit, 1), 50)).all()
+    titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_({a.topic_id for a in rows if a.topic_id} or {0}))}
+    names = {c.id: c.name for c in s.query(Course).filter(Course.id.in_({a.course_id for a in rows if a.course_id} or {0}))}
+    return {"total": total, "items": [{"id": a.id, "mode": a.mode, "source": a.source, "status": a.status, "topic": titles.get(a.topic_id, ""), "course": names.get(a.course_id, ""),
+                                       "score": a.score, "total": a.total, "percent": a.percent, "at": iso(a.submitted_at or a.created_at)} for a in rows]}
+def mcq_topic_stats(s, uid, tids=None):  # per topic, from submitted sets: questions answered, right, percent
+    q = s.query(McqAttemptItem.topic_id, func.count(McqAttemptItem.id), func.sum(case((McqAttemptItem.ok == True, 1), else_=0))) \
+        .join(McqAttempt, McqAttempt.id == McqAttemptItem.attempt_id).filter(McqAttempt.user_id == uid, McqAttempt.status == "submitted")  # noqa: E712
+    if tids is not None: q = q.filter(McqAttemptItem.topic_id.in_(tids or [0]))
+    return {tid: {"answered": n, "correct": int(c or 0), "percent": round(100 * int(c or 0) / n)} for tid, n, c in q.group_by(McqAttemptItem.topic_id).all() if n}
+@app.get("/api/mcq/home")
+def mcq_home(u: User = Depends(mcq_user), s: Session = Depends(db)):
+    """Both ways in start here: the sets left and when the next comes, a set still open, the courses and topics with how many published questions
+    each has, how the person has done per topic, and whether new AI sets are possible."""
+    courses = mcq_courses(u, s); tids = [t["id"] for c in courses for t in c["topics"]]
+    counts = dict(s.query(McqItem.topic_id, func.count(McqItem.id)).filter(McqItem.topic_id.in_(tids or [0]), McqItem.status == "published").group_by(McqItem.topic_id).all())
+    stats = mcq_topic_stats(s, u.id, tids)
+    for c in courses:
+        for t in c["topics"]: t["questions"] = counts.get(t["id"], 0); t["stats"] = stats.get(t["id"])
+        c["questions"] = sum(t["questions"] for t in c["topics"])
+    op = s.query(McqAttempt).filter_by(user_id=u.id, status="open").first()
+    return {"quota": mcq_quota(u, s), "ai": bool(key_for(u, s)) and not ai_off(u, s), "size": MCQ_SIZE, "min": MCQ_MIN_SET, "max": MCQ_MAX_SIZE,
+            "open": {"id": op.id, "mode": op.mode, "total": op.total, "answered": s.query(McqAttemptItem.id).filter(McqAttemptItem.attempt_id == op.id, McqAttemptItem.chosen.isnot(None)).count(),
+                     "created_at": iso(op.created_at)} if op else None, "courses": courses}
+def mcq_summary(s, uid):  # for a teacher who follows a student: sets done, their average and the topics to revisit
+    rows = s.query(McqAttempt.percent, McqAttempt.submitted_at).filter(McqAttempt.user_id == uid, McqAttempt.status == "submitted").all()
+    if not rows: return {"sets": 0, "average": None, "last_at": None, "revisit": []}
+    st = mcq_topic_stats(s, uid); titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_(list(st) or [0]))}
+    return {"sets": len(rows), "average": round(sum(p or 0 for p, _ in rows) / len(rows)), "last_at": iso(max(t for _, t in rows)),
+            "revisit": [titles[t] for t, v in sorted(st.items(), key=lambda x: x[1]["percent"]) if v["percent"] < 50 and t in titles][:5]}
 # the site: the home page (web/) at the root, and the app itself under /app/
 web = os.path.join(os.path.dirname(__file__), "..", "web")
 if os.path.isdir(dist): app.mount("/app", StaticFiles(directory=dist, html=True), name="ui")

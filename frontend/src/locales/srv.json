@@ -110,5 +110,13 @@
 [
 "^Add between 1 and (?<n>\\d+) at a time$",
 "Add between 1 and {n} at a time"
+],
+[
+"^Lite includes one MCQ set every 48 hours\\. Your next set is free in (?<n>\\d+) hours\\.$",
+"Lite includes one MCQ set every 48 hours. Your next set is free in {n} hours."
+],
+[
+"^You have used today's (?<n>\\d+) MCQ sets\\. More from tomorrow\\.$",
+"You have used today's {n} MCQ sets. More from tomorrow."
 ]
 ]

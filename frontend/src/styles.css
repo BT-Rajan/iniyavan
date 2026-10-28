@@ -477,3 +477,6 @@ textarea.hlnote{margin:6px 0 0 14px;width:calc(100% - 14px);min-height:70px;padd
 html:has(.zgr),html:has(.zgr) body{background:transparent!important;margin:0;padding:0;min-height:0!important;font-family:system-ui,sans-serif!important}
 html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:inherit!important}html:has(.zgr) .katex,html:has(.zgr) .katex *{font-family:KaTeX_Main,'Times New Roman',serif!important}
 .btn.choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:start;background:var(--s2);color:var(--tx);padding:14px 16px;height:auto}.btn.choice small{font-weight:400;opacity:.8}
+
+/* MCQ bank editor and notes */
+.optedit{display:flex;align-items:center;gap:8px;margin:6px 0}.optedit input:not([type=radio]){flex:1;min-width:0}.opts{border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:12px 0}.known.warn{color:var(--warn)}

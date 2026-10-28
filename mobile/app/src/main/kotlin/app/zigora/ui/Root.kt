@@ -63,6 +63,8 @@ import kotlinx.serialization.json.put
 @Serializable data class AttemptsR(val quiz: Int)
 @Serializable data class AttemptR(val id: Int)
 @Serializable data class RevisionR(val uid: Int)
+@Serializable data class McqR(val topic: Int = 0)  // MCQ practice; a topic for the Per topic way in
+@Serializable data class McqSetR(val id: Int)
 
 @Composable
 fun ZigoraRoot(incoming: Incoming?, handled: () -> Unit) {
@@ -124,7 +126,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
         NavHost(nav, startDestination = HomeR) {
             composable<HomeR> { HomeScreen(me, openTopic = open, openCourse = { nav.navigate(CourseR(it)) }, openQuiz = { nav.navigate(QuizR(it)) },
                                            openNotes = { nav.navigate(NotesR) }, openPhoto = { nav.navigate(PhotoR()) }, openSearch = search,
-                                           openRoutine = { nav.navigate(RoutineR) }, openSession = session, openStudy = { nav.navigate(StudyR) },
+                                           openRoutine = { nav.navigate(RoutineR) }, openSession = session, openStudy = { nav.navigate(StudyR) }, openMcq = { nav.navigate(McqR()) },
                                            openOwn = ownTopic, review = review) }
             composable<CoursesR> { CoursesScreen(me, search, openStudy = { nav.navigate(StudyR) }) { nav.navigate(CourseR(it)) } }
             composable<StudyR> { StudyHomeScreen(back = { nav.popBackStack() }, open = { id, wizard -> nav.navigate(if (wizard) StudyWizardR(id) else StudyCourseR(id)) },
@@ -152,6 +154,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
                                                openMaterial = { cid, name -> nav.navigate(MaterialR(cid, name)) }, openRevision = { u -> nav.navigate(RevisionR(u)) }) }
             composable<TopicR> { TopicScreen(it.toRoute<TopicR>().id, me, back = { nav.popBackStack() }, jump = { id -> nav.navigate(TopicR(id)) { popUpTo<TopicR> { inclusive = true } } },
                                              openReader = { id -> nav.navigate(ReaderR(id)) }, openPractice = { q -> nav.navigate(StudyQuizR(q, it.toRoute<TopicR>().id)) },
+                                             openMcq = { t -> nav.navigate(McqR(t)) },
                                              openMaterial = { cid, name -> nav.navigate(MaterialR(cid, name)) }) }
             composable<ReaderR> { e -> val id = e.toRoute<ReaderR>().id
                 val t = rememberLoad("reader", id) { get("/topics/$id", app.zigora.data.TopicFull.serializer()) }
@@ -166,6 +169,8 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
             composable<MaterialR> { e -> val r = e.toRoute<MaterialR>(); MyMaterialScreen(r.cid, r.name) { nav.popBackStack() } }
             composable<QuizR> { QuizScreen(it.toRoute<QuizR>().id, back = { nav.popBackStack() }, openTopic = open,
                                            openAttempt = { id -> nav.navigate(AttemptR(id)) }, openAttempts = { q -> nav.navigate(AttemptsR(q)) }) }
+            composable<McqR> { McqHomeScreen(it.toRoute<McqR>().topic, back = { nav.popBackStack() }) { id -> nav.navigate(McqSetR(id)) } }
+            composable<McqSetR> { McqSetScreen(it.toRoute<McqSetR>().id, back = { nav.popBackStack() }, openTopic = open) }
             composable<PhotoR> { PhotoScreen(it.toRoute<PhotoR>().uri) { nav.popBackStack() } }
             composable<NotesR> { NotificationsScreen(back = { nav.popBackStack() }, openTopic = open) }
         }

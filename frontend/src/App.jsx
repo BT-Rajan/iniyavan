@@ -1,7 +1,7 @@
 import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,Fragment,isValidElement,memo} from 'react'
 import {createPortal} from 'react-dom'
 import {Md,Body} from './content.jsx'
-import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus} from 'lucide-react'
+import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -71,10 +71,10 @@ export default function App(){
   if(user.must_change)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',guardian=user.role==='guardian',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
-  const links=student?[['learn',GraduationCap,tl("My courses")],['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
+  const links=student?[['learn',GraduationCap,tl("My courses")],['mcq',ListChecks,tl("MCQ practice")],['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
     :guardian?[['aikey',Sparkles,tl("My AI key")],['about',Info,tl("About")]]  // a parent or teacher: their students on Home, and the AI key their school students use
-    :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
-    :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
+    :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
+    :[['learn',BookOpen,tl("Courses")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role,aiOff:!!user.ai_off,level:user.level}}>  {/* aiOff: a school student with no parent's or teacher's key studies without AI */}
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={user.ai_off?null:()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
@@ -88,6 +88,7 @@ export default function App(){
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity toast={toast}/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('profile')}/>}{page==='profile'&&<Profile toast={toast} onPassword={()=>go('password')} onKey={()=>go('aikey')}/>}{page==='about'&&<About user={user}/>}
+    {page==='mcq'&&!guardian&&<McqHome toast={toast}/>}{page==='mcqbank'&&(admin||user.role==='faculty')&&<McqBank toast={toast}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label={tl("Main menu")}>
         <div className="dhead"><button className={'homebtn'+(page==='home'?' on':'')} aria-label={tl("{name}, home",{name:name})} aria-current={page==='home'?'page':undefined} onClick={()=>go('home')}><Logo src={logo} size={36}/><span><b>{name}</b><small>{user.name}, {tl(cap(user.role)).toLowerCase()}</small></span></button><button className="ic" aria-label={tl("Close menu")} onClick={()=>setOpen(false)}><X/></button></div>
@@ -719,6 +720,141 @@ const blankQ=()=>({text:'',options:['',''],option_images:['',''],correct:0,expla
 const fromCsv=x=>({text:x.text,options:x.options,option_images:x.option_images.map(v=>v||''),correct:x.correct,explanation:x.explanation||'',topic_id:x.topic_id,area:x.area||'',image:x.image||'',
   need:{image:x.image?'':x.image_name,options:x.option_image_names.map((n,k)=>x.option_images[k]?'':n)}})
 const missing=qs=>qs.flatMap((x,i)=>[...(x.need.image&&!x.image?[{i,k:-1,name:x.need.image}]:[]),...x.need.options.map((n,k)=>n&&!x.option_images[k]?{i,k,name:n}:null).filter(Boolean)])
+// ---- MCQ practice: two ways in, Practice (across a course's topics) and Per topic (from a topic's page), on one engine. The server keeps the answers
+// until a set is submitted, counts sets (Lite: one every 48 hours; others: four a day) and gives back a set still open instead of counting another
+const MCQ_SIZES=[5,10,15,20]
+const rid=()=>(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random()).replace(/[^A-Za-z0-9-]/g,'')
+function McqQuota({q}){
+  if(!q||q.tier==='staff')return null
+  const txt=q.tier==='lite'?(q.left?tl("Lite: one free MCQ set every 48 hours. Your set is ready."):tl("Lite: one free MCQ set every 48 hours. Your next set is ready {when}.",{when:when(q.next_at)}))
+    :q.left?tl("{left} of {limit} MCQ sets left today.",{left:q.left,limit:q.limit}):tl("You have used today's {limit} MCQ sets. The next is ready {when}.",{limit:q.limit,when:when(q.next_at)})
+  return <p className={'known'+(q.left?'':' warn')} role="status" style={{marginTop:0}}>{txt}</p>}
+function McqHome({toast,topic,back,openTopic}){  // topic: the Per topic way in, from a topic's page
+  const confirm=useConfirm(),{role}=useContext(Ctx)
+  const [tp,setTp]=useState(null),[h,setH]=useState(null),[tab,setTab]=useState(topic?'topic':'practice'),[course,setCourse]=useState(''),[tid,setTid]=useState(topic||''),[size,setSize]=useState(10),[busy,setBusy]=useState(''),[play,setPlay]=useState(null),[n,setN]=useState(0)
+  const load=()=>api('/mcq/home').then(d=>{setH(d);setSize(s=>Math.min(s,d.max));if(topic){const c=d.courses.find(c=>c.topics.some(t=>t.id===topic));if(c)setCourse(String(c.id))}}).catch(e=>{toast(e.message);back&&back()})
+  useEffect(()=>{load()},[n])
+  const hist=usePaged(o=>`/mcq/attempts?limit=${PAGE}&offset=${o}`,[n],toast)
+  if(tp)return <Topic id={tp} back={()=>setTp(null)} toast={toast} role={role}/>  // "Study again" from a result, when not already inside a topic
+  if(play)return <McqPlay id={play} toast={toast} back={()=>{setPlay(null);setN(n+1)}} openTopic={openTopic||setTp}/>
+  if(!h)return <><Bar title={tl("MCQ practice")} back={back}/><div className="main"><Skeleton/></div></>
+  const c=h.courses.find(x=>String(x.id)===String(course)),topics=c?c.topics:h.courses.flatMap(x=>x.topics),t=topics.find(x=>String(x.id)===String(tid))
+  const pool=tab==='topic'?(t?t.questions:0):c?c.questions:h.courses.reduce((a,x)=>a+x.questions,0),ready=tab==='practice'||!!t
+  const go=async source=>{setBusy(source);try{const r=await api('/mcq/attempts',{method:'POST',body:{mode:tab,source,size:Number(size),request_id:rid(),...(tab==='topic'?{topic_id:Number(tid)}:course?{course_id:Number(course)}:{})}})
+    if(r.resumed)toast(tl("You have a set in progress. Here it is."));setPlay(r.id)}catch(e){toast(e.message);load()}setBusy('')}
+  const drop=async()=>{if(!await confirm({title:tl("Leave this set?"),body:tl("It ends without a score. The set it used is not given back."),ok:tl("Leave it"),danger:true}))return
+    try{await api(`/mcq/attempts/${h.open.id}/abandon`,{method:'POST'});setN(n+1)}catch(e){toast(e.message)}}
+  return <><Bar title={tl("MCQ practice")} sub={tl("Questions from your courses, with answers explained")} back={back}/><div className="main">
+    <McqQuota q={h.quota}/>
+    {h.open&&<div className="qbox" style={{marginTop:0}}><b>{tl("A set is waiting for you")}</b><p className="known" style={{margin:'4px 0 8px'}}>{tl("{answered} of {total} answered. Coming back to it doesn't use another set.",{answered:h.open.answered,total:h.open.total})}</p>
+      <div className="two"><button className="btn" style={{marginTop:0}} onClick={()=>setPlay(h.open.id)}><Play size={16}/>{" "}{tl("Continue")}</button><button className="btn ghost" style={{marginTop:0}} onClick={drop}>{tl("Leave it")}</button></div></div>}
+    {!h.courses.length?<p className="known">{tl("There are no topics to practise yet.")}</p>:<>
+    <Tabs label={tl("Ways to practise")} items={[['practice',tl("Practice")],['topic',tl("Per topic")]]} value={tab} onChange={setTab}/>
+    <label htmlFor="mcqc">{tl("Course")}</label>
+    <select id="mcqc" value={course} onChange={e=>{setCourse(e.target.value);setTid('')}}>{tab==='practice'&&<option value="">{tl("All my courses")}</option>}{tab==='topic'&&!course&&<option value="">{tl("Choose a course")}</option>}
+      {h.courses.map(x=><option key={x.id} value={x.id}>{x.name}{x.semester?' · '+x.semester:''}</option>)}</select>
+    {tab==='topic'&&<><label htmlFor="mcqt">{tl("Topic")}</label><select id="mcqt" value={tid} onChange={e=>setTid(e.target.value)} disabled={!c}><option value="">{tl("Choose a topic")}</option>
+      {topics.map(x=><option key={x.id} value={x.id}>{x.title}{' · '+pl(x.questions,'question')}{x.stats?' · '+tl("you {p}%",{p:x.stats.percent}):''}</option>)}</select></>}
+    <label htmlFor="mcqn">{tl("Questions in the set")}</label><select id="mcqn" value={size} onChange={e=>setSize(e.target.value)}>{MCQ_SIZES.filter(x=>x<=h.max).map(x=><option key={x} value={x}>{x}</option>)}</select>
+    <div className="two"><button className="btn" disabled={!!busy||!ready||pool<h.min||h.quota.left===0} onClick={()=>go('bank')}><ClipboardList size={16}/>{" "}{busy==='bank'?tl("Starting…"):tl("Questions from the bank")}</button>
+      {h.ai&&<button className="btn ghost" disabled={!!busy||!ready||h.quota.left===0} onClick={()=>go('ai')}><Sparkles size={16}/>{" "}{busy==='ai'?tl("Writing questions…"):tl("A new AI set")}</button>}</div>
+    <p className="known">{ready&&pool<h.min?tl("Not enough published questions here yet."):tl(pool===1?"{n} published question to draw from.":"{n} published questions to draw from.",{n:pool})}{" "}{tab==='practice'&&h.ai?tl("A new AI set looks at the topics you find hardest."):''}{" "}{tl("A set counts when it starts.")}</p></>}
+    {hist.total>0&&<><h3 className="sec">{tl("Your sets")}</h3>{hist.items.map(a=><button key={a.id} className="row rowbtn" onClick={()=>a.status==='submitted'&&setPlay(a.id)} disabled={a.status!=='submitted'}>
+      <div>{a.topic||a.course||tl("All my courses")}<small>{when(a.at)} · {a.mode==='topic'?tl("Per topic"):tl("Practice")} · {a.source==='ai'?tl("AI set"):tl("Bank")}</small></div>
+      <span className="chip">{a.status==='submitted'?`${a.score}/${a.total} · ${a.percent}%`:tl("Left")}</span></button>)}<Pager page={hist.page} total={hist.total} onPage={hist.setPage}/></>}
+  </div></>}
+function McqPlay({id,toast,back,openTopic}){  // one set: answers are saved as they go; after submitting, the score, each answer and what to revisit
+  const confirm=useConfirm()
+  const [d,setD]=useState(null),[busy,setBusy]=useState(false)
+  useEffect(()=>{api('/mcq/attempts/'+id).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  if(!d)return <><Bar title={tl("MCQ set")} back={back}/><div className="main"><Skeleton/></div></>
+  const open=d.status==='open',left=d.questions.filter(x=>x.chosen==null).length
+  const pick=(i,k)=>{const qs=d.questions.map((x,n)=>n===i?{...x,chosen:k}:x);setD({...d,questions:qs})
+    api(`/mcq/attempts/${id}/answers`,{method:'PUT',body:{answers:{[d.questions[i].pos]:k}}}).catch(e=>toast(e.message))}
+  const submit=async()=>{if(left&&!await confirm({title:tl("Submit with {n} unanswered?",{n:left}),body:tl("Blank answers count as wrong."),ok:tl("Submit")}))return
+    setBusy(true);try{setD(await api(`/mcq/attempts/${id}/submit`,{method:'POST',body:{answers:Object.fromEntries(d.questions.map(x=>[x.pos,x.chosen]))}}));window.scrollTo(0,0)}catch(e){toast(e.message)}setBusy(false)}
+  const areas=(d.feedback||[]).map(f=>({topic_id:f.topic_id,title:f.topic,correct:f.correct,total:f.total,percent:f.percent,status:f.status}))
+  return <><Bar title={d.mode==='topic'&&d.questions[0]?d.questions[0].topic:tl("MCQ practice")} sub={open?tl("{n} questions · answers are saved as you go",{n:d.total}):when(d.submitted_at)} back={back}/><div className="main">
+    {!open&&<div className="qbox" style={{marginTop:0}}><h2 style={{margin:0}}>{d.score} / {d.total} · {d.percent}%</h2><p className="known" style={{marginBottom:0}}>{d.source==='ai'?tl("An AI set, written from your topics' notes."):tl("A set from the question bank.")}</p></div>}
+    {!open&&areas.length>0&&<><h3 className="sec">{tl("What you are good at and what to revisit")}</h3><AreaList areas={areas} onStudy={openTopic}/></>}
+    {d.questions.map((x,i)=><div className="qbox" key={x.pos}><b>{tl("Question")}{" "}{i+1}{!open?' · '+(x.ok?tl("Right"):tl("Wrong")):''}{d.mode!=='topic'&&x.topic?' · '+x.topic:''}</b><div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt={tl("Picture for question {i}{v}",{i:i+1,v:''})}/>
+      {x.options.map((o,k)=>{const cls=open?(x.chosen===k?' sel':''):k===x.correct?' ok':k===x.chosen?' bad':''
+        return open?<button key={k} className={'opt'+cls} aria-pressed={x.chosen===k} onClick={()=>pick(i,k)}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/></button>
+          :<div key={k} className={'opt'+cls}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/>{(k===x.chosen||k===x.correct)&&<span className="otag">{[k===x.chosen&&tl('Your answer'),k===x.correct&&tl('Correct answer')].filter(Boolean).join(' · ')}</span>}</div>})}
+      {!open&&x.chosen==null&&<p className="known">{tl("Left blank.")}</p>}
+      {!open&&(x.explanation||x.explanation_image)&&<div className="known"><Md>{x.explanation}</Md><QImg src={x.explanation_image} alt={tl("Picture for the explanation")}/></div>}</div>)}
+    {open&&<><button className="btn" disabled={busy} onClick={submit}>{busy?tl("Checking…"):tl("Submit answers")}</button>{left>0&&<p className="known">{left}{" "}{tl("unanswered. Blank answers count as wrong.")}</p>}</>}
+    {!open&&<button className="btn ghost" onClick={back}>{tl("Back")}</button>}</div></>}
+// the bank, for admins and the faculty who own a course: write, upload, ask the AI for drafts, publish and retire
+const MCQ_ST=L({draft:'Draft',review:'Needs review',published:'Published',retired:'Retired'}),MCQ_SRC=L({admin:'Admin',teacher:'Teacher',ai:'AI'}),MCQ_DIFF=L({easy:'Easy',medium:'Medium',hard:'Hard'})
+function McqBank({toast}){
+  const confirm=useConfirm()
+  const [courses,setCourses]=useState(null),[cid,setCid]=useState(''),[tid,setTid]=useState(''),[st,setSt]=useState(''),[q,setQ]=useState(''),[edit,setEdit]=useState(null),[n,setN]=useState(0),[busy,setBusy]=useState(false),[csv,setCsv]=useState(null)
+  useEffect(()=>{api('/tree').then(tr=>{const seen=new Set(),out=[];for(const p of tr)for(const sm of p.semesters)for(const c of sm.courses)if(c.editable&&!seen.has(c.id)){seen.add(c.id);out.push({id:c.id,name:c.name,place:p.name+' › '+sm.name,topics:c.units.flatMap(u=>u.topics.map(t=>({id:t.id,title:t.title,unit:u.name,unit_id:u.id})))})}
+    setCourses(out)}).catch(e=>toast(e.message))},[])
+  const list=usePaged(o=>`/mcq/items?limit=${PAGE}&offset=${o}`+(cid?'&course_id='+cid:'')+(tid?'&topic_id='+tid:'')+(st?'&status='+st:'')+(q?'&q='+encodeURIComponent(q):''),[cid,tid,st,q,n],toast)
+  if(!courses)return <><Bar title={tl("MCQ bank")}/><div className="main"><Skeleton/></div></>
+  const c=courses.find(x=>String(x.id)===String(cid)),topics=c?c.topics:[]
+  const status=async(x,s)=>{try{await api(`/mcq/items/${x.id}/status`,{method:'POST',body:{status:s}});toast(tl(MCQ_ST[s]));setN(n+1)}catch(e){toast(e.message)}}
+  const del=async x=>{if(!await confirm({title:tl("Delete this question?"),body:tl("This can't be undone."),ok:tl("Delete"),danger:true}))return;try{await api(`/mcq/items/${x.id}`,{method:'DELETE'});setN(n+1)}catch(e){toast(e.message)}}
+  const ai=async()=>{setBusy(true);try{const r=await api('/mcq/generate',{method:'POST',body:{topic_id:Number(tid),count:5}});toast(tl("{n} AI questions are waiting for your review",{n:r.added}));setSt('review');setN(n+1)}catch(e){toast(e.message)}setBusy(false)}
+  return <><Bar title={tl("MCQ bank")} sub={tl("Practice questions for your courses")}/><div className="main">
+    {!courses.length?<p className="known">{tl("You don't own a course yet, so there is nothing to add questions to.")}</p>:<>
+    <div className="two"><select aria-label={tl("Course")} value={cid} onChange={e=>{setCid(e.target.value);setTid('')}}><option value="">{tl("All my courses")}</option>{courses.map(x=><option key={x.id} value={x.id}>{x.name} · {x.place}</option>)}</select>
+      <select aria-label={tl("Topic")} value={tid} onChange={e=>setTid(e.target.value)} disabled={!c}><option value="">{tl("All topics")}</option>{topics.map(t=><option key={t.id} value={t.id}>{t.title} · {t.unit}</option>)}</select></div>
+    <div className="two"><Opts label={tl("Status")} value={st} set={setSt} items={[['',tl("Every status")],...Object.entries(MCQ_ST)]}/><input type="search" aria-label={tl("Search questions")} placeholder={tl("Search questions")} value={q} onChange={e=>setQ(e.target.value)}/></div>
+    <div className="two"><button className="btn" disabled={!tid} onClick={()=>setEdit({topic_id:Number(tid)})}>{tl("New question")}</button>
+      <button className="btn ghost" disabled={!tid} onClick={()=>setCsv(true)}><Upload size={16}/>{" "}{tl("Upload a CSV")}</button>
+      <button className="btn ghost" disabled={!tid||busy} onClick={ai}><Sparkles size={16}/>{" "}{busy?tl("Writing questions…"):tl("AI drafts")}</button></div>
+    {!tid&&<p className="known">{tl("Choose a course and a topic to add questions to it.")}</p>}
+    {list.items.map(x=><div className="qbox" key={x.id}><b>{x.topic}</b>{" "}<span className={'pill sm'+(x.status==='published'?' okp':x.status==='retired'?' off':'')}>{tl(MCQ_ST[x.status])}</span>
+      <small className="known">{" "}{tl(MCQ_SRC[x.source])}{x.author?' · '+x.author:''} · {tl(MCQ_DIFF[x.difficulty])} · v{x.version}{x.uses?' · '+tl(x.uses===1?"in 1 set":"in {n} sets",{n:x.uses}):''}</small>
+      <div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt=""/>
+      {x.options.map((o,k)=><div key={k} className={'opt'+(k===x.correct?' ok':'')}><b className="olet">{LET[k]}</b><OptBody text={o} img={x.option_images[k]} k={k}/></div>)}
+      {x.explanation&&<div className="known"><Md>{x.explanation}</Md></div>}
+      <div className="chips wrap"><button className="tool" onClick={()=>setEdit(x)}><Pencil size={14}/>{" "}{tl("Edit")}</button>
+        {x.status!=='published'&&<button className="tool" onClick={()=>status(x,'published')}>{tl("Publish")}</button>}
+        {x.status==='published'&&<button className="tool" onClick={()=>status(x,'retired')}>{tl("Retire")}</button>}
+        {x.status!=='draft'&&x.status!=='published'&&<button className="tool" onClick={()=>status(x,'draft')}>{tl("Back to draft")}</button>}
+        {!x.uses&&<button className="tool" onClick={()=>del(x)}><Trash2 size={14}/>{" "}{tl("Delete")}</button>}</div></div>)}
+    {list.total===0&&<p className="known">{tl("No questions here yet.")}</p>}<Pager page={list.page} total={list.total} onPage={list.setPage}/></>}
+    {edit&&<McqItemSheet x={edit} topics={c?c.topics:courses.flatMap(y=>y.topics)} close={()=>setEdit(null)} done={()=>{setEdit(null);setN(n+1)}} toast={toast}/>}
+    {csv&&c&&<McqCsvSheet course={c} tid={Number(tid)} close={()=>setCsv(null)} done={()=>{setCsv(null);setSt('draft');setN(n+1)}} toast={toast}/>}
+  </div></>}
+function McqItemSheet({x,topics,close,done,toast}){  // a new question (x has only topic_id) or an edit; text, answers and explanation take Markdown, maths ($...$) and images
+  const [v,setV]=useState({text:x.text||'',options:x.options||['','','',''],option_images:x.option_images?.length?x.option_images:(x.options||['','','','']).map(()=>''),correct:x.correct??0,
+    explanation:x.explanation||'',image:x.image||'',explanation_image:x.explanation_image||'',difficulty:x.difficulty||'medium',keywords:x.keywords||'',topic_id:x.topic_id,status:'draft'}),[busy,setBusy]=useState(false)
+  const set=(k,val)=>setV(p=>({...p,[k]:val})),opt=(i,k,val)=>setV(p=>({...p,[k]:p[k].map((o,n)=>n===i?val:o)}))
+  const add=()=>setV(p=>({...p,options:[...p.options,''],option_images:[...p.option_images,'']})),drop=i=>setV(p=>({...p,options:p.options.filter((_,n)=>n!==i),option_images:p.option_images.filter((_,n)=>n!==i),correct:p.correct===i?0:p.correct>i?p.correct-1:p.correct}))
+  const save=async status=>{setBusy(true);try{const body={...v,status};if(x.id)await api('/mcq/items/'+x.id,{method:'PUT',body});else await api('/mcq/items',{method:'POST',body});toast(tl("Saved"));done()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{x.id?tl("Edit question"):tl("New question")}</h3>
+    {x.id&&x.uses>0&&<p className="known">{tl("Sets already started keep the version they were given.")}</p>}
+    <label htmlFor="mqt">{tl("Topic")}</label><select id="mqt" value={v.topic_id} onChange={e=>set('topic_id',Number(e.target.value))}>{topics.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select>
+    <label htmlFor="mqq">{tl("Question")}</label><textarea id="mqq" rows={3} value={v.text} maxLength={4000} onChange={e=>set('text',e.target.value)} placeholder={tl("Markdown and maths like $x^2$ work here")}/>
+    {v.text&&<div className="prose known"><Md>{v.text}</Md></div>}<ImgSlot url={v.image} label={tl("the question")} onSet={u=>set('image',u)} toast={toast}/>
+    <fieldset className="opts"><legend>{tl("Answers · pick the correct one")}</legend>{v.options.map((o,i)=><div key={i} className="optedit">
+      <input type="radio" name="mqc" checked={v.correct===i} onChange={()=>set('correct',i)} aria-label={tl("Answer {k} is correct",{k:LET[i]})}/><b className="olet">{LET[i]}</b>
+      <input value={o} maxLength={1000} onChange={e=>opt(i,'options',e.target.value)} aria-label={tl("Answer {k}",{k:LET[i]})}/>
+      <ImgSlot small url={v.option_images[i]} label={tl("answer {k}",{k:LET[i]})} onSet={u=>opt(i,'option_images',u)} toast={toast}/>
+      {v.options.length>2&&<button className="ic sm" aria-label={tl("Remove answer {k}",{k:LET[i]})} onClick={()=>drop(i)}><X size={16}/></button>}</div>)}
+      {v.options.length<6&&<button className="tool" onClick={add}>{tl("Add an answer")}</button>}</fieldset>
+    <label htmlFor="mqe">{tl("Explanation")}</label><textarea id="mqe" rows={3} value={v.explanation} maxLength={4000} onChange={e=>set('explanation',e.target.value)}/>
+    <ImgSlot url={v.explanation_image} label={tl("the explanation")} onSet={u=>set('explanation_image',u)} toast={toast}/>
+    <div className="two"><div><label>{tl("Difficulty")}</label><Opts label={tl("Difficulty")} value={v.difficulty} set={d=>set('difficulty',d)} items={Object.entries(MCQ_DIFF)}/></div>
+      <div><label htmlFor="mqk">{tl("Keywords")}</label><input id="mqk" value={v.keywords} maxLength={300} onChange={e=>set('keywords',e.target.value)} placeholder={tl("comma, separated")}/></div></div>
+    {x.id?<button className="btn" disabled={busy} onClick={()=>save(x.status)}>{tl("Save")}</button>:<div className="two"><button className="btn" disabled={busy} onClick={()=>save('published')}>{tl("Publish")}</button><button className="btn ghost" disabled={busy} onClick={()=>save('draft')}>{tl("Save as draft")}</button></div>}
+    <button className="btn ghost" onClick={close}>{tl("Cancel")}</button></Sheet>}
+function McqCsvSheet({course,tid,close,done,toast}){  // the quiz CSV format; each row goes to its own topic column, or else to the chosen topic. Saved as drafts to review
+  const [p,setP]=useState(null),[busy,setBusy]=useState(false)
+  const read=async e=>{const f=e.target.files[0];if(!f)return;setBusy(true);try{setP(await api('/quizzes/parse-csv',{method:'POST',body:{csv:await f.text(),course_id:course.id}}))}catch(x){toast(x.message)}setBusy(false)}
+  const save=async()=>{setBusy(true);try{const r=await api('/mcq/items/bulk',{method:'POST',body:{status:'draft',items:p.questions.map(q=>({topic_id:q.topic_id||tid,text:q.text,options:q.options,correct:q.correct,explanation:q.explanation,
+    image:q.image,option_images:q.option_images,keywords:q.area||''}))}});toast(tl("{added} added as drafts, {skipped} already in the bank",r));done()}catch(x){toast(x.message)}setBusy(false)}
+  return <Sheet close={close}><h3>{tl("Upload questions")}</h3><p className="known">{tl("The same CSV as for quizzes: question, a, b, c, d, correct, and optionally explanation, topic, area. Rows without a topic go to the topic you chose. They arrive as drafts.")}</p>
+    <input type="file" accept=".csv,text/csv" onChange={read} disabled={busy}/>
+    {p&&<><p className="known">{tl("{n} questions ready.",{n:p.count})}{p.error_count?' '+tl("{n} rows have problems and are left out.",{n:p.error_count}):''}{p.images_needed.length?' '+tl("Image files named in the file aren't uploaded here; add them by editing the questions."):''}</p>
+      {p.errors.slice(0,5).map(e=><p key={e.row} className="known warn">{tl("Row {row}: {error}",{row:e.row,error:srv(e.error)})}</p>)}
+      <button className="btn" disabled={busy||!p.count} onClick={save}>{tl("Add {n} as drafts",{n:p.count})}</button></>}
+    <button className="btn ghost" onClick={close}>{tl("Cancel")}</button></Sheet>}
 function QuizEditor({id,unit_id,course_id,unitTopics,csvFirst,done,toast}){
   const confirm=useConfirm()
   const [m,setM]=useState({title:'',pass_percent:50,published:false,reveal:false}),[qs,setQs]=useState([blankQ()]),[busy,setBusy]=useState(false),[topics,setTopics]=useState(unitTopics||[]),csvRef=useRef(null),imgRef=useRef(null)
@@ -1084,7 +1220,7 @@ function HistorySheet({tid,close,done,toast}){
 function Topic({id:first,back,toast,role}){
   const {aiOff}=useContext(Ctx)
   useLearnClock()  // a lite person's learning minutes
-  const [practice,setPractice]=useState(null),[checking,setChecking]=useState(''),[reading,setReading]=useState(false),[hls,setHls]=useState([]),[tr,setTr]=useState(null)
+  const [mcq,setMcq]=useState(false),[practice,setPractice]=useState(null),[checking,setChecking]=useState(''),[reading,setReading]=useState(false),[hls,setHls]=useState([]),[tr,setTr]=useState(null)
   useEffect(()=>{setTr(null)},[first])
   const [id,setId]=useState(first),[editing,setEditing]=useState(false),[v,setV]=useState(0),[t,setT]=useState(null),[tab,setTab]=useState('notes'),[known,setKnown]=useState([]),[ai,setAi]=useState({}),[aiOk,setAiOk]=useState(null),[ownKey,setOwnKey]=useState(false),[aiMsg,setAiMsg]=useState(''),[busy,setBusy]=useState(false),[bm,setBm]=useState(false),[pv,setPv]=useState(false),[hist,setHist]=useState(false),[cp,setCp]=useState(false),[gone,setGone]=useState('')
   const [mat,setMat]=useState(false),[upNext,setUpNext]=useState(null),opened=useRef(false),jump=nid=>{opened.current=false;setUpNext(null);setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
@@ -1099,6 +1235,7 @@ function Topic({id:first,back,toast,role}){
   const ask=async k=>{setBusy(true);setAiMsg('');try{const r=await api(`/topics/${id}/ai/${k}`);setAi(a=>({...a,[k]:r}))}catch(e){setAiMsg(e.message)}setBusy(false)}
   async function practise(kind){setChecking(kind);try{setPractice(await api(`/topics/${id}/practice`,{method:'POST',body:{kind}}))}catch(e){toast(e.message)}setChecking('')}
   if(mat&&t)return <MyMaterial cid={t.course_id} name={t.course} back={()=>{setMat(false);setAi({});setAiMsg('');setV(v+1)}} toast={toast}/>  // clear saved answers: the notes may have changed, so Explain must be asked again
+  if(mcq)return <McqHome topic={id} toast={toast} back={()=>setMcq(false)} openTopic={nid=>{setMcq(false);jump(nid)}}/>  // the Per topic way in
   if(practice)return <StudyQuizPlay quiz={practice} toast={toast} back={()=>setPractice(null)} again={k=>practise(k)}/>
   if(editing)return <TopicEditor role={role} toast={toast} edit={{id}} done={()=>{setEditing(false);setV(v+1)}} cancel={()=>setEditing(false)}/>
   if(gone)return <><Bar title={tl("Unavailable")} back={back}/><div className="main"><div className="hero"><h2>{gone}</h2><p>{tl("It has been archived. Check back later or ask your teacher.")}</p></div></div></>
@@ -1130,6 +1267,7 @@ function Topic({id:first,back,toast,role}){
     {tab==='notes'&&hls.length>0&&<><h3 className="sec">{tl("Your highlights ({length})",{length:hls.length})}</h3>{<Paged rows={hls} render={h=><HlItem key={h.id} h={{...h,tid:id}} toast={toast} onSaved={r=>setHls(l=>l.map(x=>x.id===r.id?r:x))} onDrop={()=>dropHl(h)}/>}/>}</>}
     {tab==='explain'&&view('explain')}{tab==='answer'&&(aiOk===false?view('answer'):<><Outline id={id}/>{ai.answer?view('answer'):<button className="btn ghost" disabled={busy} onClick={()=>ask('answer')}>{busy?tl("Thinking…"):tl("Show the full sample answer")}</button>}{!ai.answer&&aiMsg&&<p className="known">{aiMsg}</p>}</>)}
     {reading&&<Reader t={t} auto={role==='student'} toast={toast} onList={setHls} close={()=>setReading(false)}/>}
+    {role!=='guardian'&&t.published!==false&&<button className="btn ghost" onClick={()=>setMcq(true)}><ListChecks size={16}/>{" "}{tl("MCQ practice on this topic")}</button>}
     {role==='student'&&aiOk!==false&&<><h3 className="sec">{tl("Want to test yourself?")}</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?tl("Writing questions…"):tl("5 quick questions")}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?tl("Writing the quiz…"):tl("Full quiz · 10")}</button></div>
       <p className="known" style={{marginTop:4}}>{tl("New questions from this topic's notes each time. 5 quick questions: the answer right after each one. Full quiz: scored at the end.")}</p></>}
     {role==='student'&&<div className="mine"><span>{t.learning_due_at&&<>{tl("Your teacher's date")}: {day(t.learning_due_at)} · </>}{t.status==='completed'?tl("You marked this as learned"):tl("Not marked as learned yet")}</span>

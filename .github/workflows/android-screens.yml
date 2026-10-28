@@ -33,7 +33,7 @@ jobs:
 
       - name: Screens
         working-directory: mobile
-        run: ./gradlew --no-daemon testDebugUnitTest -Pscreens --tests 'app.zigora.screens.OnboardingTest'
+        run: ./gradlew --no-daemon testDebugUnitTest -Pscreens --tests 'app.zigora.screens.*'
 
       - uses: actions/upload-artifact@v4
         if: always()
