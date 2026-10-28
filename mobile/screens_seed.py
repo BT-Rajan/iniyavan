@@ -1,5 +1,5 @@
 """A Zigora server for the onboarding screen tests (app/src/test/.../screens/OnboardingTest.kt), on a fresh SQLite file:
-a school program with a topic, a parent with a child who has no AI key, a teacher, and a student the teacher has invited.
+a school program with a topic, a parent with a child who has no AI key, a teacher, a student the teacher has invited, and three MCQs.
 Every password is pw123456. Run from the repository root:  python mobile/screens_seed.py  (it serves on 127.0.0.1:5299)."""
 import os, sys, tempfile, datetime as dt
 here = os.path.dirname(os.path.abspath(__file__)); tmp = tempfile.mkdtemp()
@@ -26,5 +26,11 @@ with main.Session_() as s:
     now = dt.datetime.utcnow()
     s.add_all([main.GuardianLink(guardian_id=mum.id, student_id=kid.id), main.GuardianLink(guardian_id=rani.id, student_id=divya.id, status="invited"),
                main.Progress(user_id=kid.id, topic_id=ts[0].id, completed_at=now, last_read=now)])
+    import json  # MCQ practice: three published questions on Soft water, one with maths
+    for k, (q, o, c) in enumerate((("Soft water lathers", ["easily with soap", "never", "only when boiled", "only with detergents"], 0),
+                                   ("Hardness is given as ppm of", ["$NaCl$", "$CaCO_3$", "$H_2O$", "$MgSO_4$"], 1),
+                                   ("Boiling removes", ["permanent hardness", "temporary hardness", "all salts", "nothing"], 1))):
+        s.add(main.McqItem(topic_id=ts[1].id, course_id=co.id, text=q, options=json.dumps(o), correct=c, explanation="From the notes.", difficulty="easy",
+                           keywords="water", source="admin", status="published", version=1, sig=main.q_sig(q + "|", o, c)))
     s.commit()
 uvicorn.run(main.app, host="127.0.0.1", port=5299, log_level="warning")

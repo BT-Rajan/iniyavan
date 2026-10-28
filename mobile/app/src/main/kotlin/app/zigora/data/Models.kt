@@ -150,3 +150,19 @@ import kotlinx.serialization.json.JsonObject
                                    val program_id: Int? = null, val semester: Int? = null)
 @Serializable data class Invitation(val id: Int, val name: String, val relation: String? = null, val institution: String = "")
 @Serializable data class Invitations(val invitations: List<Invitation> = emptyList())
+
+/** MCQ practice: sets left (Lite one per 48 hours, others four a day), courses and topics with their published questions, a set and its result */
+@Serializable data class McqQuota(val tier: String = "", val limit: Int? = null, val used: Int = 0, val left: Int? = null, val next_at: String? = null)
+@Serializable data class McqStat(val answered: Int = 0, val correct: Int = 0, val percent: Int = 0)
+@Serializable data class McqTopic(val id: Int, val title: String, val unit: String = "", val questions: Int = 0, val stats: McqStat? = null)
+@Serializable data class McqCourse(val id: Int, val name: String, val semester: String = "", val questions: Int = 0, val topics: List<McqTopic> = emptyList())
+@Serializable data class McqOpen(val id: Int, val total: Int = 0, val answered: Int = 0)
+@Serializable data class McqHome(val quota: McqQuota = McqQuota(), val ai: Boolean = false, val min: Int = 3, val max: Int = 20, val open: McqOpen? = null, val courses: List<McqCourse> = emptyList())
+@Serializable data class McqQ(val pos: Int, val topic: String = "", val text: String = "", val options: List<String> = emptyList(), val image: String = "", val option_images: List<String> = emptyList(),
+                              val chosen: Int? = null, val correct: Int? = null, val explanation: String = "", val explanation_image: String = "", val ok: Boolean = false)
+@Serializable data class McqFeedback(val topic_id: Int? = null, val topic: String = "", val correct: Int = 0, val total: Int = 0, val percent: Int = 0, val status: String = "")
+@Serializable data class McqSet(val id: Int, val mode: String = "", val source: String = "", val status: String = "", val total: Int = 0, val resumed: Boolean = false, val score: Int? = null,
+                                val percent: Int? = null, val submitted_at: String? = null, val questions: List<McqQ> = emptyList(), val feedback: List<McqFeedback> = emptyList())
+@Serializable data class McqHistItem(val id: Int, val mode: String = "", val source: String = "", val status: String = "", val topic: String = "", val course: String = "", val score: Int? = null,
+                                     val total: Int = 0, val percent: Int? = null, val at: String? = null)
+@Serializable data class McqHist(val total: Int = 0, val items: List<McqHistItem> = emptyList())

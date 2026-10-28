@@ -6,6 +6,7 @@ import android.print.PrintManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -360,16 +361,17 @@ fun Option(k: Int, text: String, img: String, state: OptState, tag: String = "",
         OptState.Plain -> cs.surface to cs.outline
     }
     val shape = RoundedCornerShape(12.dp)
-    val body = @Composable {
+    val body = @Composable { androidx.compose.foundation.layout.Box {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(LET[k].toString(), fontWeight = FontWeight.Bold, color = line, modifier = Modifier.padding(end = 12.dp))
             Column(Modifier.weight(1f)) {
                 if (img.isNotEmpty()) QImage(img)
-                if (text.isNotEmpty()) Md(text) else if (img.isEmpty()) Text("—")
+                if (text.isNotEmpty()) MathMd(text) else if (img.isEmpty()) Text("—")
                 if (tag.isNotEmpty()) Text(tag, style = MaterialTheme.typography.labelMedium, color = line)
             }
         }
-    }
+        if (onClick != null && hasMath(text)) androidx.compose.foundation.layout.Box(Modifier.matchParentSize().clickable(onClick = onClick))  // maths is drawn in a web view, which would take the tap
+    } }
     val colors = CardDefaults.cardColors(containerColor = bg)
     if (onClick != null) Card(onClick = onClick, Modifier.fillMaxWidth().padding(top = 6.dp), shape = shape, colors = colors, border = BorderStroke(1.dp, line)) { body() }
     else Card(Modifier.fillMaxWidth().padding(top = 6.dp), shape = shape, colors = colors, border = BorderStroke(1.dp, line)) { body() }

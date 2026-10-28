@@ -113,6 +113,12 @@ fun Md(text: String, modifier: Modifier = Modifier) {
              typography = markdownTypography(h1 = t.titleLarge, h2 = t.titleLarge, h3 = t.titleMedium, h4 = t.titleSmall, h5 = t.titleSmall, h6 = t.titleSmall))
 }
 
+/** Markdown that may hold maths ($...$, \( \), \[ \]): the web's own renderer (KaTeX) when it does, as the web shows it; the lighter native one otherwise */
+@Composable
+fun MathMd(text: String, modifier: Modifier = Modifier) { if (hasMath(text)) WebContent(text, modifier = modifier) else Md(text, modifier) }
+private val MATH = Regex("""\$[^$\s][^$]*\$|\\\(|\\\[""")
+fun hasMath(text: String) = MATH.containsMatchIn(text)
+
 /** "think, then tap": the answer stays hidden until asked for */
 @Composable
 fun Reveal(label: String, content: @Composable () -> Unit) {

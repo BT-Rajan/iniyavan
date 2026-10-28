@@ -101,7 +101,7 @@ val PICKS = listOf("why", "example", "exam", "check")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openReader: (Int) -> Unit, openPractice: (Int) -> Unit, openMaterial: (Int, String) -> Unit) {
+fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openReader: (Int) -> Unit, openPractice: (Int) -> Unit, openMaterial: (Int, String) -> Unit, openMcq: (Int) -> Unit = {}) {
     val a = api(); val res = LocalResources.current; val scope = rememberCoroutineScope(); val snack = remember { SnackbarHostState() }
     val topic = rememberLoad("topic", id) { get("/topics/$id", TopicFull.serializer()) }
     val ai = rememberLoad("ai") { runCatching { get("/ai/status", AiStatus.serializer()) }.getOrDefault(AiStatus()) }
@@ -137,6 +137,7 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
                 val aiOff = (ai.state as? Load.Ok)?.value?.off == true  // no parent's or teacher's key: the notes only
                 if (aiOn) Steps(id, student)
                 Body(t, me, aiOn, aiOff, known, openReader = { openReader(id) }, openMaterial = { openMaterial(t.course_id, t.course) })
+                if (student) OutlinedButton(onClick = { openMcq(id) }, modifier = Modifier.fillMaxWidth()) { Text(tl("MCQ practice on this topic")) }  // the Per topic way in; the bank needs no AI
                 if (student && aiOn) {
                     SectionTitle(stringResource(R.string.test_yourself))
                     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {  // buttons go to a new line rather than squeeze their text
