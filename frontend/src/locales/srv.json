@@ -118,5 +118,41 @@
 [
 "^You have used today's (?<n>\\d+) MCQ sets\\. More from tomorrow\\.$",
 "You have used today's {n} MCQ sets. More from tomorrow."
+],
+[
+"^You have used today's (?<n>\\d+) free AI searches\\. Saved answers still work\\. To keep going today, add your own DeepSeek key, or ask your admin for more\\.$",
+"You have used today's {n} free AI searches. Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+],
+[
+"^You have used today's (?<n>\\d+) free AI searches\\. Saved answers still work\\. To keep going today, ask your admin for more\\.$",
+"You have used today's {n} free AI searches. Saved answers still work. To keep going today, ask your admin for more."
+],
+[
+"^You have used today's (?<n>\\d+) free minutes of learning with AI\\. Saved answers still work\\. To keep going today, add your own DeepSeek key, or ask your admin for more\\.$",
+"You have used today's {n} free minutes of learning with AI. Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+],
+[
+"^You have used today's (?<n>\\d+) free minutes of learning with AI\\. Saved answers still work\\. To keep going today, ask your admin for more\\.$",
+"You have used today's {n} free minutes of learning with AI. Saved answers still work. To keep going today, ask your admin for more."
+],
+[
+"^You have used today's (?<n>\\d+) highlight explanations\\. Your highlight is saved; ask again tomorrow\\.$",
+"You have used today's {n} highlight explanations. Your highlight is saved; ask again tomorrow."
+],
+[
+"^You have used today's (?<n>\\d+) AI doubts\\. Try again tomorrow, or reread the passage above\\.$",
+"You have used today's {n} AI doubts. Try again tomorrow, or reread the passage above."
+],
+[
+"^You have used today's (?<n>\\d+) photo questions\\. Try again tomorrow\\.$",
+"You have used today's {n} photo questions. Try again tomorrow."
+],
+[
+"^You have used today's (?<n>\\d+) AI searches\\. Try again tomorrow, or browse your courses\\.$",
+"You have used today's {n} AI searches. Try again tomorrow, or browse your courses."
+],
+[
+"^You have used today's (?<n>\\d+) AI requests for your own courses\\. Try again tomorrow\\.$",
+"You have used today's {n} AI requests for your own courses. Try again tomorrow."
 ]
 ]

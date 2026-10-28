@@ -166,3 +166,8 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class McqHistItem(val id: Int, val mode: String = "", val source: String = "", val status: String = "", val topic: String = "", val course: String = "", val score: Int? = null,
                                      val total: Int = 0, val percent: Int? = null, val at: String? = null)
 @Serializable data class McqHist(val total: Int = 0, val items: List<McqHistItem> = emptyList())
+
+/** an admin's view of a student's AI plan, from /admin/users: who asked for more, and who is on Lite or Pro */
+@Serializable data class PlanUser(val id: Int, val name: String, val email: String? = null, val username: String? = null, val role: String = "", val program: String? = null,
+                                  val plan: String = "", val pro_until: String? = null, val asked: Boolean = false)
+@Serializable data class PlanUsers(val total: Int = 0, val items: List<PlanUser> = emptyList())

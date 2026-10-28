@@ -793,6 +793,12 @@ function McqBank({toast}){
   useEffect(()=>{api('/tree').then(tr=>{const seen=new Set(),out=[];for(const p of tr)for(const sm of p.semesters)for(const c of sm.courses)if(c.editable&&!seen.has(c.id)){seen.add(c.id);out.push({id:c.id,name:c.name,place:p.name+' › '+sm.name,topics:c.units.flatMap(u=>u.topics.map(t=>({id:t.id,title:t.title,unit:u.name,unit_id:u.id})))})}
     setCourses(out)}).catch(e=>toast(e.message))},[])
   const list=usePaged(o=>`/mcq/items?limit=${PAGE}&offset=${o}`+(cid?'&course_id='+cid:'')+(tid?'&topic_id='+tid:'')+(st?'&status='+st:'')+(q?'&q='+encodeURIComponent(q):''),[cid,tid,st,q,n],toast)
+  const [waiting,setWaiting]=useState(0),scope=(cid?'&course_id='+cid:'')+(tid?'&topic_id='+tid:'')
+  useEffect(()=>{api('/mcq/items?status=review&limit=1'+scope).then(r=>setWaiting(r.total)).catch(()=>{})},[cid,tid,n])  // AI questions from students' sets collect here
+  const reviewAll=async action=>{const pub=action==='publish'
+    if(!await confirm({title:pub?tl("Publish all {n} waiting questions?",{n:waiting}):tl("Dismiss all {n} waiting questions?",{n:waiting}),
+      body:pub?tl("Students get them in new sets from now on. Check a few first: the AI writes them from the topic's notes."):tl("They are removed. Any that a student already had in a set are retired instead, so the student's result keeps it."),ok:pub?tl("Publish all"):tl("Dismiss all"),danger:!pub}))return
+    try{const r=await api('/mcq/items/review',{method:'POST',body:{action,course_id:Number(cid)||0,topic_id:Number(tid)||0}});toast(pub?tl("{n} published",{n:r.published}):tl("{n} dismissed",{n:r.retired+r.deleted}));setN(n+1)}catch(e){toast(e.message)}}
   if(!courses)return <><Bar title={tl("MCQ bank")}/><div className="main"><Skeleton/></div></>
   const c=courses.find(x=>String(x.id)===String(cid)),topics=c?c.topics:[]
   const status=async(x,s)=>{try{await api(`/mcq/items/${x.id}/status`,{method:'POST',body:{status:s}});toast(tl(MCQ_ST[s]));setN(n+1)}catch(e){toast(e.message)}}
@@ -807,6 +813,8 @@ function McqBank({toast}){
       <button className="btn ghost" disabled={!tid} onClick={()=>setCsv(true)}><Upload size={16}/>{" "}{tl("Upload a CSV")}</button>
       <button className="btn ghost" disabled={!tid||busy} onClick={ai}><Sparkles size={16}/>{" "}{busy?tl("Writing questions…"):tl("AI drafts")}</button></div>
     {!tid&&<p className="known">{tl("Choose a course and a topic to add questions to it.")}</p>}
+    {waiting>0&&<div className="qbox" role="status"><b>{tl("{n} questions are waiting for review",{n:waiting})}</b><p className="known" style={{margin:'4px 0 8px'}}>{tl("Mostly AI questions from students' sets. Students get them only once they are published.")}</p>
+      <div className="two">{st!=='review'&&<button className="btn ghost" style={{marginTop:0}} onClick={()=>setSt('review')}>{tl("Show them")}</button>}<button className="btn" style={{marginTop:0}} onClick={()=>reviewAll('publish')}>{tl("Publish all")}</button><button className="btn ghost" style={{marginTop:0}} onClick={()=>reviewAll('dismiss')}>{tl("Dismiss all")}</button></div></div>}
     {list.items.map(x=><div className="qbox" key={x.id}><b>{x.topic}</b>{" "}<span className={'pill sm'+(x.status==='published'?' okp':x.status==='retired'?' off':'')}>{tl(MCQ_ST[x.status])}</span>
       <small className="known">{" "}{tl(MCQ_SRC[x.source])}{x.author?' · '+x.author:''} · {tl(MCQ_DIFF[x.difficulty])} · v{x.version}{x.uses?' · '+tl(x.uses===1?"in 1 set":"in {n} sets",{n:x.uses}):''}</small>
       <div className="prose"><Md>{x.text}</Md></div><QImg src={x.image} alt=""/>
