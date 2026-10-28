@@ -31,6 +31,7 @@ const ownerLine=c=>c.mine?tl('Your course'):srv(c.owner_problem)||(c.owner?tl("O
 const useFaculty=on=>{const [l,setL]=useState([]);useEffect(()=>{if(on)api('/admin/users?role=faculty&limit=100').then(r=>setL(r.items.filter(u=>u.active))).catch(()=>{})},[on]);return l}
 
 const firstName=n=>{const w=(n||'').trim().split(/\s+/).filter(Boolean);if(!w.length)return '';if(!/^(dr|prof|mr|mrs|ms|miss)\.?$/i.test(w[0]))return w[0];const rest=w.slice(1).filter(x=>x.replace(/\./g,'').length>1);return rest.length?w[0]+' '+rest[0]:w[0]}  // a title stays with the surname it belongs to ("Dr. A. Kumar" → "Dr. Kumar"), skipping initials
+const roleName=u=>u.role==='admin'?tl("Admin"):u.role==='faculty'?tl("Faculty"):u.role==='guardian'?(u.relation==='teacher'?tl("Teacher"):tl("Parent")):tl("Student")  // a parent or teacher who signed up is a guardian
 const MAX_FILE_MB=20,tooBig=f=>f.size>MAX_FILE_MB*1024*1024  // the server's limit for one file of study material
 const PAGE=10  // the rule: any list longer than ten rows gets numbered pages
 const pl=(n,w)=>tl(n===1?'{n} '+w:'{n} '+(w==='quiz'?'quizzes':w+'s'),{n})  // "1 topic", "3 topics": each form is its own phrase to translate
@@ -74,7 +75,7 @@ export default function App(){
     :guardian?[['aikey',Sparkles,tl("My AI key")],['about',Info,tl("About")]]  // a parent or teacher: their students on Home, and the AI key their school students use
     :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
     :[['learn',BookOpen,tl("Courses")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
-  return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role,aiOff:!!user.ai_off}}>  {/* aiOff: a school student with no parent's or teacher's key studies without AI */}
+  return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role,aiOff:!!user.ai_off,level:user.level}}>  {/* aiOff: a school student with no parent's or teacher's key studies without AI */}
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={user.ai_off?null:()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
@@ -172,7 +173,7 @@ function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher
   const [d,setD]=useState(null),[k,setK]=useState(null),[opts,setOpts]=useState({school:[],college:[]}),[add,setAdd]=useState(null),[inv,setInv]=useState(''),[sent,setSent]=useState(''),[see,setSee]=useState(null),[b,setB]=useState(false)
   const load=()=>api('/guardian/students').then(setD).catch(e=>toast(e.message))
   useEffect(()=>{load();api('/me/ai-key').then(setK).catch(()=>{});api('/guardian/options').then(setOpts).catch(()=>{})},[])
-  if(see)return <StudentProgress id={see} back={()=>setSee(null)} toast={toast}/>
+  if(see)return <StudentProgress id={see} back={()=>{setSee(null);load()}} toast={toast}/>  // a name, grade or removal may have changed
   const parent=user.relation==='parent',level=user.level||'school',num=v=>v===''?null:+v,setRow=(i,o)=>setAdd(add.map((x,j)=>j===i?{...x,...o}:x))
   const ok=add&&add.every(x=>x.name.trim()&&x.username.trim()&&x.password&&(!x.program_id||x.semester))
   const save=async()=>{setB(true);try{setD(await api('/guardian/students',{method:'POST',body:{students:add.map(x=>({...x,program_id:num(x.program_id),semester:num(x.semester)}))}}));setAdd(null);toast(parent?tl("Added. They can sign in now."):tl("Students added. They can sign in now."))}catch(e){toast(e.message)}setB(false)}
@@ -205,7 +206,13 @@ function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher
       {!parent&&<button className="btn ghost" onClick={()=>setAdd([...add,{...KID,program_id:add[add.length-1].program_id,semester:add[add.length-1].semester}])}>{tl("Add another student")}</button>}
       <button className="btn" disabled={b||!ok} onClick={save}>{tl("Save")}</button><button className="btn ghost" onClick={()=>setAdd(null)}>{tl("Cancel")}</button></Sheet>}</div></>}
 function StudentProgress({id,back,toast}){  // what a parent or teacher sees: per course, topics learned and opened, tests, last studied. Never their notes
-  const [d,setD]=useState(null),[pw,setPw]=useState(''),[b,setB]=useState(false);useEffect(()=>{api(`/guardian/students/${id}/progress`).then(setD).catch(e=>{toast(e.message);back()})},[id])
+  const confirm=useConfirm()
+  const [d,setD]=useState(null),[pw,setPw]=useState(''),[b,setB]=useState(false),[ed,setEd]=useState(null),[opts,setOpts]=useState({school:[],college:[]}),{level}=useContext(Ctx)
+  const load=()=>api(`/guardian/students/${id}/progress`).then(setD).catch(e=>{toast(e.message);back()});useEffect(()=>{load()},[id])
+  const edit=()=>{api('/guardian/options').then(setOpts).catch(()=>{});setEd({name:d.name,program_id:d.program_id??'',semester:d.semester??''})}
+  const saveEd=async()=>{setB(true);try{await api(`/guardian/students/${id}`,{method:'PATCH',body:{name:ed.name,program_id:ed.program_id===''?null:+ed.program_id,semester:ed.semester===''?null:+ed.semester}});setEd(null);toast(tl("Changes saved"));load()}catch(e){toast(e.message)}setB(false)}
+  const drop=async()=>{if(!await confirm({title:tl("Remove {name}?",{name:d.name}),body:d.can_reset?tl("Their progress stays. If no other parent or teacher looks after them, their account is switched off, since they have no email of their own. An admin can switch it back on."):tl("Their account and progress stay. You no longer see their progress, and your AI key no longer covers them."),ok:tl("Remove"),danger:true}))return
+    try{await api('/guardian/students/'+id,{method:'DELETE'});toast(tl("Removed"));back()}catch(e){toast(e.message)}}
   const setPass=async()=>{setB(true);try{await api(`/guardian/students/${id}/password`,{method:'PUT',body:{password:pw}});setPw('');toast(tl("Password changed. Tell them the new one."))}catch(e){toast(e.message)}setB(false)}
   return <><Bar title={d?d.name:tl("Loading")} sub={d?.place} back={back}/><div className="main">
     {!d&&<Skeleton rows={2}/>}{d&&!d.courses.length&&<p className="known">{tl("No courses yet. They appear once an admin places them in a program.")}</p>}
@@ -213,7 +220,12 @@ function StudentProgress({id,back,toast}){  // what a parent or teacher sees: pe
     {d&&<p className="known">{tl("You see progress only, never their own notes or highlights.")}</p>}
     {d?.can_reset&&<><h3 className="sec">{tl("Forgot their password?")}</h3><p className="known" style={{marginTop:0}}>{tl("They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.")}</p>
       <label htmlFor="spw">{tl("New password")}</label><input id="spw" type="password" autoComplete="new-password" value={pw} onChange={e=>setPw(e.target.value)}/>
-      <button className="btn ghost" disabled={b||pw.length<8} onClick={setPass}>{tl("Set a new password")}</button></>}</div></>}
+      <button className="btn ghost" disabled={b||pw.length<8} onClick={setPass}>{tl("Set a new password")}</button></>}
+    {d?.can_reset&&!ed&&<button className="btn ghost" onClick={edit}>{tl("Change their name or grade")}</button>}
+    {ed&&<div className="qbox"><label htmlFor="sen">{tl("Name")}</label><input id="sen" value={ed.name} onChange={e=>setEd({...ed,name:e.target.value})}/>
+      <Place id="se" opts={opts} level={level||'school'} v={ed} set={o=>setEd({...ed,...o})}/>
+      <div className="two"><button className="btn" disabled={b||!ed.name.trim()||(ed.program_id!==''&&ed.semester==='')} onClick={saveEd}>{tl("Save")}</button><button className="btn ghost" onClick={()=>setEd(null)}>{tl("Cancel")}</button></div></div>}
+    {d&&<button className="btn ghost" style={{color:'var(--bad)'}} onClick={drop}>{tl("Remove {name} from my list",{name:d.name})}</button>}</div></>}
 function Invitations(){  // a teacher asked to follow this student's progress; nothing is shared until they accept
   const [list,setList]=useState([]),load=()=>api('/me/invitations').then(r=>setList(r.invitations)).catch(()=>{});useEffect(()=>{load()},[])
   const answer=async(x,a)=>{try{await api(`/me/invitations/${x.id}/${a}`,{method:'POST'});load()}catch{/* the list reloads either way */load()}}
@@ -1646,7 +1658,7 @@ function Users({toast,me}){
     <div style={{height:14}}/>
     {items.length>0&&<div className="uhead" aria-hidden="true"><span>{tl("Name")}</span><span>{tl("Program")}</span><span>{lab==='Semester'?tl("Sem"):lab}</span></div>}
     {items.map(u=><button key={u.id} className={'utr'+(selMode?' sel':'')+(sel.includes(u.id)?' on':'')} onClick={()=>selMode?setSel(sel.includes(u.id)?sel.filter(i=>i!==u.id):[...sel,u.id]):setView(u.id)} aria-label={tl(selMode?(sel.includes(u.id)?'Deselect {name}':'Select {name}'):'Open {name}',{name:u.name})} aria-pressed={selMode?sel.includes(u.id):undefined}>
-      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active||u.self_registered)&&<span className="tags">{u.role!=='student'&&<span className="pill">{u.role==='admin'?tl("Admin"):tl("Faculty")}</span>}{u.self_registered&&<span className="pill">{tl("Self-registered")} · {tl(PLAN_NAME[u.plan]||'Lite')}</span>}{u.asked&&<span className="pill">{tl("Asked for more AI")}</span>}{!u.active&&<span className="pill off">{tl("Disabled")}</span>}</span>}</span></span>
+      <span className="nm">{selMode&&<span className="tick" aria-hidden="true">{sel.includes(u.id)&&<Check size={14}/>}</span>}<span className="dot" style={{background:COL[u.id%5]}}>{(u.name||'?')[0]}</span><span className="tx"><b>{u.name}</b>{(u.role!=='student'||!u.active||u.self_registered)&&<span className="tags">{u.role!=='student'&&<span className="pill">{roleName(u)}</span>}{u.self_registered&&<span className="pill">{tl("Self-registered")} · {tl(PLAN_NAME[u.plan]||'Lite')}</span>}{u.asked&&<span className="pill">{tl("Asked for more AI")}</span>}{!u.active&&<span className="pill off">{tl("Disabled")}</span>}</span>}</span></span>
       <span className="pg">{u.program||'—'}</span><span className="sn">{u.semester||'—'}</span></button>)}
     {!items.length&&<p className="known">{filtered?tl("No one matches that search."):tl("No users yet.")}</p>}
     <Pager page={page} total={total} onPage={setPage}/>
@@ -1722,9 +1734,11 @@ function UserDetail({id,me,progs,back,toast}){
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>{tl("Topics read")}</div><div className="stat"><b>{u.reads}</b>{tl("Total reads")}</div></div>
     <h3 className="sec">{tl("Profile")}</h3>
-    {row({admin:'Admin',faculty:'Faculty'}[u.role]||'Student','Role')}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(planLine(u),'AI plan')}</>}{row(day(u.last_active),'Last active')}
+    {row(roleName(u),'Role')}{u.username&&row(u.username,tl("Username"))}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(planLine(u),'AI plan')}</>}{row(day(u.last_active),'Last active')}
     {u.self_registered&&<ProControl u={u} toast={toast} done={load}/>}
     {u.role==='faculty'&&<><h3 className="sec">{tl("Courses they own")}</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">{tl("None yet. They can read published content but edit nothing until they own a course.")}</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>{tl("Assign courses")}</button></>}
+    {(u.links||[]).length>0&&<><h3 className="sec">{u.role==='student'?tl("Parents and teachers"):u.relation==='teacher'?tl("Their students"):tl("Their children")}</h3>
+      {u.links.map(x=><div className="row" key={x.id}><div>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}<small>{u.role==='student'?(x.who==='teacher'?tl("Teacher"):tl("Parent")):x.who}</small></div></div>)}</>}
     <h3 className="sec">{tl("Recently read")}</h3>
     {u.recent.length?<Paged rows={u.recent} render={(x,i)=><div className="row" key={i}><div>{x.title}<small>{x.reads}{" "}{tl("reads, last")}{" "}{day(x.last_read)}</small></div></div>}/>:<p className="known">{tl("No reading activity yet.")}</p>}
     <div className="two"><button className="btn ghost" onClick={()=>setEd(true)}>{tl("Edit")}</button><button className="btn" onClick={()=>setAsk(true)}>{tl("Reset password")}</button></div>
@@ -1745,10 +1759,10 @@ function UserSheet({u,me,progs,close,done,toast}){
     const r=isNew?null:await api('/admin/users/'+u.id,{method:'PATCH',body:{name:f.name,email:f.email,...enrol,...(self?{}:{role:f.role,active:f.active})}})
     toast(isNew?tl("User added"):r.courses_needing_owner?tl("Saved. {courses_needing_owner} course(s) they own need a new owner.",{courses_needing_owner:r.courses_needing_owner}):tl("Changes saved"));done()}catch(e){toast(e.message)}setBusy(false)}
   return <Sheet page close={close}><h3>{isNew?tl("New user"):tl("Edit user")}</h3>
-    <label>{tl("Name")}</label><input value={f.name} onChange={set('name')}/><label>{tl("Email")}</label><input type="email" value={f.email} onChange={set('email')}/>
+    <label>{tl("Name")}</label><input value={f.name} onChange={set('name')}/><label>{u.username?tl("Email (optional)"):tl("Email")}</label><input type="email" value={f.email} onChange={set('email')}/>
     <label>{tl("Program")}</label><select value={f.program_id} onChange={e=>{const id=e.target.value;setF({...f,program_id:id,semester:+f.semester>semsOf(progs,id).length?'':f.semester})}}><option value="">{tl("Not set")}</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
     <label>{termOf(progs,f.program_id)}</label><select value={f.semester} onChange={set('semester')}><option value="">{tl("Not set")}</option>{semsOf(progs,f.program_id).map(n=><option key={n} value={n}>{n}</option>)}</select>
-    <label>{tl("Role")}</label><select disabled={self} value={f.role} onChange={set('role')}><option value="student">{tl("Student")}</option><option value="faculty">{tl("Faculty")}</option><option value="admin">{tl("Admin")}</option></select>
+    <label>{tl("Role")}</label><select disabled={self} value={f.role} onChange={set('role')}>{u.role==='guardian'&&<option value="guardian">{roleName(u)}</option>}<option value="student">{tl("Student")}</option><option value="faculty">{tl("Faculty")}</option><option value="admin">{tl("Admin")}</option></select>
     <label>{tl("Status")}</label><select disabled={self} value={f.active?'1':'0'} onChange={e=>setF({...f,active:e.target.value==='1'})}><option value="1">{tl("Active")}</option><option value="0">{tl("Disabled")}</option></select>
     {isNew?<><label>{tl("Password (8+ characters)")}</label><input type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/></>
       :<p className="known" style={{marginTop:14}}>{tl("To give this person a new password, use Reset password on their page.")}</p>}

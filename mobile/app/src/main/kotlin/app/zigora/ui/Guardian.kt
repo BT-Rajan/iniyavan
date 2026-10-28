@@ -117,7 +117,7 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
     var view by remember { mutableStateOf<Int?>(null) }
     var keyOpen by remember { mutableStateOf(false) }
     if (keyOpen) { MyKeyScreen(guardian = true) { keyOpen = false }; return }
-    view?.let { sid -> StudentProgressScreen(sid) { view = null }; return }
+    view?.let { sid -> StudentProgressScreen(sid, me.level ?: "school") { view = null }; return }  // coming back loads the list again, so a change shows
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast()
     val list = rememberLoad("guardian-students") { get("/guardian/students", GStudents.serializer()) }
     val opts = rememberLoad("guardian-options") { runCatching { get("/guardian/options", ProgOpts.serializer()) }.getOrDefault(ProgOpts()) }
@@ -189,10 +189,13 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
 
 /** what a parent or teacher sees of one student: per course, topics learned and opened, tests, when they last studied. Never their notes */
 @Composable
-fun StudentProgressScreen(id: Int, back: () -> Unit) {
+fun StudentProgressScreen(id: Int, level: String, back: () -> Unit) {
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast()
     var pw by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<NewStudent?>(null) }  // the name and place being changed
+    var opts by remember { mutableStateOf(ProgOpts()) }
+    var ask by remember { mutableStateOf<Ask?>(null) }
     val p = rememberLoad("guardian-progress", id) { get("/guardian/students/$id/progress", GProgress.serializer()) }
     val d0 = (p.state as? Load.Ok)?.value
     Page(d0?.name ?: tl("Loading"), d0?.place.orEmpty(), back = back) {
@@ -215,9 +218,38 @@ fun StudentProgressScreen(id: Int, back: () -> Unit) {
                     catch (e: Exception) { toast(e.message.orEmpty()) }
                     busy = false
                 } }) { Text(tl("Set a new password")) }
+                val e = editing
+                if (e == null) OutlinedButton(onClick = {
+                    editing = NewStudent(name = d.name, program = d.program_id, sem = d.semester)
+                    scope.launch { opts = runCatching { a.get("/guardian/options", ProgOpts.serializer()) }.getOrDefault(ProgOpts()) }
+                }) { Text(tl("Change their name or grade")) }
+                else Panel {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(e.name, { editing = e.copy(name = it) }, Modifier.fillMaxWidth(), label = { Text(tl("Name")) }, singleLine = true)
+                        PlacePicker(opts, level, e.program, e.sem) { pg, sm -> editing = e.copy(program = pg, sem = sm) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(enabled = !busy && e.name.isNotBlank() && (e.program == null || e.sem != null), onClick = { scope.launch {
+                                busy = true
+                                try { a.raw("PATCH", "/guardian/students/$id", buildJsonObject { put("name", e.name.trim()); put("program_id", e.program); put("semester", e.sem) })
+                                      editing = null; p.reload(); toast(tl("Changes saved")) }
+                                catch (x: Exception) { toast(x.message.orEmpty()) }
+                                busy = false
+                            } }) { Text(tl("Save")) }
+                            TextButton(onClick = { editing = null }) { Text(tl("Cancel")) }
+                        }
+                    }
+                }
             }
+            Gap(8)
+            TextButton(onClick = {
+                ask = Ask(tl("Remove {name}?", "name" to d.name),
+                          if (d.can_reset) tl("Their progress stays. If no other parent or teacher looks after them, their account is switched off, since they have no email of their own. An admin can switch it back on.")
+                          else tl("Their account and progress stay. You no longer see their progress, and your AI key no longer covers them."),
+                          tl("Remove"), danger = true) { scope.launch { try { a.raw("DELETE", "/guardian/students/$id"); toast(tl("Removed")); onMain { back() } } catch (x: Exception) { toast(x.message.orEmpty()) } } }
+            }) { Text(tl("Remove {name} from my list", "name" to d.name), color = MaterialTheme.colorScheme.error) }
         }
     }
+    AskDialog(ask) { ask = null }
 }
 
 /** on a student's Home: a teacher asked to follow their progress. Nothing is shared until they accept */
