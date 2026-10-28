@@ -19,7 +19,7 @@ def test_lite_people_get_a_few_free_searches_a_day_then_are_told_how_to_get_more
     r = ask(env, "third question", h=h); assert r.status_code == 429 and "2 free AI searches" in r.json()["detail"] and "own DeepSeek key" in r.json()["detail"]
     assert env.c.get("/api/me/plan", headers=h).json()["searches_used"] == 2
     assert ask(env, "third question").status_code == 200  # a student the college added is not limited by this
-    assert env.c.get("/api/me/plan", headers=env.stu).json() == {"plan": "college", "pro_until": None}
+    assert env.c.get("/api/me/plan", headers=env.stu).json() == {"plan": "college", "pro_until": None, "own_key": False}
 
 def test_lite_learning_time_counts_each_minute_once_and_stops_new_ai_answers(env, monkeypatch):
     ai_env(env, monkeypatch); h, uid = lite_person(env); set_limits(10, 2); t = ids()["topic"]["Water hardness"]

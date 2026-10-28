@@ -768,7 +768,7 @@
 "Only faculty can own courses": "أعضاء هيئة التدريس فقط يمكنهم امتلاك المقررات",
 "Only me": "أنا فقط",
 "Only mine": "ما يخصني فقط",
-"Only self-registered people have a plan. Students your college added already use the college's AI.": "الخطط للمسجّلين ذاتيًا فقط. الطلاب الذين أضافتهم كليتك يستخدمون ذكاء الكلية أصلًا.",
+"Only self-registered people and school students have a plan. Students your college added already use the college's AI.": "الخطط للمسجّلين ذاتيًا ولطلاب المدارس فقط. طلاب الكلية الذين أضفتهم يستخدمون ذكاء الكلية أصلًا.",
 "Only the names of your program, semester, course and topic and this phrase are sent. Your notes never are.": "تُرسل فقط أسماء برنامجك وفصلك ومقررك وموضوعك وهذه العبارة. ملاحظاتك لا تُرسل أبدًا.",
 "Only the ones that failed": "الفاشلة فقط",
 "Only the person who added a question, or an admin, can change it": "لا يغيّر السؤال إلا من أضافه أو المسؤول",
@@ -1884,5 +1884,9 @@
 "Removed": "تمت الإزالة",
 "Change their name or grade": "تغيير الاسم أو الصف",
 "Remove {name} from my list": "إزالة {name} من قائمتي",
-"This student manages their own account.": "هذا الطالب يدير حسابه بنفسه."
+"This student manages their own account.": "هذا الطالب يدير حسابه بنفسه.",
+"Account created": "تم إنشاء الحساب",
+"Invitation": "دعوة",
+"Account changed": "تم تغيير الحساب",
+"AI allowance": "حصة الذكاء الاصطناعي"
 }

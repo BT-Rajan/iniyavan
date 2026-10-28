@@ -71,8 +71,8 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class Rewards(val uses: Int = 0, val points: Int = 0, val toward_next: Int = 0, val per: Int = 1000, val points_per: Int = 100, val top: List<Shared> = emptyList())
 /** a self-registered person's AI plan: lite (a free daily allowance on the college's key), own (their own key) or pro (given by the admin until a date) */
 @Serializable data class AiPlan(val plan: String = "college", val pro_until: String? = null, val searches_used: Int = 0, val searches_limit: Int = 0,
-                                val minutes_used: Int = 0, val minutes_limit: Int = 0, val asked: Boolean = false)
-@Serializable data class Profile(val name: String, val email: String, val role: String, val lang: String = "en", val program: String = "", val semester: Int? = null, val term: String = "",
+                                val minutes_used: Int = 0, val minutes_limit: Int = 0, val asked: Boolean = false, val own_key: Boolean = true)
+@Serializable data class Profile(val name: String, val email: String = "", val username: String = "", val role: String, val lang: String = "en", val program: String = "", val semester: Int? = null, val term: String = "",
                                  val self_registered: Boolean = false, val ai: AiPlan? = null, val rewards: Rewards? = null)
 @Serializable data class Note(val key: String, val text: String, val sub: String = "", val unread: Boolean = false)
 @Serializable data class Notes(val items: List<Note> = emptyList(), val digest: Boolean = false, val mail: Boolean = false)

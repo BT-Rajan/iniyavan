@@ -768,7 +768,7 @@
 "Only faculty can own courses": "ஆசிரியர்கள் மட்டுமே பாடங்களுக்கு உரிமையாளராக இருக்க முடியும்",
 "Only me": "நான் மட்டும்",
 "Only mine": "என்னுடையவை மட்டும்",
-"Only self-registered people have a plan. Students your college added already use the college's AI.": "சுயமாகப் பதிவுசெய்தவர்களுக்கு மட்டுமே திட்டம் உண்டு. கல்லூரி சேர்த்த மாணவர்கள் ஏற்கெனவே கல்லூரியின் AI-ஐப் பயன்படுத்துகிறார்கள்.",
+"Only self-registered people and school students have a plan. Students your college added already use the college's AI.": "சுயமாகப் பதிவுசெய்தவர்களுக்கும் பள்ளி மாணவர்களுக்கும் மட்டுமே திட்டம் உண்டு. கல்லூரி சேர்த்த மாணவர்கள் ஏற்கெனவே கல்லூரியின் AI-ஐப் பயன்படுத்துகிறார்கள்.",
 "Only the names of your program, semester, course and topic and this phrase are sent. Your notes never are.": "உங்கள் திட்டம், பருவம், பாடம், தலைப்பு ஆகியவற்றின் பெயர்களும் இந்தச் சொற்றொடரும் மட்டுமே அனுப்பப்படும். உங்கள் குறிப்புகள் ஒருபோதும் அனுப்பப்படாது.",
 "Only the ones that failed": "தோல்வியடைந்தவை மட்டும்",
 "Only the person who added a question, or an admin, can change it": "கேள்வியைச் சேர்த்தவர் அல்லது நிர்வாகி மட்டுமே அதை மாற்ற முடியும்",
@@ -1884,5 +1884,9 @@
 "Removed": "நீக்கப்பட்டது",
 "Change their name or grade": "பெயர் அல்லது வகுப்பை மாற்று",
 "Remove {name} from my list": "{name} அவர்களை என் பட்டியலிலிருந்து நீக்கு",
-"This student manages their own account.": "இந்த மாணவர் தங்கள் கணக்கைத் தாமே நிர்வகிக்கிறார்."
+"This student manages their own account.": "இந்த மாணவர் தங்கள் கணக்கைத் தாமே நிர்வகிக்கிறார்.",
+"Account created": "கணக்கு உருவாக்கப்பட்டது",
+"Invitation": "அழைப்பு",
+"Account changed": "கணக்கு மாற்றப்பட்டது",
+"AI allowance": "AI ஒதுக்கீடு"
 }
