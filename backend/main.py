@@ -370,7 +370,7 @@ class MailLog(Base):  # what was sent, to whom and whether it went: never the te
     __tablename__ = "mail_log"
     id = Column(Integer, primary_key=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
     kind = Column(String(20)); to = Column(String(190)); ok = Column(Boolean, default=True); error = Column(String(300), nullable=True)
-MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test", "pro": "More AI given",
+MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test", "pro": "More AI given", "pro_end": "Pro ended",
               "welcome": "Account created", "invite": "Invitation", "password": "Password changed", "status": "Account changed", "quota": "AI allowance"}
 class MailError(Exception): pass  # a message written for the admin
 def site_url(s): return (setting(s, "app_url") or os.getenv("APP_URL") or "").rstrip("/")
@@ -386,23 +386,47 @@ def mail_on(s=None):  # a sender and a site address for the links: without both,
     if s is None:
         with Session_() as s2: return mail_on(s2)
     return bool(mail_conf(s) and site_url(s))
-def mail_html(name, body, link):  # the same words as the text part, with the link as a button; inline styles, because mail apps drop style sheets
+# Emails go out in the reader's language: the same Tamil and Arabic the app shows (frontend/src/locales), looked up by the English wording,
+# which keeps its {names} for the parts that change. A wording with no translation stays English, so a new email is never blank.
+LOCALES = os.path.join(os.path.dirname(__file__), "..", "frontend", "src", "locales")
+@functools.lru_cache(maxsize=None)
+def mail_words(lang):  # (words, shapes) for one language; shapes turn a sentence with a number in it into its wording
+    try: words = json.load(open(os.path.join(LOCALES, f"{lang}.json"), encoding="utf-8"))
+    except (OSError, ValueError): words = {}
+    try: shapes = [(re.compile(re.sub(r"\(\?<(?=[A-Za-z_])", "(?P<", p)), k) for p, k in json.load(open(os.path.join(LOCALES, "srv.json"), encoding="utf-8"))]
+    except (OSError, ValueError, re.error): shapes = []
+    return words, shapes
+def fill(text, v): return re.sub(r"\{(\w+)\}", lambda m: str(v[m.group(1)]) if m.group(1) in v else m.group(0), text)
+def mail_lang(u): return u.lang if u is not None and getattr(u, "lang", None) in ("ta", "ar") else "en"
+def mt(lang, text, **v):  # one piece of an email in the reader's language
+    if lang in ("ta", "ar"):
+        words, shapes = mail_words(lang)
+        if text in words: return fill(words[text], v)
+        if not v:  # a sentence the server wrote with its numbers already in (a notification, say)
+            for p, k in shapes:
+                m = p.fullmatch(text)
+                if m and k in words: return fill(words[k], m.groupdict())
+    return fill(text, v)
+def letter(lang, name, *parts):  # "Hi Asha," and the paragraphs, each already in the reader's language
+    return mt(lang, "Hi {name},", name=name) + "\n\n" + "\n\n".join(x for x in parts if x) + "\n"
+def mail_day(lang, d): return d.strftime("%d %B %Y") if lang == "en" else f"{d.day}/{d.month}/{d.year}"  # month names only in English
+def mail_html(name, body, link, lang="en"):  # the same words as the text part, with the link as a button; inline styles, because mail apps drop style sheets
     paras = "".join(f'<p style="margin:0 0 14px">{htmllib.escape(x).replace(chr(10), "<br>")}</p>' for x in body.strip().split("\n\n") if not (link and x.strip() == link))
     button = (f'<p style="margin:6px 0 20px"><a href="{htmllib.escape(link)}" style="background:#722f99;color:#fff;text-decoration:none;padding:12px 20px;'
-              f'border-radius:999px;font-weight:600;display:inline-block">Open {htmllib.escape(name)}</a></p>') if link else ""
-    return (f'<div style="font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#1e1626;max-width:560px;margin:0 auto;padding:24px">'
+              f'border-radius:999px;font-weight:600;display:inline-block">{htmllib.escape(mt(lang, "Open {name}", name=name))}</a></p>') if link else ""
+    return (f'<div dir="{"rtl" if lang == "ar" else "ltr"}" style="font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;color:#1e1626;max-width:560px;margin:0 auto;padding:24px">'
             f'<p style="margin:0 0 20px;font-weight:700;font-size:18px;color:#722f99">{htmllib.escape(name)}</p>{paras}{button}</div>')
 def gmail_login_help(e):
     return ("Gmail did not accept the sign-in (" + (getattr(e, "smtp_error", b"") or b"").decode(errors="replace").strip()[:120] + "). Usually: the account's own password was "
             "entered instead of a 16-letter App Password (Google Account > Security > 2-Step Verification > App passwords); 2-Step Verification is off, so App "
             "Passwords aren't available; or Google flagged this server's sign-in: look for a security alert in that Gmail inbox.")
-def send_mail(to, subject, body, kind="mail", link=None):
+def send_mail(to, subject, body, kind="mail", link=None, lang="en"):
     """Sends one email (plain text with an HTML copy) and records how it went. Raises MailError with a message for the admin."""
     with Session_() as s:
         c, name = mail_conf(s), setting(s, "app_name", APP_NAME)
         if not c: raise MailError("No sender is set up. Add a Gmail account under Settings > Email.")
         m = EmailMessage(); m["From"] = formataddr((name, c["sender"])) if c["via"] == "gmail" else c["sender"]; m["To"], m["Subject"] = to, subject
-        m.set_content(body); m.add_alternative(mail_html(name, body, link), subtype="html")
+        m.set_content(body); m.add_alternative(mail_html(name, body, link, lang), subtype="html")
         try:
             with (smtplib.SMTP_SSL(c["host"], c["port"], timeout=20) if c["tls"] == "ssl" else smtplib.SMTP(c["host"], c["port"], timeout=20)) as srv:
                 if c["tls"] == "starttls": srv.starttls()
@@ -423,37 +447,51 @@ def send_mail(to, subject, body, kind="mail", link=None):
             s.commit()
         except Exception: s.rollback()  # the record must never stop an email
         if err: log.warning("%s email to user failed: %s", kind, err[:80]); raise MailError(err)
-def deliver_reset(email, name, raw):
+def deliver_reset(email, name, raw, lang="en"):
     minutes = int(os.getenv("RESET_MINUTES") or 30)
     with Session_() as s: link = f"{site_url(s)}/app/#reset={raw}"
-    try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{link}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n", kind="reset", link=link)
+    try: send_mail(email, mt(lang, "Reset your {app} password", app=APP_NAME), letter(lang, name, mt(lang, "Someone asked to reset the password for your {app} account. To choose a new one, open this link within {minutes} minutes:", app=APP_NAME, minutes=minutes),
+                   link, mt(lang, "If you didn't ask for this, ignore this email. Your password stays the same.")), kind="reset", link=link, lang=lang)
     except MailError: pass  # recorded in the email log for the admin; the person sees the same answer either way
 # ---- account notes: a short email whenever an account is created, its password changes, it is switched on or off or changes role, a teacher
 # ---- invites or is answered, or a Lite allowance is nearly used up; so a change the person didn't make doesn't go unnoticed. Never a password or code.
-def account_mail(to, name, kind, subject, body, link):
-    try: send_mail(to, subject, f"Hi {name},\n\n{body}\n", kind=kind, link=link)
+def account_mail(to, name, kind, subject, body, link, lang="en"):
+    try: send_mail(to, subject, letter(lang, name, body), kind=kind, link=link, lang=lang)
     except MailError: pass  # in the email log for the admin
-def notify(s, u, kind, subject, mine, theirs=None, run=None, skip=None):
+def notify(s, u, kind, subject, mine, theirs=None, run=None, skip=None, **v):
     """Emails u (mine); for a username account with no email, its parents and teachers instead (theirs, about u), except skip, the one who made the change.
+    subject, mine and theirs are English wordings with {names} filled from v (a list of them makes one paragraph), each put in its reader's language.
     run: a request's bg.add_task; elsewhere a thread, so a slow mail server never holds a request."""
     if not mail_on(s): return
-    to = [(u.email, u.name, mine)] if u.email else [(g.email, g.name, theirs) for g in guardians_of(s, u.id) if g.email and g.active and g.id != skip] if theirs else []
-    link = site_url(s) + "/app/"
-    for e, n, body in to: (run or spawn)(account_mail, e, n, kind, subject, body, link)
+    to = [(u, mine)] if u.email else [(g, theirs) for g in guardians_of(s, u.id) if g.email and g.active and g.id != skip] if theirs else []
+    link = site_url(s) + "/app/"; v = {"app": APP_NAME, **v}
+    for r, body in to:
+        lang = mail_lang(r); text = " ".join(mt(lang, x, **v) for x in (body if isinstance(body, list) else [body]))
+        (run or spawn)(account_mail, r.email, r.name, kind, mt(lang, subject, **v), text, link, lang)
 def notify_password(s, u, by_admin=False, run=None, skip=None):
-    notify(s, u, "password", f"Your {APP_NAME} password was changed",
-           f"Your admin set a new password for your {APP_NAME} account. They will give it to you, and you choose your own when you next sign in. If you did not expect this, talk to your admin."
-           if by_admin else f"The password for your {APP_NAME} account was just changed. If this was you, there is nothing to do. If not, use \"Forgot your password?\" on the sign-in page, or tell your admin.",
-           f"The password {u.name} signs in with ({u.username}) was changed on {APP_NAME}. If you did not expect this, set a new one from their progress page.", run, skip)
+    notify(s, u, "password", "Your {app} password was changed",
+           "Your admin set a new password for your {app} account. They will give it to you, and you choose your own when you next sign in. If you did not expect this, talk to your admin."
+           if by_admin else "The password for your {app} account was just changed. If this was you, there is nothing to do. If not, use \"Forgot your password?\" on the sign-in page, or tell your admin.",
+           "The password {name} signs in with ({username}) was changed on {app}. If you did not expect this, set a new one from their progress page.", run, skip, name=u.name, username=u.username)
 def notify_status(s, u, run=None):
-    notify(s, u, "status", f"Your {APP_NAME} account was {'switched on' if u.active else 'switched off'}",
-           f"Your admin switched your {APP_NAME} account on. You can sign in again." if u.active else f"Your admin switched your {APP_NAME} account off, so you can't sign in for now. Your progress is kept. Ask your admin if you think this is a mistake.",
-           f"{u.name}'s {APP_NAME} account ({u.username}) was {'switched on: they can sign in again' if u.active else 'switched off by the admin: they cannot sign in for now; their progress is kept'}.", run)
-ROLE_WORDS = {"student": "a student", "faculty": "a faculty member", "admin": "an admin", "guardian": "a parent or teacher"}
+    on = bool(u.active)
+    notify(s, u, "status", "Your {app} account was switched on" if on else "Your {app} account was switched off",
+           "Your admin switched your {app} account on. You can sign in again." if on else "Your admin switched your {app} account off, so you can't sign in for now. Your progress is kept. Ask your admin if you think this is a mistake.",
+           "{name}'s {app} account ({username}) was switched on: they can sign in again." if on else "{name}'s {app} account ({username}) was switched off by the admin: they cannot sign in for now; their progress is kept.",
+           run, name=u.name, username=u.username)
+ROLE_NOTE = {"student": "Your admin changed your {app} account: you now sign in as a student. Ask your admin if you think this is a mistake.",
+             "faculty": "Your admin changed your {app} account: you now sign in as a faculty member. Ask your admin if you think this is a mistake.",
+             "admin": "Your admin changed your {app} account: you now sign in as an admin. Ask your admin if you think this is a mistake.",
+             "guardian": "Your admin changed your {app} account: you now sign in as a parent or teacher. Ask your admin if you think this is a mistake."}
+NEW_ACCOUNT = {"student": "Your admin made a {app} account for you as a student. Sign in with {email} and the password your admin gives you.",
+               "faculty": "Your admin made a {app} account for you as a faculty member. Sign in with {email} and the password your admin gives you.",
+               "admin": "Your admin made a {app} account for you as an admin. Sign in with {email} and the password your admin gives you."}
 def notify_role(s, u, run=None):
-    notify(s, u, "status", f"Your {APP_NAME} account changed", f"Your admin changed your {APP_NAME} account: you now sign in as {ROLE_WORDS.get(u.role, u.role)}. Ask your admin if you think this is a mistake.", run=run)
+    if u.role in ROLE_NOTE: notify(s, u, "status", "Your {app} account changed", ROLE_NOTE[u.role], run=run)
+def notify_new_account(s, u, run=None):  # an account an admin made, one at a time or from a CSV file: how to sign in, never the password
+    if u.active and u.email and u.role in NEW_ACCOUNT: notify(s, u, "welcome", "Your {app} account", NEW_ACCOUNT[u.role], run=run, email=u.email)
 def tok_hash(raw): return hashlib.sha256(raw.encode()).hexdigest()
-class ForgotIn(BaseModel): email: str
+class ForgotIn(BaseModel): email: str; lang: str = ""  # lang: the screen's language, for a registration code sent again
 @app.post("/api/forgot")
 def forgot(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
     if not mail_on(s): raise HTTPException(503, "Reset by email isn't set up here. Ask your admin to reset your password.")
@@ -464,7 +502,7 @@ def forgot(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depe
     if u and s.query(func.count(PasswordReset.id)).filter(PasswordReset.user_id == u.id, PasswordReset.created_at >= hour).scalar() >= 3: return reply
     raw = secrets.token_urlsafe(32)
     s.add(PasswordReset(user_id=u.id if u else None, token_hash=tok_hash(raw), ip=ip, expires_at=now + dt.timedelta(minutes=int(os.getenv("RESET_MINUTES") or 30)))); s.commit()
-    if u: bg.add_task(deliver_reset, u.email, u.name, raw)
+    if u: bg.add_task(deliver_reset, u.email, u.name, raw, mail_lang(u))
     return reply
 def live_reset(raw, s):
     r = s.query(PasswordReset).filter_by(token_hash=tok_hash(raw or "")).first()
@@ -497,15 +535,19 @@ def reg_open(s): return setting(s, "self_registration") == "1" and mail_on(s)
 def allowed_domains(s): return [d for d in re.split(r"[,\s]+", setting(s, "allowed_domains").lower()) if d]
 PHONE = re.compile(r"\+?[0-9][0-9 ()\-]{5,24}[0-9]")
 IDNUM = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ./_\-]{0,58}[A-Za-z0-9]|[A-Za-z0-9]")
-def deliver_otp(email, name, code, exists=False):
+def deliver_otp(email, name, code, exists=False, lang="en"):  # lang: the one the sign-up screen was in
     try:
-        if exists: send_mail(email, f"Your {APP_NAME} account", kind="account", body=f"Hi {name},\n\nSomeone tried to register {email} on {APP_NAME}, but that email already has an account. If it was you, sign in, or use \"Forgot your password?\" on the sign-in page. If it was not you, ignore this message.")
-        else: send_mail(email, f"Your {APP_NAME} verification code: {code}", kind="code", body=f"Hi {name},\n\nYour verification code is {code}. It works for {OTP_MINUTES} minutes. Enter it in the app to finish creating your {APP_NAME} account.\n\nIf you did not ask for this, ignore this message; no account is created without the code.")
+        if exists: send_mail(email, mt(lang, "Your {app} account", app=APP_NAME), kind="account", lang=lang, body=letter(lang, name, mt(lang,
+            "Someone tried to register {email} on {app}, but that email already has an account. If it was you, sign in, or use \"Forgot your password?\" on the sign-in page. If it was not you, ignore this message.", email=email, app=APP_NAME)))
+        else: send_mail(email, mt(lang, "Your {app} verification code: {code}", app=APP_NAME, code=code), kind="code", lang=lang, body=letter(lang, name,
+            mt(lang, "Your verification code is {code}. It works for {minutes} minutes. Enter it in the app to finish creating your {app} account.", code=code, minutes=OTP_MINUTES, app=APP_NAME),
+            mt(lang, "If you did not ask for this, ignore this message; no account is created without the code.")))
     except MailError: pass  # recorded in the email log
 class ChildIn(BaseModel): name: str; username: str; password: str; program_id: int | None = None; semester: int | None = None
 class RegisterIn(BaseModel):  # who and level are new: an older app sends neither and gets the old student sign-up
     name: str; institution: str = ""; id_number: str = ""; email: str; phone: str; password: str
     who: str = "student"; level: str | None = None; program_id: int | None = None; semester: int | None = None; children: list[ChildIn] = []
+    lang: str = ""  # the sign-up screen's language: the code's email is written in it
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,29}")  # a child's sign-in name: no @, so it never looks like an email
 MAX_CHILDREN = 8
 def clean_registration(b, s):
@@ -569,7 +611,7 @@ def register_start(b: RegisterIn, request: Request, bg: BackgroundTasks, s: Sess
         raise HTTPException(429, "Too many attempts from this network. Please try again in an hour.")
     reply = {"ok": True, "email": email, "message": f"We sent a 6-digit code to {email}. It works for {OTP_MINUTES} minutes."}
     if s.query(User.id).filter_by(email=email).first():  # the same answer as a new address, so nobody can use this form to find out who has an account
-        if s.query(func.count(PendingRegistration.id)).filter(PendingRegistration.ip == ip, PendingRegistration.last_sent_at >= now - dt.timedelta(minutes=1)).scalar() < 3: bg.add_task(deliver_otp, email, name, "", True)
+        if s.query(func.count(PendingRegistration.id)).filter(PendingRegistration.ip == ip, PendingRegistration.last_sent_at >= now - dt.timedelta(minutes=1)).scalar() < 3: bg.add_task(deliver_otp, email, name, "", True, ui_lang(b.lang))
         return reply
     if idn and same_id(s, inst, idn): raise HTTPException(400, "An account already exists for that institution ID. Sign in, or ask your admin.")
     pid, sem = check_place(s, b.level, b.program_id, b.semester) if b.who == "student" and b.level else (None, None)
@@ -582,9 +624,10 @@ def register_start(b: RegisterIn, request: Request, bg: BackgroundTasks, s: Sess
     else: p = PendingRegistration(email=email, sends=1, created_at=now); s.add(p)
     p.name, p.institution, p.id_number, p.phone, p.pw = name, inst, idn, phone, hp(b.password)
     p.who, p.level, p.program_id, p.semester, p.children = b.who, b.level, pid, sem, json.dumps(kids) if kids else None; p.code_hash = otp_hash(email, code); p.attempts = 0; p.ip = ip; p.last_sent_at = now
-    p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit(); bg.add_task(deliver_otp, email, name, code)
+    p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit(); bg.add_task(deliver_otp, email, name, code, False, ui_lang(b.lang))
     return reply
-class VerifyIn(BaseModel): email: str; code: str
+class VerifyIn(BaseModel): email: str; code: str; lang: str = ""  # the screen's language becomes the new account's
+def ui_lang(v): return v if v in ("ta", "ar") else "en"
 @app.post("/api/register/verify")
 def register_verify(b: VerifyIn, bg: BackgroundTasks, s: Session = Depends(db)):
     email, code, now = b.email.strip().lower()[:190], "".join(ch for ch in b.code if ch.isdigit()), dt.datetime.utcnow()
@@ -598,7 +641,7 @@ def register_verify(b: VerifyIn, bg: BackgroundTasks, s: Session = Depends(db)):
     for k in kids:  # someone may have taken a username since the code was sent
         if s.query(User.id).filter_by(username=k["username"]).first(): raise HTTPException(400, f"The username {k['username']} was taken meanwhile. Go back, change it and ask for a new code.")
     guardian = (p.who or "student") != "student"
-    u = User(name=p.name, email=email, pw=p.pw, role="guardian" if guardian else "student", relation=p.who if guardian else None, level=p.level, active=True, must_change=False,
+    u = User(name=p.name, email=email, pw=p.pw, lang=None if ui_lang(b.lang) == "en" else b.lang, role="guardian" if guardian else "student", relation=p.who if guardian else None, level=p.level, active=True, must_change=False,
              institution=p.institution or None, id_number=p.id_number or None, phone=p.phone, self_registered=True,
              program_id=None if guardian else p.program_id, semester=None if guardian else p.semester)
     s.add(u); s.flush()
@@ -610,8 +653,9 @@ def register_verify(b: VerifyIn, bg: BackgroundTasks, s: Session = Depends(db)):
     try: s.commit()
     except IntegrityError: s.rollback(); raise bad
     names = "".join(f"\n  {k['name']}: {k['username']}" for k in kids)
-    notify(s, u, "welcome", f"Welcome to {APP_NAME}", f"Your {APP_NAME} account is ready. Sign in with {email}."
-           + (f"\n\nYour {'children' if u.relation == 'parent' else 'students'} sign in with these usernames and the passwords you chose:{names}" if kids else ""), run=bg.add_task)
+    notify(s, u, "welcome", "Welcome to {app}", "Your {app} account is ready. Sign in with {email}." if not kids else
+           "Your {app} account is ready. Sign in with {email}.\n\nYour children sign in with these usernames and the passwords you chose:{names}" if u.relation == "parent" else
+           "Your {app} account is ready. Sign in with {email}.\n\nYour students sign in with these usernames and the passwords you chose:{names}", run=bg.add_task, email=email, names=names)
     return {"token": make_token(u), "user": me_json(u)}
 @app.post("/api/register/resend")
 def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
@@ -621,7 +665,7 @@ def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Sessi
     if (now - p.last_sent_at).total_seconds() < OTP_COOLDOWN: raise HTTPException(429, "Wait a moment before asking for another code.")
     if p.sends >= OTP_MAX_SENDS: raise HTTPException(429, "Too many codes were requested for this email. Please try again tomorrow.")
     code = f"{secrets.randbelow(10 ** 6):06d}"; p.code_hash = otp_hash(email, code); p.attempts = 0; p.sends += 1; p.last_sent_at = now; p.expires_at = now + dt.timedelta(minutes=OTP_MINUTES); s.commit()
-    bg.add_task(deliver_otp, email, p.name, code); return reply
+    bg.add_task(deliver_otp, email, p.name, code, False, ui_lang(b.lang)); return reply
 @app.get("/manifest.json")
 @app.get("/app/manifest.json")  # served dynamically so the installed app carries APP_NAME (the app lives under /app/)
 def manifest():
@@ -871,7 +915,8 @@ def add_students(b: NewStudentsIn, bg: BackgroundTasks, u: User = Depends(guardi
         c = User(name=k["name"], email=None, username=k["username"], pw=k["pw"], role="student", level=u.level, active=True, must_change=False, program_id=k["program_id"], semester=k["semester"], self_registered=True)
         s.add(c); s.flush(); s.add(GuardianLink(guardian_id=u.id, student_id=c.id, status="active"))
     s.commit(); names = "".join(f"\n  {k['name']}: {k['username']}" for k in kids)
-    notify(s, u, "welcome", f"New accounts on {APP_NAME}", f"You added {len(kids)} {'account' if len(kids) == 1 else 'accounts'} on {APP_NAME}. They sign in with these usernames and the passwords you chose:{names}", run=bg.add_task)
+    notify(s, u, "welcome", "New accounts on {app}", "You added 1 account on {app}. It signs in with this username and the password you chose:{names}" if len(kids) == 1 else
+           "You added {n} accounts on {app}. They sign in with these usernames and the passwords you chose:{names}", run=bg.add_task, n=len(kids), names=names)
     return my_students(u, s)
 class InviteIn(BaseModel): login: str
 @app.get("/api/guardian/options")
@@ -885,8 +930,8 @@ def invite_student(b: InviteIn, bg: BackgroundTasks, u: User = Depends(guardian_
     x = s.query(User).filter(User.email == who if "@" in who else User.username == who).first()
     if x and x.role == "student" and x.active and x.id != u.id and not s.query(GuardianLink.id).filter_by(guardian_id=u.id, student_id=x.id).first():
         s.add(GuardianLink(guardian_id=u.id, student_id=x.id, status="invited")); s.commit()
-        who_at = f"{u.name}" + (f" ({u.institution})" if u.institution else "")
-        notify(s, x, "invite", f"{u.name} invited you on {APP_NAME}", f"{who_at}, a teacher, wants to follow your progress on {APP_NAME}. Sign in to accept or decline. Until you accept, they see nothing.", run=bg.add_task)
+        notify(s, x, "invite", "{teacher} invited you on {app}", "{who}, a teacher, wants to follow your progress on {app}. Sign in to accept or decline. Until you accept, they see nothing.",
+               run=bg.add_task, teacher=u.name, who=u.name + (f" ({u.institution})" if u.institution else ""))
     return {"ok": True, "message": f"If a student signs in as {who}, they will see your invitation and can accept it."}  # the same answer either way, so this can't be used to find out who has an account
 @app.delete("/api/guardian/students/{sid}")
 def unlink_student(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):
@@ -943,7 +988,8 @@ def answer_invitation(lid: int, answer: str, bg: BackgroundTasks, u: User = Depe
     if answer == "accept": l.status = "active"
     else: s.delete(l)
     s.commit(); g = s.get(User, l.guardian_id)
-    if g: notify(s, g, "invite", f"{u.name} {answer}ed your invitation", f"{u.name} {answer}ed your invitation on {APP_NAME}." + (" You can now follow their progress." if answer == "accept" else ""), run=bg.add_task)
+    if g: notify(s, g, "invite", "{student} accepted your invitation" if answer == "accept" else "{student} declined your invitation",
+                 "{student} accepted your invitation on {app}. You can now follow their progress." if answer == "accept" else "{student} declined your invitation on {app}.", run=bg.add_task, student=u.name)
     return {"ok": True}
 @app.get("/api/guardian/students")
 def my_students(u: User = Depends(guardian_only), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
@@ -1098,8 +1144,10 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
     now = dt.datetime.utcnow(); asking = s.query(MoreRequest.user_id).filter(MoreRequest.done_at.is_(None))
     if plan == "asked": qs = qs.filter(User.id.in_(asking))  # self-registered people asking for more AI
     elif plan == "pro": qs = qs.filter(User.pro_until > now)  # only self-registered people and school students the admin added can be made pro
-    elif plan == "lite": qs = qs.filter(or_(and_(User.self_registered == True, User.ai_key.is_(None)), and_(User.self_registered == False, User.role == "student", Program.pattern == "grade")),  # noqa: E712
-                                        or_(User.pro_until.is_(None), User.pro_until <= now))
+    elif plan == "lite":  # exactly ai_plan()'s Lite: students only; a school student who signed up is on a family key or none, and one the college added is Lite
+        school = or_(func.coalesce(Program.pattern, "") == "grade", and_(User.program_id.is_(None), func.coalesce(User.level, "") == "school"))
+        qs = qs.filter(User.role == "student", or_(User.pro_until.is_(None), User.pro_until <= now),
+                       or_(and_(User.self_registered == True, User.ai_key.is_(None), ~school), and_(User.self_registered == False, func.coalesce(Program.pattern, "") == "grade")))  # noqa: E712
     rows = qs.order_by(*USORT.get(order, USORT["role"]), User.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     asked = {i for (i,) in asking.filter(MoreRequest.user_id.in_([u.id for u, _ in rows] or [0]))}
     return {"total": qs.count(), "items": [{**urow(u, pn), "asked": u.id in asked} for u, pn in rows]}
@@ -1152,7 +1200,7 @@ def add_user(b: NewUser, bg: BackgroundTasks, _: User = Depends(admin), s: Sessi
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
     n = User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=fit_sem(s, b.program_id, to_sem(b.semester)), must_change=b.role != "admin")
     s.add(n); s.commit()
-    if n.active: notify(s, n, "welcome", f"Your {APP_NAME} account", f"Your admin made a {APP_NAME} account for you as {ROLE_WORDS.get(n.role, n.role)}. Sign in with {e} and the password your admin gives you.", run=bg.add_task)
+    notify_new_account(s, n, bg.add_task)
     return {"ok": True}
 @app.delete("/api/admin/users/{uid}")
 def delete_user(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
@@ -1245,7 +1293,7 @@ def bulk_users(b: BulkIn, bg: BackgroundTasks, a: User = Depends(admin), s: Sess
 class UserImportIn(BaseModel): csv: str; dry_run: bool = True
 UALIAS = {"full_name": "name", "student": "name", "student_name": "name", "e-mail": "email", "mail": "email", "email_address": "email", "pass": "password", "user_role": "role", "programme": "program", "sem": "semester"}
 @app.post("/api/admin/users/import")
-def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends(db)):
+def import_users(b: UserImportIn, bg: BackgroundTasks, a: User = Depends(admin), s: Session = Depends(db)):
     text_ = b.csv.lstrip("\ufeff")
     if len(text_) > 1_000_000: raise HTTPException(400, "File is too large (limit 1 MB)")
     rd = csv.DictReader(io.StringIO(text_, newline=""), delimiter=max([",", ";", "\t"], key=text_.split("\n", 1)[0].count))
@@ -1255,7 +1303,7 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
     rows = list(rd)
     if len(rows) > 500: raise HTTPException(400, "Too many rows (limit 500 per file)")
     existing = {u.email: u for u in s.query(User)}; progs = {(p.name or "").strip().lower(): p for p in s.query(Program)}
-    seen, errors, creds = set(), [], []; created = updated = generated = 0
+    seen, errors, creds, made = set(), [], [], []; created = updated = generated = 0
     for n, row in enumerate(rows, start=2):
         v = {k: (row.get(k) or "").strip() for k in rd.fieldnames if k}
         if not any(v.values()): continue
@@ -1287,9 +1335,11 @@ def import_users(b: UserImportIn, a: User = Depends(admin), s: Session = Depends
             created += 1; generated += not pw
             if not b.dry_run:
                 final = pw or gen_pw()
-                s.add(User(name=name, email=e, pw=hp(final, TEMP_ITER), role=role or "student", program_id=prog.id if prog else None, semester=sem, must_change=(role or "student") != "admin"))
+                n = User(name=name, email=e, pw=hp(final, TEMP_ITER), role=role or "student", program_id=prog.id if prog else None, semester=sem, must_change=(role or "student") != "admin")
+                s.add(n); made.append(n)
                 if not pw: creds.append({"name": name, "email": e, "password": final})
     s.rollback() if b.dry_run else s.commit()
+    for n in made: notify_new_account(s, n, bg.add_task)  # each new account hears how to sign in, as one made by hand does; never the password
     return {"dry_run": b.dry_run, "rows": len(rows), "valid_rows": created + updated, "created": created, "updated": updated, "generated": generated,
             "error_count": len(errors), "errors": errors[:20], "credentials": creds}
 PSORT = {"name": lambda stu: (func.lower(Program.name),), "newest": lambda stu: (Program.id.desc(),), "students": lambda stu: (stu.desc(), func.lower(Program.name))}
@@ -1522,7 +1572,8 @@ def put_mail(b: MailIn, _: User = Depends(admin), s: Session = Depends(db)):
 def test_mail(a: User = Depends(admin), s: Session = Depends(db)):
     if not mail_conf(s): return {"ok": False, "message": "No sender yet. Save a Gmail address and its App Password first."}
     if not site_url(s): return {"ok": False, "message": "Add the site's address first: links in emails need it."}
-    try: send_mail(a.email, f"{APP_NAME} test email", "This is a test from your Zigora server. Password reset emails, registration codes and daily summaries can be sent.", kind="test", link=site_url(s) + "/app/")
+    lang = mail_lang(a)
+    try: send_mail(a.email, mt(lang, "{app} test email", app=APP_NAME), mt(lang, "This is a test from your Zigora server. Password reset emails, registration codes and daily summaries can be sent."), kind="test", link=site_url(s) + "/app/", lang=lang)
     except MailError as e: return {"ok": False, "message": str(e)}
     return {"ok": True, "message": "Test email sent to " + a.email + ". Check the inbox (and spam)."}
 @app.get("/api/admin/mail/log")
@@ -3260,9 +3311,12 @@ def lite_search_left(u, s):  # before asking: is a free search left today? Nothi
 def lite_search_used(u, s):  # after the AI has answered: a saved answer, a failed call or a timeout never uses one up
     if ai_plan(u) != "lite": return
     r = lite_row(s, u); r.searches = (r.searches or 0) + 1; s.commit(); lite_warn(s, u, r.searches, lite_limits(s)[0], "AI searches")
+LITE_WARN = {"AI searches": ("Today's free AI searches are nearly used up", "You have used {used} of today's {limit} free AI searches on {app}. It starts again tomorrow."),
+             "minutes of learning with AI": ("Today's free minutes of learning with AI are nearly used up", "You have used {used} of today's {limit} free minutes of learning with AI on {app}. It starts again tomorrow.")}
 def lite_warn(s, u, used, limit, what):  # one email the moment a day's allowance is four-fifths used; the counts only go up within a day, so it goes once
     if limit < 2 or used != limit - max(1, limit // 5): return
-    notify(s, u, "quota", f"Today's free {what} are nearly used up", f"You have used {used} of today's {limit} free {what} on {APP_NAME}. It starts again tomorrow.{lite_more(u)}")  # Lite people all have an email
+    subject, line = LITE_WARN[what]
+    notify(s, u, "quota", subject, [line, lite_more(u).strip()], used=used, limit=limit)  # Lite people all have an email
 def lite_time_or_fail(u, s):
     if ai_plan(u) != "lite": return
     r = lite_row(s, u); limit = lite_limits(s)[1]
@@ -3297,7 +3351,10 @@ def make_pro(uid: int, b: ProIn, bg: BackgroundTasks, a: User = Depends(admin), 
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
     if not (u.self_registered or added_pupil(u)): raise HTTPException(400, "Only self-registered people and school students have a plan. Students your college added already use the college's AI.")
-    if b.end: u.pro_until = None; s.commit(); return urow(u, None)
+    if b.end:
+        was = pro_active(u); u.pro_until = None; s.commit()
+        if was: notify(s, u, "pro_end", "Your Pro on {app} has ended", ["Your admin ended your Pro on {app}.", PRO_AFTER], run=bg.add_task)
+        return urow(u, None)
     if b.days is not None:
         if not 1 <= b.days <= 3660: raise HTTPException(400, "Choose between 1 day and 10 years")
         until = dt.datetime.utcnow() + dt.timedelta(days=b.days)
@@ -3307,11 +3364,26 @@ def make_pro(uid: int, b: ProIn, bg: BackgroundTasks, a: User = Depends(admin), 
         if d < local_day(dt.datetime.utcnow()): raise HTTPException(400, "Choose a day from today on")
         until = dt.datetime.combine(d + dt.timedelta(days=1), dt.time()) - dt.timedelta(minutes=DAY_OFFSET)  # the end of that day, in the students' local time
     u.pro_until = until; close_requests(s, u.id); s.commit()
-    if mail_on(s) and u.email: bg.add_task(deliver_pro, u.email, u.name, local_day(until - dt.timedelta(seconds=1)))
+    if mail_on(s) and u.email: bg.add_task(deliver_pro, u.email, u.name, local_day(until - dt.timedelta(seconds=1)), mail_lang(u))
     return urow(u, None)
-def deliver_pro(email, name, last_day):
-    try: send_mail(email, f"More AI on {APP_NAME}", f"Hi {name},\n\nYour admin has given you more AI help on {APP_NAME}: no daily limit until {last_day.strftime('%d %B %Y')}.\n\nEnjoy your studies.\n", kind="pro")
+def deliver_pro(email, name, last_day, lang="en"):
+    try: send_mail(email, mt(lang, "More AI on {app}", app=APP_NAME), letter(lang, name, mt(lang, "Your admin has given you more AI help on {app}: no daily limit until {date}.", app=APP_NAME, date=mail_day(lang, last_day)),
+                   mt(lang, "Enjoy your studies.")), kind="pro", lang=lang)
     except MailError: pass
+PRO_AFTER = "You are back on Lite: a few free AI searches and minutes of learning a day, and one MCQ set every 48 hours. Ask your admin if you need more."
+def pro_endings(now=None):
+    """Tells each person whose Pro ran out in the last two days, once: the email log says whether they were told, sent or failed, so a failing
+    mail server never makes it go twice (an ending older than that, from before this existed, is left alone). Runs with the daily summaries."""
+    now = now or dt.datetime.utcnow(); told = 0
+    if not mail_on(): return 0
+    with Session_() as s:
+        for u in s.query(User).filter(User.pro_until.isnot(None), User.pro_until <= now, User.pro_until > now - dt.timedelta(days=2), User.active == True, User.email.isnot(None)):  # noqa: E712
+            if s.query(MailLog.id).filter(MailLog.kind == "pro_end", MailLog.to == u.email[:190], MailLog.at >= u.pro_until).first(): continue
+            last = local_day(u.pro_until - dt.timedelta(seconds=1)); lang = mail_lang(u)
+            try: send_mail(u.email, mt(lang, "Your Pro on {app} has ended", app=APP_NAME), letter(lang, u.name, mt(lang, "Your Pro on {app} ended on {date}.", app=APP_NAME, date=mail_day(lang, last)) + " " + mt(lang, PRO_AFTER)), kind="pro_end", lang=lang)
+            except MailError: pass
+            told += 1
+    return told
 # ---- rewards for sharing: nothing to do by hand. When others are shown an answer a student's own search, doubt or highlight first brought,
 # ---- each person counts once a day per answer; every SHARE_USES uses earn SHARE_POINTS points. Others never see who asked first.
 SHARE_USES, SHARE_POINTS = 1000, 100
@@ -4843,9 +4915,10 @@ def send_digests(now=None):  # once a local day, after DIGEST_HOUR: everyone who
             try:
                 items = notes_for(u, s); seen = {k for (k,) in s.query(NoteSeen.key).filter(NoteSeen.user_id == u.id)}; new = [i for i in items if i["key"] not in seen]
                 if not new: continue
-                lines = "\n".join(f"- {i['text']}" + (f" ({i['sub']})" if i["sub"] else "") for i in new)
-                send_mail(u.email, f"{APP_NAME}: {len(new)} new {'notification' if len(new) == 1 else 'notifications'}",
-                          f"Hi {u.name},\n\nHere is what is new for you:\n\n{lines}\n\nOpen {APP_NAME}: {link}\n\nTo stop these emails, open the bell in the app and untick the daily summary.\n", kind="digest", link=link)
+                lang = mail_lang(u); lines = "\n".join(f"- {mt(lang, i['text'])}" + (f" ({mt(lang, i['sub'])})" if i["sub"] else "") for i in new)
+                send_mail(u.email, mt(lang, "{app}: 1 new notification" if len(new) == 1 else "{app}: {n} new notifications", app=APP_NAME, n=len(new)),
+                          letter(lang, u.name, mt(lang, "Here is what is new for you:"), lines, mt(lang, "Open {app}: {link}", app=APP_NAME, link=link),
+                                 mt(lang, "To stop these emails, open the bell in the app and untick the daily summary.")), kind="digest", link=link, lang=lang)
                 sent += 1
             except Exception as e: log.warning("Daily summary to user %s failed: %s", u.id, type(e).__name__)
     return sent
@@ -4853,6 +4926,8 @@ def digest_loop():
     while True:
         try: send_digests()
         except Exception as e: log.warning("Daily summaries failed: %s", type(e).__name__)
+        try: pro_endings()
+        except Exception as e: log.warning("Pro endings failed: %s", type(e).__name__)
         time.sleep(1800)
 def read_head():  # the commit this server's code is at (None when it is not a git checkout)
     try: return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True, text=True, timeout=5).stdout.strip() or None

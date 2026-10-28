@@ -131,11 +131,11 @@ function Register({onIn,toast,msg,appName,logo,back}){  // school or college, th
   const placed=x=>!x.program_id||!!x.semester,num=v=>v===''?null:+v
   const ok=['name','email','phone','password'].every(k=>f[k].trim())&&(who==='parent'||f.institution.trim())&&(who!=='student'||level==='school'||f.id_number.trim())
     &&(who!=='student'||placed(f))&&(who!=='parent'||kids.every(k=>k.name.trim()&&k.username.trim()&&k.password&&placed(k)))
-  const body=()=>({...f,level,who,program_id:who==='student'?num(f.program_id):null,semester:who==='student'?num(f.semester):null,
+  const body=()=>({...f,lang:getLang(),level,who,program_id:who==='student'?num(f.program_id):null,semester:who==='student'?num(f.semester):null,
     children:who==='parent'?kids.map(k=>({...k,program_id:num(k.program_id),semester:num(k.semester)})):[]})
   const start=async()=>{setB(true);try{const r=await api('/register/start',{method:'POST',body:body()});setInfo(r.message);setStage('code');setWait(30)}catch(e){toast(e.message)}setB(false)}
-  const verify=async()=>{setB(true);try{const r=await api('/register/verify',{method:'POST',body:{email:f.email,code}});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
-  const resend=async()=>{try{await api('/register/resend',{method:'POST',body:{email:f.email}});toast(tl("A new code is on its way"));setWait(30);setCode('')}catch(e){toast(e.message)}}
+  const verify=async()=>{setB(true);try{const r=await api('/register/verify',{method:'POST',body:{email:f.email,code,lang:getLang()}});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
+  const resend=async()=>{try{await api('/register/resend',{method:'POST',body:{email:f.email,lang:getLang()}});toast(tl("A new code is on its way"));setWait(30);setCode('')}catch(e){toast(e.message)}}
   const head=<Lockup logo={logo} name={appName}/>,foot=<Toast msg={msg}/>
   if(stage==='code')return <div className="login">{head}<h1>{tl("Enter the code")}</h1><p>{info}</p>
     <label htmlFor="otp">{tl("6-digit code")}</label><input id="otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} onKeyDown={e=>e.key==='Enter'&&code.length===6&&verify()} style={{letterSpacing:'.4em',fontSize:22,textAlign:'center'}}/>
