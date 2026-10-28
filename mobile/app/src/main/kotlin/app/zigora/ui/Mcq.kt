@@ -41,7 +41,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 /** MCQ practice, as on the web: two ways in (Practice across a course's topics, and Per topic from a topic's page) on one engine. The server keeps the
- *  answers until a set is submitted, counts sets (Lite one every 48 hours, others four a day) and gives back a set still open instead of counting another. */
+ *  answers until a set is submitted, counts sets (students on Lite one every 48 hours, on Pro four a day) and gives back a set still open instead of counting another. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun McqHomeScreen(topic: Int, back: () -> Unit, play: (Int) -> Unit) {
@@ -59,7 +59,7 @@ fun McqHomeScreen(topic: Int, back: () -> Unit, play: (Int) -> Unit) {
     Page(tl("MCQ practice"), tl("Questions from your courses, with answers explained"), back) {
         Loaded(home) { h ->
             val q = h.quota
-            if (q.tier != "staff") Quiet(when {
+            if (q.tier != "none") Quiet(when {  // no limit: only students on Lite or Pro have one
                 q.tier == "lite" && (q.left ?: 0) > 0 -> tl("Lite: one free MCQ set every 48 hours. Your set is ready.")
                 q.tier == "lite" -> tl("Lite: one free MCQ set every 48 hours. Your next set is ready {when}.", "when" to stamp(q.next_at.orEmpty()))
                 (q.left ?: 0) > 0 -> tl("{left} of {limit} MCQ sets left today.", "left" to q.left, "limit" to q.limit)

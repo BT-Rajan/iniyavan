@@ -29,7 +29,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
-/** MCQ practice on a phone: a child (Lite: one set in 48 hours) takes a set from the bank and sees the result; a parent has no MCQ practice.
+/** MCQ practice on a phone: a child (not on Lite or Pro, so no limit) takes a set from the bank and sees the result; a parent has no MCQ practice.
  *  Against the server mobile/screens_seed.py starts; screenshots go to build/screens. */
 @OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
@@ -60,7 +60,8 @@ class McqTest {
         signIn("kavin")
         rule.setContent { ZigoraRoot(null) {} }
         see("MCQ practice"); tap("MCQ practice")
-        see("Lite: one free MCQ set every 48 hours"); see("3 published questions"); shot("mcq-01-home")
+        see("3 published questions"); shot("mcq-01-home")
+        assertTrue("no limit line: only students on Lite or Pro have a limit", none("MCQ set"))
         assertTrue("no AI sets without a parent's or teacher's key", none("A new AI set"))
         tap("Questions from the bank"); see("Question 1"); shot("mcq-02-set")
         tap("easily with soap"); tap("Submit answers"); see("Submit with"); tapExactly("Submit")

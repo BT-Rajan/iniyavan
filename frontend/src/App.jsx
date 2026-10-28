@@ -721,11 +721,11 @@ const fromCsv=x=>({text:x.text,options:x.options,option_images:x.option_images.m
   need:{image:x.image?'':x.image_name,options:x.option_image_names.map((n,k)=>x.option_images[k]?'':n)}})
 const missing=qs=>qs.flatMap((x,i)=>[...(x.need.image&&!x.image?[{i,k:-1,name:x.need.image}]:[]),...x.need.options.map((n,k)=>n&&!x.option_images[k]?{i,k,name:n}:null).filter(Boolean)])
 // ---- MCQ practice: two ways in, Practice (across a course's topics) and Per topic (from a topic's page), on one engine. The server keeps the answers
-// until a set is submitted, counts sets (Lite: one every 48 hours; others: four a day) and gives back a set still open instead of counting another
+// until a set is submitted, counts sets (students on Lite: one every 48 hours; on Pro: four a day) and gives back a set still open instead of counting another
 const MCQ_SIZES=[5,10,15,20]
 const rid=()=>(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random()).replace(/[^A-Za-z0-9-]/g,'')
 function McqQuota({q}){
-  if(!q||q.tier==='staff')return null
+  if(!q||q.tier==='none')return null  // no limit: only students on Lite or Pro have one
   const txt=q.tier==='lite'?(q.left?tl("Lite: one free MCQ set every 48 hours. Your set is ready."):tl("Lite: one free MCQ set every 48 hours. Your next set is ready {when}.",{when:when(q.next_at)}))
     :q.left?tl("{left} of {limit} MCQ sets left today.",{left:q.left,limit:q.limit}):tl("You have used today's {limit} MCQ sets. The next is ready {when}.",{limit:q.limit,when:when(q.next_at)})
   return <p className={'known'+(q.left?'':' warn')} role="status" style={{marginTop:0}}>{txt}</p>}
