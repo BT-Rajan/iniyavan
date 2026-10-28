@@ -25,7 +25,8 @@ def world(env):
              Topic(title="Draft topic", content=WATER, unit_id=u1.id, course_id=chem.id, position=3, published=False),
              Topic(title="Velocity", content="Velocity is displacement over time.", unit_id=u2.id, course_id=phys.id, position=1, published=True)]
         s.add_all(t); s.flush()
-        s.query(User).filter_by(email="stu@x.com").update({"program_id": p.id, "semester": 1})  # added by the admin: the college plan, so Pro limits
+        s.query(User).filter_by(email="stu@x.com").update({"program_id": p.id, "semester": 1, "self_registered": True,  # a Pro student: four sets a day
+                                                           "pro_until": dt.datetime.utcnow() + dt.timedelta(days=30)})
         lite = User(name="Lee Lite", email="lite@x.com", pw=hp("pw"), role="student", self_registered=True, program_id=p.id, semester=1)
         other = User(name="Otto", email="otto@x.com", pw=hp("pw"), role="student", program_id=p.id, semester=1)
         mum = User(name="Mum", email="mum@x.com", pw=hp("pw"), role="guardian", relation="parent", self_registered=True, level="college")
@@ -96,7 +97,7 @@ def test_students_and_staff_practise_and_only_owners_and_admins_manage(env):
     h = env.c.get("/api/mcq/home", headers=env.stu).json(); assert [c["name"] for c in h["courses"]] == ["Chem"] and h["courses"][0]["questions"] == 6
     assert [t["title"] for t in h["courses"][0]["topics"]] == ["Water hardness", "Corrosion"]
     r = start(env, env.fac, topic_id=i["water"]); assert r.status_code == 200  # faculty try sets too; no limit, as with the rest of their AI
-    assert submit(env, env.fac, r.json()["id"]).status_code == 200 and env.c.get("/api/mcq/home", headers=env.fac).json()["quota"]["tier"] == "staff"
+    assert submit(env, env.fac, r.json()["id"]).status_code == 200 and env.c.get("/api/mcq/home", headers=env.fac).json()["quota"]["tier"] == "none"
 
 def test_nobody_reads_or_answers_someone_elses_set(env):
     i = world(env); bank(env, i["water"]); aid = start(env, env.stu, topic_id=i["water"]).json()["id"]
@@ -278,7 +279,7 @@ def test_an_ai_set_is_written_from_the_topic_and_the_students_own_results(env, m
     assert "strictly from the topic notes" in system
     with Session_() as s:
         rows = s.query(McqItem).filter_by(source="ai").all(); assert len(rows) == 5 and {x.status for x in rows} == {"review"} and {x.author_id for x in rows} == {None}
-    assert quota(i["stu"]).used == 1 and env.c.get("/api/me/plan", headers=env.stu).json()["plan"] == "college"
+    assert quota(i["stu"]).used == 1 and env.c.get("/api/me/plan", headers=env.stu).json()["plan"] == "pro"
     submit(env, env.stu, v["id"]); shift(i["stu"], used=0)
     o = start(env, env.other, topic_id=i["water"], size=20).json()  # AI questions wait for review: other students get only published ones
     with Session_() as s: assert o["total"] == 6 and {s.get(McqItem, r.item_id).source for r in s.query(McqAttemptItem).filter_by(attempt_id=o["id"])} == {"teacher"}
@@ -326,7 +327,7 @@ def test_staff_ai_drafts_wait_for_review_and_carry_no_student_data(env, monkeypa
     assert env.c.post("/api/mcq/generate", headers=env.fac2, json={"topic_id": i["water"]}).status_code == 403
     r = env.c.post("/api/mcq/generate", headers=env.fac, json={"topic_id": i["water"], "count": 4}).json(); assert r["added"] == 4
     assert "This student" not in FakeAI.sent[-1][-1]["content"] and env.c.get("/api/mcq/items?status=review", headers=env.fac).json()["total"] == 4
-    assert env.c.get("/api/mcq/home", headers=env.fac).json()["quota"]["tier"] == "staff" and quota(main.Session_().query(User).filter_by(email="fac@x.com").one().id) is None
+    assert env.c.get("/api/mcq/home", headers=env.fac).json()["quota"]["tier"] == "none" and quota(main.Session_().query(User).filter_by(email="fac@x.com").one().id) is None
 
 # ---- the schema: new tables only, applied once, nothing else touched
 def test_the_migration_adds_only_new_tables_and_is_safe_to_run_again(env):
@@ -359,3 +360,16 @@ def test_ai_sets_are_capped_per_hour_and_carry_no_links(env, monkeypatch):
     raw = {"questions": [{"topic": 1, "text": "Which [salt](https://evil.example) causes hardness? ![x](https://evil.example/a.png)", "options": ["Calcium", "Gold", "Neon", "Argon"],
                           "correct": 0, "explanation": "See [here](javascript:alert(1)): calcium salts.", "difficulty": "easy", "keywords": "hardness"}]}
     x = main.mcq_ai_valid(raw, [t], words, set())[0]; assert "evil" not in x["text"] + x["explanation"] and "javascript" not in x["explanation"] and "salt" in x["text"]
+
+def test_only_students_on_lite_or_pro_have_a_limit(env):
+    i = world(env); bank(env, i["water"])
+    with Session_() as s:  # a student with their own key, and a school child with no family key
+        s.add(User(name="Own Key", email="own@x.com", pw=hp("pw"), role="student", self_registered=True, ai_key=main.seal("sk-own-123456789012"), program_id=s.get(User, i["stu"]).program_id, semester=1))
+        s.commit()
+    plans = {who: env.c.get("/api/mcq/home", headers=h).json()["quota"] for who, h in (("lite", env.lite), ("pro", env.stu), ("college", env.other), ("own", env.login("own@x.com")), ("admin", env.admin), ("fac", env.fac))}
+    assert (plans["lite"]["tier"], plans["lite"]["limit"]) == ("lite", 1) and (plans["pro"]["tier"], plans["pro"]["limit"]) == ("pro", 4)
+    assert all(plans[w]["tier"] == "none" and plans[w]["left"] is None for w in ("college", "own", "admin", "fac"))
+    h = env.other  # a student the college added: as many sets as they like
+    for _ in range(6):
+        r = start(env, h, topic_id=i["water"]); assert r.status_code == 200, r.text; submit(env, h, r.json()["id"])
+    assert quota(i["other"]) is None

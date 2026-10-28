@@ -4907,7 +4907,8 @@ async def android_latest():  # public: the home page shows it before anyone sign
 # ---- MCQ practice: one engine behind two ways in, Practice (across topics) and Per topic. Questions come from a bank that admins and the faculty
 # ---- who own a course write or upload, and from the AI. A set is fixed when it starts: each question is copied into the attempt, so editing it later
 # ---- never changes an attempt, its answers or its score. The answer key leaves the server only after the set is submitted. Students get a number of
-# ---- sets (Lite: one per rolling 48 hours; everyone else: MCQ_PRO_PER_DAY per local day), shared by both ways in and counted when a set starts.
+# ---- sets: students on Lite one per rolling 48 hours, on Pro MCQ_PRO_PER_DAY per local day, shared by both ways in and counted when a set starts.
+# ---- Other students (the college's own, their own key, a family key, none) and staff have no limit.
 # ---- Parents (and teachers who only follow students) have no MCQ practice: a teacher who follows a student sees a summary on their progress page.
 MCQ_STATUSES, MCQ_DIFFICULTY, MCQ_SOURCES = ("draft", "review", "published", "retired"), ("easy", "medium", "hard"), ("admin", "teacher", "ai")
 MCQ_LITE_HOURS, MCQ_PRO_PER_DAY = 48, 4
@@ -4948,13 +4949,14 @@ class McqQuota(Base):  # a person's set count: when the last set started, and ho
 def mcq_user(u: User = Depends(me)):  # every MCQ endpoint: students, faculty and admins
     if u.role == "guardian": raise HTTPException(403, "MCQ practice is for students and teachers of a course. Parents don't have access to it.")
     return u
-def mcq_tier(u):  # from the person's own account, never from the request: None for staff (no limit, as with the rest of the AI), else lite or pro
-    if is_staff(u): return None
-    return "lite" if ai_plan(u) in ("lite", "off") else "pro"
+def mcq_tier(u):  # from the person's own account, never from the request: only students on Lite or Pro have a limit; everyone else has none
+    if u.role != "student": return None
+    p = ai_plan(u)
+    return p if p in ("lite", "pro") else None
 def day_start(d): return dt.datetime.combine(d, dt.time()) - dt.timedelta(minutes=DAY_OFFSET)  # the UTC instant a local day begins
 def mcq_quota(u, s, now=None):
     now = now or dt.datetime.utcnow(); tier = mcq_tier(u)
-    if tier is None: return {"tier": "staff", "limit": None, "used": 0, "left": None, "next_at": None, "window": None}
+    if tier is None: return {"tier": "none", "limit": None, "used": 0, "left": None, "next_at": None, "window": None}
     r = s.query(McqQuota).filter_by(user_id=u.id).populate_existing().first()
     if tier == "lite":
         busy = bool(r and r.last_at and r.last_at > now - dt.timedelta(hours=MCQ_LITE_HOURS))
@@ -5158,8 +5160,8 @@ def mcq_student_lines(u, s, tids):  # this student's own practice, by topic: no 
                 if w: missed[tid][w] += 1
     return {tid: (round(100 * c / n), [w for w, _ in sorted(missed[tid].items(), key=lambda x: -x[1])[:6]]) for tid, (c, n) in by.items()}
 def mcq_class_lines(s, tids, uid):  # each topic's class result, only when MCQ_COHORT_MIN or more other students make it up, so nobody can be picked out
-    rows = s.query(McqAttemptItem.topic_id, McqAttempt.user_id, McqAttemptItem.ok).join(McqAttempt, McqAttempt.id == McqAttemptItem.attempt_id) \
-        .filter(McqAttempt.status == "submitted", McqAttempt.user_id != uid, McqAttempt.tier != "none", McqAttemptItem.topic_id.in_(tids or [0])).limit(20000).all()
+    rows = s.query(McqAttemptItem.topic_id, McqAttempt.user_id, McqAttemptItem.ok).join(McqAttempt, McqAttempt.id == McqAttemptItem.attempt_id).join(User, User.id == McqAttempt.user_id) \
+        .filter(McqAttempt.status == "submitted", McqAttempt.user_id != uid, User.role == "student", McqAttemptItem.topic_id.in_(tids or [0])).limit(20000).all()  # students only, not staff trying sets
     who, by = defaultdict(set), defaultdict(lambda: [0, 0])
     for tid, w, ok in rows: who[tid].add(w); by[tid][0] += bool(ok); by[tid][1] += 1
     return {tid: round(100 * c / n) for tid, (c, n) in by.items() if len(who[tid]) >= MCQ_COHORT_MIN}
