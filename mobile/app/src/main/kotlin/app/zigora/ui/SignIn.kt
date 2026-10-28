@@ -173,6 +173,7 @@ fun SignIn(done: (Me) -> Unit) {
                                 put("name", reg[0]); put("institution", if (who == "parent") "" else reg[1]); put("id_number", if (who == "student") reg[2] else ""); put("email", email.trim()); put("phone", reg[3]); put("password", pw)
                                 put("level", level); put("who", who); put("program_id", if (who == "student") prog else null); put("semester", if (who == "student") sem else null)
                                 put("children", studentsJson(if (who == "parent") kids else emptyList()))
+                                put("lang", app.resources.configuration.locales[0].language)  // the code's email comes in the app's language
                             }, Msg.serializer()).message
                             code = ""; wait = 30; mode = "code"
                         } }) { Text(stringResource(R.string.send_me_code)) }
@@ -186,11 +187,11 @@ fun SignIn(done: (Me) -> Unit) {
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
                         error()
                         Button(enabled = !busy && code.length == 6, modifier = Modifier.fillMaxWidth(), onClick = { act {
-                            val r = app.api.send("POST", "/register/verify", buildJsonObject { put("email", email.trim()); put("code", code) }, LoginOut.serializer())
+                            val r = app.api.send("POST", "/register/verify", buildJsonObject { put("email", email.trim()); put("code", code); put("lang", app.resources.configuration.locales[0].language) }, LoginOut.serializer())
                             app.store.token = r.token; done(r.user)
                         } }) { Text(stringResource(R.string.verify_create)) }
                         TextButton(enabled = wait == 0, modifier = Modifier.fillMaxWidth(), onClick = { act {
-                            app.api.raw("POST", "/register/resend", buildJsonObject { put("email", email.trim()) }); wait = 30; code = ""; info = app.getString(R.string.new_code_coming)
+                            app.api.raw("POST", "/register/resend", buildJsonObject { put("email", email.trim()); put("lang", app.resources.configuration.locales[0].language) }); wait = 30; code = ""; info = app.getString(R.string.new_code_coming)
                         } }) { Text(if (wait > 0) stringResource(R.string.new_code_in, wait) else stringResource(R.string.send_new_code)) }
                         TextButton(onClick = { mode = "form"; code = ""; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.change_my_details)) }
                     }
