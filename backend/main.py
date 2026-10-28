@@ -5092,6 +5092,25 @@ def mcq_status(iid: int, b: McqStatusIn, u: User = Depends(staff), s: Session = 
     x, _ = mcq_staff_item(iid, u, s)
     if b.status not in MCQ_STATUSES: raise HTTPException(400, "Unknown status")
     x.status = b.status; x.updated_at = dt.datetime.utcnow(); s.commit(); return {"ok": True}
+class McqReviewIn(BaseModel): action: str; course_id: int = 0; topic_id: int = 0
+@app.post("/api/mcq/items/review")
+def mcq_review_all(b: McqReviewIn, u: User = Depends(staff), s: Session = Depends(db)):
+    """Every question waiting for review in the courses this person owns (or one course or topic of them), in one go: publish them all, or dismiss
+    them all. A dismissed question that some student already had in a set is retired, so their result keeps it; any other is deleted."""
+    if b.action not in ("publish", "dismiss"): raise HTTPException(400, "Choose publish or dismiss")
+    qs = s.query(McqItem).join(Topic, Topic.id == McqItem.topic_id).filter(McqItem.status == "review")
+    if u.role != "admin": qs = qs.filter(Topic.course_id.in_(s.query(Course.id).filter(Course.faculty_owner_id == u.id)))
+    if b.course_id: qs = qs.filter(Topic.course_id == b.course_id)
+    if b.topic_id: qs = qs.filter(McqItem.topic_id == b.topic_id)
+    rows = qs.limit(2000).all(); now = dt.datetime.utcnow()
+    used = {i for (i,) in s.query(McqAttemptItem.item_id).filter(McqAttemptItem.item_id.in_([x.id for x in rows] or [0])).distinct()}
+    out = {"published": 0, "retired": 0, "deleted": 0}
+    for x in rows:
+        if b.action == "publish": x.status = "published"; out["published"] += 1
+        elif x.id in used: x.status = "retired"; out["retired"] += 1
+        else: s.delete(x); out["deleted"] += 1
+        if b.action == "publish" or x.id in used: x.updated_at = now
+    s.commit(); return out
 @app.delete("/api/mcq/items/{iid}")
 def mcq_delete(iid: int, u: User = Depends(staff), s: Session = Depends(db)):
     x, _ = mcq_staff_item(iid, u, s)

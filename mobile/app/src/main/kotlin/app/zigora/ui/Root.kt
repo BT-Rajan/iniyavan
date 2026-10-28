@@ -1,6 +1,7 @@
 package app.zigora.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
@@ -186,9 +187,9 @@ val LocalMe = androidx.compose.runtime.staticCompositionLocalOf<Me?> { null }
 private fun StaffNote(me: Me, signOut: () -> Unit) {
     val ctx = androidx.compose.ui.platform.LocalContext.current; val app = app()
     androidx.compose.material3.Scaffold { pad ->
-        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(pad).fillMaxWidth().padding(24.dp), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
-                                                  horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-            Gap(48)
+        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.padding(pad).fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(24.dp),
+                                                  verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+            Gap(if (me.role == "admin") 16 else 48)
             androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.ic_logo), null, androidx.compose.ui.Modifier.size(72.dp))
             Text(stringResource(R.string.staff_title), style = androidx.compose.material3.MaterialTheme.typography.headlineSmall)
             Text(stringResource(R.string.staff_body, firstName(me.name), app.store.appName, app.store.server), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -196,6 +197,7 @@ private fun StaffNote(me: Me, signOut: () -> Unit) {
             androidx.compose.material3.Button(onClick = { runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, app.store.server.toUri())) } },
                                               modifier = androidx.compose.ui.Modifier.fillMaxWidth()) { Text(stringResource(R.string.open_in_browser)) }
             androidx.compose.material3.OutlinedButton(onClick = signOut, modifier = androidx.compose.ui.Modifier.fillMaxWidth()) { Text(stringResource(R.string.sign_out)) }
+            if (me.role == "admin") MoreAiPanel()  // the one admin task the app does too: giving a student more AI
         }
     }
 }

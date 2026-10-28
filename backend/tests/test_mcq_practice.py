@@ -373,3 +373,21 @@ def test_only_students_on_lite_or_pro_have_a_limit(env):
     for _ in range(6):
         r = start(env, h, topic_id=i["water"]); assert r.status_code == 200, r.text; submit(env, h, r.json()["id"])
     assert quota(i["other"]) is None
+
+def test_teachers_publish_or_dismiss_every_waiting_question_at_once(env, monkeypatch):
+    i = world(env); fake_ai(monkeypatch); bank(env, i["water"])
+    a = start(env, env.stu, topic_id=i["water"], source="ai", size=5).json(); submit(env, env.stu, a["id"])  # 5 AI questions now wait, and this student had them
+    env.c.post("/api/mcq/generate", headers=env.fac, json={"topic_id": i["rust"], "count": 3})  # 3 more, on another topic, that nobody has had
+    with Session_() as s: s.query(Topic).filter_by(id=i["vel"]).update({"content": "Velocity measures displacement divided by elapsed time. Acceleration measures velocity change divided by elapsed time; uniform motion keeps velocity constant."}); s.commit()
+    assert env.c.post("/api/mcq/generate", headers=env.fac2, json={"topic_id": i["vel"], "count": 3}).json()["added"] == 3  # fac2's own: fac can't touch them
+    waiting = lambda h, **k: env.c.get("/api/mcq/items?status=review" + "".join(f"&{a}={b}" for a, b in k.items()), headers=h).json()["total"]
+    assert (waiting(env.fac), waiting(env.fac2)) == (8, 3)
+    assert env.c.post("/api/mcq/items/review", headers=env.stu, json={"action": "publish"}).status_code == 403
+    assert env.c.post("/api/mcq/items/review", headers=env.fac, json={"action": "approve"}).status_code == 400
+    r = env.c.post("/api/mcq/items/review", headers=env.fac, json={"action": "dismiss", "topic_id": i["rust"]}).json()
+    assert r == {"published": 0, "retired": 0, "deleted": 3} and waiting(env.fac) == 5  # one topic only; never used, so gone
+    r = env.c.post("/api/mcq/items/review", headers=env.fac, json={"action": "dismiss", "course_id": i["chem"]}).json()
+    assert r == {"published": 0, "retired": 5, "deleted": 0} and waiting(env.fac) == 0  # a student had them: kept as retired, so the result stays
+    assert env.c.get(f"/api/mcq/attempts/{a['id']}", headers=env.stu).json()["score"] is not None
+    r = env.c.post("/api/mcq/items/review", headers=env.fac, json={"action": "publish"}).json(); assert r["published"] == 0 and waiting(env.fac2) == 3  # not fac's to publish
+    assert env.c.post("/api/mcq/items/review", headers=env.fac2, json={"action": "publish"}).json()["published"] == 3 and env.c.get("/api/mcq/items?status=published", headers=env.fac2).json()["total"] == 3
