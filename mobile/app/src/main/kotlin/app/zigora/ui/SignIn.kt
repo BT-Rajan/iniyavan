@@ -122,7 +122,7 @@ fun SignIn(done: (Me) -> Unit) {
                     "forgot" -> {
                         Text(stringResource(R.string.forgot_title), style = MaterialTheme.typography.titleLarge)
                         if (info.isNotEmpty()) Text(info) else {
-                            Quiet(stringResource(R.string.forgot_lead)); emailField(); error()
+                            Quiet(stringResource(R.string.forgot_lead)); Quiet(tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")); emailField(); error()
                             Button(onClick = { act { info = app.api.send("POST", "/forgot", buildJsonObject { put("email", email.trim()) }, Msg.serializer()).message } },
                                    enabled = !busy && email.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.send_reset_link)) }
                         }
@@ -212,7 +212,7 @@ fun SignIn(done: (Me) -> Unit) {
                         }
                         if (!editing) {
                             if (canReset) TextButton(onClick = { mode = "forgot"; msg = ""; info = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.forgot_password_q)) }
-                            else Quiet(stringResource(R.string.forgot_ask_admin))
+                            else Quiet(stringResource(R.string.forgot_ask_admin) + " " + tl("Sign in with a username? Ask your parent or teacher to set a new password for you."))
                             if (canRegister) androidx.compose.material3.OutlinedButton(onClick = { mode = "register"; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.create_account)) }
                         }
                     }

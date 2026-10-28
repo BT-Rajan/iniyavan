@@ -59,3 +59,21 @@ def test_progress_is_per_course_and_read_only(env):
     p = env.c.get(f"/api/guardian/students/{a}/progress", headers=t).json()
     assert p["place"] == "State Board · Grade 6" and [(c["course"], c["topics"], c["completed"], c["opened"]) for c in p["courses"]] == [("Science", 3, 1, 2)]
     assert env.c.get(f"/api/guardian/students/{a}/progress", headers=h(env, "mum@x.com")).status_code == 404  # not her child
+
+def test_a_parent_or_teacher_sets_a_new_password_for_a_username_account(env):
+    i = setup(); t = h(env, "rani@school.in")
+    env.c.post("/api/guardian/students", headers=t, json={"students": [STU("Arun", "arun6")]})
+    with Session_() as s: a = s.query(User).filter_by(username="arun6").one().id
+    kid = {"Authorization": "Bearer " + env.c.post("/api/login", json={"email": "arun6", "password": "classpass1"}).json()["token"]}
+    assert env.c.get(f"/api/guardian/students/{a}/progress", headers=t).json()["can_reset"] is True
+    assert env.c.put(f"/api/guardian/students/{a}/password", headers=t, json={"password": "short"}).status_code == 400
+    assert env.c.put(f"/api/guardian/students/{a}/password", headers=t, json={"password": "arun6"}).status_code == 400
+    assert env.c.put(f"/api/guardian/students/{a}/password", headers=t, json={"password": "newpass123"}).status_code == 200
+    assert env.c.get("/api/me", headers=kid).status_code == 401  # the old sign-in ends
+    assert env.c.post("/api/login", json={"email": "arun6", "password": "newpass123"}).status_code == 200
+    assert env.c.put(f"/api/guardian/students/{a}/password", headers=h(env, "mum@x.com"), json={"password": "newpass123"}).status_code == 404  # not her child
+    env.c.post("/api/guardian/invite", headers=t, json={"login": "old@x.com"})
+    assert env.c.put(f"/api/guardian/students/{i['old']}/password", headers=t, json={"password": "newpass123"}).status_code == 403  # not accepted yet
+    o = h(env, "old@x.com"); lid = env.c.get("/api/me/invitations", headers=o).json()["invitations"][0]["id"]; env.c.post(f"/api/me/invitations/{lid}/accept", headers=o)
+    r = env.c.put(f"/api/guardian/students/{i['old']}/password", headers=t, json={"password": "newpass123"})
+    assert r.status_code == 403 and "own email" in r.json()["detail"] and env.c.get(f"/api/guardian/students/{i['old']}/progress", headers=t).json()["can_reset"] is False

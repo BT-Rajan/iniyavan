@@ -190,6 +190,9 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
 /** what a parent or teacher sees of one student: per course, topics learned and opened, tests, when they last studied. Never their notes */
 @Composable
 fun StudentProgressScreen(id: Int, back: () -> Unit) {
+    val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast()
+    var pw by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
     val p = rememberLoad("guardian-progress", id) { get("/guardian/students/$id/progress", GProgress.serializer()) }
     val d0 = (p.state as? Load.Ok)?.value
     Page(d0?.name ?: tl("Loading"), d0?.place.orEmpty(), back = back) {
@@ -202,6 +205,17 @@ fun StudentProgressScreen(id: Int, back: () -> Unit) {
                 ListRow(c.course, bits.joinToString(" · "), extra = { ScoreBar(if (c.topics > 0) 100 * c.completed / c.topics else 0) })
             }
             Quiet(tl("You see progress only, never their own notes or highlights."))
+            if (d.can_reset) {  // a username account has no email to reset from: the parent or teacher sets a new password
+                SectionTitle(tl("Forgot their password?"))
+                Quiet(tl("They sign in with a username, so there is no email to reset it from. Set a new one here and tell them."))
+                OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth(), label = { Text(tl("New password")) }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                OutlinedButton(enabled = !busy && pw.length >= 8, onClick = { scope.launch {
+                    busy = true
+                    try { a.raw("PUT", "/guardian/students/$id/password", buildJsonObject { put("password", pw) }); pw = ""; toast(tl("Password changed. Tell them the new one.")) }
+                    catch (e: Exception) { toast(e.message.orEmpty()) }
+                    busy = false
+                } }) { Text(tl("Set a new password")) }
+            }
         }
     }
 }

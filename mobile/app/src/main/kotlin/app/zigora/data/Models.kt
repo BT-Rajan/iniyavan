@@ -146,6 +146,6 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class GStudents(val students: List<GStudent> = emptyList())
 @Serializable data class GCourse(val course: String, val topics: Int = 0, val completed: Int = 0, val opened: Int = 0, val last_active: String? = null,
                                  val tests: Int = 0, val tests_taken: Int = 0, val test_average: Int? = null)
-@Serializable data class GProgress(val name: String, val username: String? = null, val place: String = "", val courses: List<GCourse> = emptyList())
+@Serializable data class GProgress(val name: String, val username: String? = null, val place: String = "", val courses: List<GCourse> = emptyList(), val can_reset: Boolean = false)
 @Serializable data class Invitation(val id: Int, val name: String, val relation: String? = null, val institution: String = "")
 @Serializable data class Invitations(val invitations: List<Invitation> = emptyList())
