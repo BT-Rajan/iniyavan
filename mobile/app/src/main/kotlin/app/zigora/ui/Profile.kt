@@ -82,10 +82,10 @@ fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, themeOf: (String) -> Uni
             Loaded(p) { pr ->
                 Panel {
                     Text(pr.name, style = MaterialTheme.typography.titleLarge)
-                    Quiet(pr.email)
+                    Quiet(pr.email.ifEmpty { pr.username })  // a child signs in with a username and has no email
                     if (pr.program.isNotEmpty()) Quiet(pr.program + (pr.semester?.let { " · ${pr.term} $it" } ?: ""))
                 }
-                pr.ai?.takeIf { pr.self_registered && it.plan != "college" }?.let { PlanCard(it) { p.reload() } }
+                pr.ai?.takeIf { (pr.self_registered || pr.role == "student") && it.plan != "college" }?.let { PlanCard(it) { p.reload() } }
                 pr.rewards?.let { r ->
                     SectionTitle(stringResource(R.string.rewards))
                     Panel {
@@ -185,16 +185,19 @@ private fun PlanCard(ai: AiPlan, changed: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     SectionTitle(stringResource(R.string.ai_help))
     Panel {
-        Text(stringResource(when (ai.plan) { "pro" -> R.string.plan_pro; "own" -> R.string.plan_own; else -> R.string.plan_lite }), style = MaterialTheme.typography.titleMedium)
+        Text(when (ai.plan) { "pro" -> stringResource(R.string.plan_pro); "own" -> stringResource(R.string.plan_own); "family" -> tl("Family key"); "off" -> tl("No AI"); else -> stringResource(R.string.plan_lite) },
+            style = MaterialTheme.typography.titleMedium)
         when (ai.plan) {
             "pro" -> Quiet(stringResource(R.string.pro_until_note, ai.pro_until?.let { day(it) }.orEmpty()))
             "own" -> Quiet(stringResource(R.string.own_key_note))
+            "family" -> Quiet(tl("Your AI help runs on your parent's or teacher's DeepSeek key."))
+            "off" -> Quiet(tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account."))
             else -> {
                 Quiet(stringResource(R.string.lite_note, ai.searches_limit, ai.minutes_limit))
                 Meter(stringResource(R.string.searches_today, ai.searches_used, ai.searches_limit), ai.searches_used, ai.searches_limit)
                 Meter(stringResource(R.string.minutes_today, ai.minutes_used, ai.minutes_limit), ai.minutes_used, ai.minutes_limit)
                 androidx.compose.foundation.layout.Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { text = ""; msg = ""; dialog = "key" }) { Text(stringResource(R.string.use_own_key)) }
+                    if (ai.own_key) TextButton(onClick = { text = ""; msg = ""; dialog = "key" }) { Text(stringResource(R.string.use_own_key)) }
                     TextButton(enabled = !ai.asked, onClick = { text = ""; msg = ""; dialog = "more" }) { Text(stringResource(if (ai.asked) R.string.asked_admin else R.string.ask_admin_more)) }
                 }
             }

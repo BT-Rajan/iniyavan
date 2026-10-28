@@ -370,7 +370,8 @@ class MailLog(Base):  # what was sent, to whom and whether it went: never the te
     __tablename__ = "mail_log"
     id = Column(Integer, primary_key=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
     kind = Column(String(20)); to = Column(String(190)); ok = Column(Boolean, default=True); error = Column(String(300), nullable=True)
-MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test", "pro": "More AI given"}
+MAIL_KINDS = {"reset": "Password reset", "code": "Registration code", "account": "Already registered", "digest": "Daily summary", "test": "Test", "pro": "More AI given",
+              "welcome": "Account created", "invite": "Invitation", "password": "Password changed", "status": "Account changed", "quota": "AI allowance"}
 class MailError(Exception): pass  # a message written for the admin
 def site_url(s): return (setting(s, "app_url") or os.getenv("APP_URL") or "").rstrip("/")
 def mail_conf(s):
@@ -427,6 +428,30 @@ def deliver_reset(email, name, raw):
     with Session_() as s: link = f"{site_url(s)}/app/#reset={raw}"
     try: send_mail(email, f"Reset your {APP_NAME} password", f"Hi {name},\n\nSomeone asked to reset the password for your {APP_NAME} account. To choose a new one, open this link within {minutes} minutes:\n\n{link}\n\nIf you didn't ask for this, ignore this email. Your password stays the same.\n", kind="reset", link=link)
     except MailError: pass  # recorded in the email log for the admin; the person sees the same answer either way
+# ---- account notes: a short email whenever an account is created, its password changes, it is switched on or off or changes role, a teacher
+# ---- invites or is answered, or a Lite allowance is nearly used up; so a change the person didn't make doesn't go unnoticed. Never a password or code.
+def account_mail(to, name, kind, subject, body, link):
+    try: send_mail(to, subject, f"Hi {name},\n\n{body}\n", kind=kind, link=link)
+    except MailError: pass  # in the email log for the admin
+def notify(s, u, kind, subject, mine, theirs=None, run=None, skip=None):
+    """Emails u (mine); for a username account with no email, its parents and teachers instead (theirs, about u), except skip, the one who made the change.
+    run: a request's bg.add_task; elsewhere a thread, so a slow mail server never holds a request."""
+    if not mail_on(s): return
+    to = [(u.email, u.name, mine)] if u.email else [(g.email, g.name, theirs) for g in guardians_of(s, u.id) if g.email and g.active and g.id != skip] if theirs else []
+    link = site_url(s) + "/app/"
+    for e, n, body in to: (run or spawn)(account_mail, e, n, kind, subject, body, link)
+def notify_password(s, u, by_admin=False, run=None, skip=None):
+    notify(s, u, "password", f"Your {APP_NAME} password was changed",
+           f"Your admin set a new password for your {APP_NAME} account. They will give it to you, and you choose your own when you next sign in. If you did not expect this, talk to your admin."
+           if by_admin else f"The password for your {APP_NAME} account was just changed. If this was you, there is nothing to do. If not, use \"Forgot your password?\" on the sign-in page, or tell your admin.",
+           f"The password {u.name} signs in with ({u.username}) was changed on {APP_NAME}. If you did not expect this, set a new one from their progress page.", run, skip)
+def notify_status(s, u, run=None):
+    notify(s, u, "status", f"Your {APP_NAME} account was {'switched on' if u.active else 'switched off'}",
+           f"Your admin switched your {APP_NAME} account on. You can sign in again." if u.active else f"Your admin switched your {APP_NAME} account off, so you can't sign in for now. Your progress is kept. Ask your admin if you think this is a mistake.",
+           f"{u.name}'s {APP_NAME} account ({u.username}) was {'switched on: they can sign in again' if u.active else 'switched off by the admin: they cannot sign in for now; their progress is kept'}.", run)
+ROLE_WORDS = {"student": "a student", "faculty": "a faculty member", "admin": "an admin", "guardian": "a parent or teacher"}
+def notify_role(s, u, run=None):
+    notify(s, u, "status", f"Your {APP_NAME} account changed", f"Your admin changed your {APP_NAME} account: you now sign in as {ROLE_WORDS.get(u.role, u.role)}. Ask your admin if you think this is a mistake.", run=run)
 def tok_hash(raw): return hashlib.sha256(raw.encode()).hexdigest()
 class ForgotIn(BaseModel): email: str
 @app.post("/api/forgot")
@@ -450,13 +475,14 @@ class ResetIn(BaseModel): token: str; new_password: str
 @app.post("/api/reset/check")
 def reset_check(b: ResetCheck, s: Session = Depends(db)): return {"valid": live_reset(b.token, s)[0] is not None}
 @app.post("/api/reset")
-def reset_password(b: ResetIn, s: Session = Depends(db)):
+def reset_password(b: ResetIn, bg: BackgroundTasks, s: Session = Depends(db)):
     r, u = live_reset(b.token, s)
     if not r: raise HTTPException(400, "This link has expired or was already used. Ask for a new one.")
     if len(b.new_password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if b.new_password.strip().lower() == u.email: raise HTTPException(400, "Password can't be your email")
     u.pw = hp(b.new_password); u.must_change = False; r.used = True  # ends every old session and any older reset links
     s.query(PasswordReset).filter(PasswordReset.user_id == u.id, PasswordReset.id != r.id).delete(); s.query(LoginFail).filter_by(email=u.email).delete(); s.commit()
+    notify_password(s, u, run=bg.add_task)
     return {"token": make_token(u), "user": {"id": u.id, "name": u.name, "role": u.role, "must_change": False}}
 # ---- self-registration with an emailed one-time code ----
 from cryptography.fernet import Fernet, InvalidToken
@@ -560,7 +586,7 @@ def register_start(b: RegisterIn, request: Request, bg: BackgroundTasks, s: Sess
     return reply
 class VerifyIn(BaseModel): email: str; code: str
 @app.post("/api/register/verify")
-def register_verify(b: VerifyIn, s: Session = Depends(db)):
+def register_verify(b: VerifyIn, bg: BackgroundTasks, s: Session = Depends(db)):
     email, code, now = b.email.strip().lower()[:190], "".join(ch for ch in b.code if ch.isdigit()), dt.datetime.utcnow()
     p = s.query(PendingRegistration).filter_by(email=email).first(); bad = HTTPException(400, "That code has expired or is not valid. Ask for a new one.")
     if not p or p.expires_at < now or p.attempts >= OTP_MAX_TRIES: raise bad
@@ -583,6 +609,9 @@ def register_verify(b: VerifyIn, s: Session = Depends(db)):
     s.delete(p)
     try: s.commit()
     except IntegrityError: s.rollback(); raise bad
+    names = "".join(f"\n  {k['name']}: {k['username']}" for k in kids)
+    notify(s, u, "welcome", f"Welcome to {APP_NAME}", f"Your {APP_NAME} account is ready. Sign in with {email}."
+           + (f"\n\nYour {'children' if u.relation == 'parent' else 'students'} sign in with these usernames and the passwords you chose:{names}" if kids else ""), run=bg.add_task)
     return {"token": make_token(u), "user": me_json(u)}
 @app.post("/api/register/resend")
 def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Session = Depends(db)):
@@ -832,7 +861,7 @@ def my_link(s, gid, sid):
 MAX_PARENT_KIDS, MAX_CLASS = 8, 60  # children per parent; students a teacher adds in one go
 class NewStudentsIn(BaseModel): students: list[ChildIn]
 @app.post("/api/guardian/students")
-def add_students(b: NewStudentsIn, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a teacher adds a class, or a parent another child: each signs in with a username
+def add_students(b: NewStudentsIn, bg: BackgroundTasks, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a teacher adds a class, or a parent another child: each signs in with a username
     have = s.query(func.count(GuardianLink.id)).filter(GuardianLink.guardian_id == u.id).scalar()
     top = MAX_PARENT_KIDS - have if u.relation == "parent" else MAX_CLASS
     if not 1 <= len(b.students) <= max(0, top): raise HTTPException(400, f"Add between 1 and {max(0, top)} at a time" if top > 0 else f"A parent can have up to {MAX_PARENT_KIDS} children here")
@@ -840,12 +869,14 @@ def add_students(b: NewStudentsIn, u: User = Depends(guardian_only), s: Session 
     for k in kids:
         c = User(name=k["name"], email=None, username=k["username"], pw=k["pw"], role="student", level=u.level, active=True, must_change=False, program_id=k["program_id"], semester=k["semester"], self_registered=True)
         s.add(c); s.flush(); s.add(GuardianLink(guardian_id=u.id, student_id=c.id, status="active"))
-    s.commit(); return my_students(u, s)
+    s.commit(); names = "".join(f"\n  {k['name']}: {k['username']}" for k in kids)
+    notify(s, u, "welcome", f"New accounts on {APP_NAME}", f"You added {len(kids)} {'account' if len(kids) == 1 else 'accounts'} on {APP_NAME}. They sign in with these usernames and the passwords you chose:{names}", run=bg.add_task)
+    return my_students(u, s)
 class InviteIn(BaseModel): login: str
 @app.get("/api/guardian/options")
 def guardian_options(u: User = Depends(guardian_only), s: Session = Depends(db)): return program_options(s)  # for adding students, even when sign-up is closed
 @app.post("/api/guardian/invite")
-def invite_student(b: InviteIn, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a student who already has an account sees the invitation and decides
+def invite_student(b: InviteIn, bg: BackgroundTasks, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a student who already has an account sees the invitation and decides
     who = b.login.strip().lower()[:190]
     if u.relation != "teacher": raise HTTPException(403, "Teachers invite students. A parent adds their children.")
     if s.query(func.count(GuardianLink.id)).filter(GuardianLink.guardian_id == u.id, GuardianLink.status == "invited", GuardianLink.created_at >= dt.datetime.utcnow() - dt.timedelta(days=1)).scalar() >= MAX_CLASS:
@@ -853,6 +884,8 @@ def invite_student(b: InviteIn, u: User = Depends(guardian_only), s: Session = D
     x = s.query(User).filter(User.email == who if "@" in who else User.username == who).first()
     if x and x.role == "student" and x.active and x.id != u.id and not s.query(GuardianLink.id).filter_by(guardian_id=u.id, student_id=x.id).first():
         s.add(GuardianLink(guardian_id=u.id, student_id=x.id, status="invited")); s.commit()
+        who_at = f"{u.name}" + (f" ({u.institution})" if u.institution else "")
+        notify(s, x, "invite", f"{u.name} invited you on {APP_NAME}", f"{who_at}, a teacher, wants to follow your progress on {APP_NAME}. Sign in to accept or decline. Until you accept, they see nothing.", run=bg.add_task)
     return {"ok": True, "message": f"If a student signs in as {who}, they will see your invitation and can accept it."}  # the same answer either way, so this can't be used to find out who has an account
 @app.delete("/api/guardian/students/{sid}")
 def unlink_student(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):
@@ -889,7 +922,7 @@ def student_progress(sid: int, u: User = Depends(guardian_only), s: Session = De
     return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows, "can_reset": not x.email, "program_id": x.program_id, "semester": x.semester}  # a username account: no email to reset from
 class StudentPwIn(BaseModel): password: str
 @app.put("/api/guardian/students/{sid}/password")
-def set_student_password(sid: int, b: StudentPwIn, u: User = Depends(guardian_only), s: Session = Depends(db)):
+def set_student_password(sid: int, b: StudentPwIn, bg: BackgroundTasks, u: User = Depends(guardian_only), s: Session = Depends(db)):
     """A child or student who signs in with a username has no email to reset a forgotten password from: a parent or teacher they're linked to sets a new one.
     Their old sign-ins end, since a token is tied to the password."""
     if my_link(s, u.id, sid).status != "active": raise HTTPException(403, "The student has not accepted your invitation yet")
@@ -897,17 +930,19 @@ def set_student_password(sid: int, b: StudentPwIn, u: User = Depends(guardian_on
     if x.email: raise HTTPException(403, "This student has their own email and can reset their password from the sign-in page.")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters for the password")
     if b.password.strip().lower() == (x.username or ""): raise HTTPException(400, "A password can't be the username")
-    x.pw = hp(b.password); x.must_change = False; s.commit(); return {"ok": True}
+    x.pw = hp(b.password); x.must_change = False; s.commit(); notify_password(s, x, run=bg.add_task, skip=u.id); return {"ok": True}
 @app.get("/api/me/invitations")
 def my_invitations(u: User = Depends(me), s: Session = Depends(db)):
     return {"invitations": [{"id": l.id, "name": g.name, "relation": g.relation, "institution": g.institution or ""} for l, g in invitations(s, u.id)]}
 @app.post("/api/me/invitations/{lid}/{answer}")
-def answer_invitation(lid: int, answer: str, u: User = Depends(me), s: Session = Depends(db)):  # accepting lets the teacher see progress (and use their AI key for a school student)
+def answer_invitation(lid: int, answer: str, bg: BackgroundTasks, u: User = Depends(me), s: Session = Depends(db)):  # accepting lets the teacher see progress (and use their AI key for a school student)
     l = s.get(GuardianLink, lid)
     if not l or l.student_id != u.id or l.status != "invited" or answer not in ("accept", "decline"): raise HTTPException(404, "No such invitation")
     if answer == "accept": l.status = "active"
     else: s.delete(l)
-    s.commit(); return {"ok": True}
+    s.commit(); g = s.get(User, l.guardian_id)
+    if g: notify(s, g, "invite", f"{u.name} {answer}ed your invitation", f"{u.name} {answer}ed your invitation on {APP_NAME}." + (" You can now follow their progress." if answer == "accept" else ""), run=bg.add_task)
+    return {"ok": True}
 @app.get("/api/guardian/students")
 def my_students(u: User = Depends(guardian_only), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
     row = lambda x, st: {"id": x.id, "name": x.name, "username": x.username, "place": place_line(s, x), "status": st, "active": bool(x.active)}
@@ -924,13 +959,13 @@ def in_lang(u, prompt):  # AI answers come in the reader's language; the prompt 
     return prompt + f"\n\nWrite the whole answer in {LANGS[lang]}. Keep formulas, equations, chemical symbols, units, code and the Markdown formatting as they are."
 class PwChange(BaseModel): current: str; new_password: str
 @app.post("/api/me/password")
-def change_password(b: PwChange, request: Request, u: User = Depends(me), s: Session = Depends(db)):
+def change_password(b: PwChange, request: Request, bg: BackgroundTasks, u: User = Depends(me), s: Session = Depends(db)):
     ip = client_ip(request); throttle(s, u.email, ip)
     if not vp(b.current, u.pw): note_fail(s, u.email, ip); raise HTTPException(400, "Your current password is wrong")
     if len(b.new_password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if b.new_password == b.current: raise HTTPException(400, "Choose a password different from the current one")
     if b.new_password.strip().lower() == u.email: raise HTTPException(400, "Password can't be your email")
-    u.pw = hp(b.new_password); u.must_change = False; s.commit(); clear_fails(s, u.email, ip); return {"ok": True, "token": make_token(u)}
+    u.pw = hp(b.new_password); u.must_change = False; s.commit(); clear_fails(s, u.email, ip); notify_password(s, u, run=bg.add_task); return {"ok": True, "token": make_token(u)}
 
 # ---- admin ----
 ROLES = ("student", "faculty", "admin")
@@ -1060,8 +1095,9 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
     if role: qs = qs.filter(User.role == role)
     now = dt.datetime.utcnow(); asking = s.query(MoreRequest.user_id).filter(MoreRequest.done_at.is_(None))
     if plan == "asked": qs = qs.filter(User.id.in_(asking))  # self-registered people asking for more AI
-    elif plan == "pro": qs = qs.filter(User.self_registered == True, User.pro_until > now)  # noqa: E712
-    elif plan == "lite": qs = qs.filter(User.self_registered == True, User.ai_key.is_(None), or_(User.pro_until.is_(None), User.pro_until <= now))  # noqa: E712
+    elif plan == "pro": qs = qs.filter(User.pro_until > now)  # only self-registered people and school students the admin added can be made pro
+    elif plan == "lite": qs = qs.filter(or_(and_(User.self_registered == True, User.ai_key.is_(None)), and_(User.self_registered == False, User.role == "student", Program.pattern == "grade")),  # noqa: E712
+                                        or_(User.pro_until.is_(None), User.pro_until <= now))
     rows = qs.order_by(*USORT.get(order, USORT["role"]), User.id).offset(max(offset, 0)).limit(min(max(limit, 1), 100)).all()
     asked = {i for (i,) in asking.filter(MoreRequest.user_id.in_([u.id for u, _ in rows] or [0]))}
     return {"total": qs.count(), "items": [{**urow(u, pn), "asked": u.id in asked} for u, pn in rows]}
@@ -1099,20 +1135,23 @@ def course_owner(cid: int, b: OwnerIn, _: User = Depends(admin), s: Session = De
     if not co: raise HTTPException(404, "Course not found")
     set_owner(s, co, b.user_id); s.commit(); return {"ok": True}
 @app.post("/api/admin/users/{uid}/reset-password")
-def reset_password(uid: int, _: User = Depends(admin), s: Session = Depends(db)):
+def reset_password(uid: int, bg: BackgroundTasks, _: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
-    pw = gen_pw(); u.pw = hp(pw); u.must_change = True; s.commit()
+    pw = gen_pw(); u.pw = hp(pw); u.must_change = True; s.commit(); notify_password(s, u, by_admin=True, run=bg.add_task)
     return {"email": u.email, "password": pw}  # shown once; only the hash is stored
 @app.post("/api/admin/users")
-def add_user(b: NewUser, _: User = Depends(admin), s: Session = Depends(db)):
+def add_user(b: NewUser, bg: BackgroundTasks, _: User = Depends(admin), s: Session = Depends(db)):
     e, name = b.email.strip().lower(), b.name.strip()
     if not name: raise HTTPException(400, "Enter a name")
     if not EMAIL.match(e): raise HTTPException(400, "Enter a valid email")
     if b.role not in ROLES: raise HTTPException(400, "Role must be student, faculty or admin")
     if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
     if s.query(User).filter_by(email=e).first(): raise HTTPException(400, "That email is already registered")
-    s.add(User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=fit_sem(s, b.program_id, to_sem(b.semester)), must_change=b.role != "admin")); s.commit(); return {"ok": True}
+    n = User(name=name, email=e, pw=hp(b.password), role=b.role, active=b.active, program_id=check_program(b.program_id, s), semester=fit_sem(s, b.program_id, to_sem(b.semester)), must_change=b.role != "admin")
+    s.add(n); s.commit()
+    if n.active: notify(s, n, "welcome", f"Your {APP_NAME} account", f"Your admin made a {APP_NAME} account for you as {ROLE_WORDS.get(n.role, n.role)}. Sign in with {e} and the password your admin gives you.", run=bg.add_task)
+    return {"ok": True}
 @app.delete("/api/admin/users/{uid}")
 def delete_user(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     """Removes an account for good with the person's own records (progress, test attempts, bookmarks, their study courses and so on).
@@ -1129,9 +1168,10 @@ def delete_user(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     s.query(PasswordReset).filter_by(user_id=uid).delete()
     s.delete(u); s.commit(); return {"ok": True}
 @app.patch("/api/admin/users/{uid}")
-def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = Depends(db)):
+def patch_user(uid: int, b: UserPatch, bg: BackgroundTasks, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
+    was = (u.active, u.role)
     if u.id == a.id and ((b.role and b.role != u.role) or (b.active is not None and b.active != u.active)):
         raise HTTPException(400, "You can't change your own role or status")
     if b.name is not None:
@@ -1154,13 +1194,17 @@ def patch_user(uid: int, b: UserPatch, a: User = Depends(admin), s: Session = De
         if len(b.password) < 8: raise HTTPException(400, "Use at least 8 characters")
         u.pw = hp(b.password); u.must_change = u.id != a.id
     s.commit()  # owners are never reassigned automatically; the admin is told which courses now need one
+    if u.id != a.id:
+        if bool(u.active) != bool(was[0]): notify_status(s, u, bg.add_task)
+        if u.role != was[1]: notify_role(s, u, bg.add_task)
+        if b.password: notify_password(s, u, by_admin=True, run=bg.add_task)
     stranded = s.query(Course).filter_by(faculty_owner_id=u.id).count() if owner_problem(u) else 0
     return {"ok": True, "courses_needing_owner": stranded}
 class BulkIn(BaseModel):
     ids: list[int]; action: str; program_id: int | None = None; semester: int | None = None
 BULK_ACTIONS = ("disable", "enable", "set_placement", "reset_passwords")
 @app.post("/api/admin/users/bulk")
-def bulk_users(b: BulkIn, a: User = Depends(admin), s: Session = Depends(db)):
+def bulk_users(b: BulkIn, bg: BackgroundTasks, a: User = Depends(admin), s: Session = Depends(db)):
     """One action on many accounts. Accounts that can't take it (yourself, non-students for a placement) are skipped and named; the rest go through."""
     if b.action not in BULK_ACTIONS: raise HTTPException(400, "Unknown action")
     ids = list(dict.fromkeys(b.ids))
@@ -1171,7 +1215,7 @@ def bulk_users(b: BulkIn, a: User = Depends(admin), s: Session = Depends(db)):
         if b.program_id is None: raise HTTPException(400, "Choose a program")
         prog = check_program(b.program_id, s); sem = fit_sem(s, prog, to_sem(b.semester))
     users = {u.id: u for u in s.query(User).filter(User.id.in_(ids))}
-    changed, skipped, creds = 0, [], []
+    changed, skipped, creds, told = 0, [], [], []
     for i in ids:
         u = users.get(i)
         if not u: skipped.append({"id": i, "name": f"#{i}", "reason": "No such user"}); continue
@@ -1186,8 +1230,11 @@ def bulk_users(b: BulkIn, a: User = Depends(admin), s: Session = Depends(db)):
         elif b.action == "set_placement": u.program_id, u.semester = prog, sem
         else:
             pw = gen_pw(); u.pw = hp(pw, TEMP_ITER); u.must_change = True; creds.append({"name": u.name, "email": u.email, "password": pw})
-        changed += 1
+        changed += 1; told.append(u)
     s.commit()
+    for u in told:
+        if b.action in ("disable", "enable"): notify_status(s, u, bg.add_task)
+        elif b.action == "reset_passwords": notify_password(s, u, by_admin=True, run=bg.add_task)
     stranded = sum(s.query(Course).filter_by(faculty_owner_id=u.id).count() for u in users.values() if b.action == "disable" and not u.active and u.role == "faculty")
     out = {"action": b.action, "changed": changed, "skipped": skipped[:50], "skipped_count": len(skipped), "courses_needing_owner": stranded}
     if creds: out["credentials"] = creds  # shown once; only hashes are stored
@@ -1322,7 +1369,7 @@ async def deepseek(key, model, messages, max_tokens=None, timeout=45):
     return checked(text), j.get("usage", {}).get("total_tokens", 0)
 VISION_MODEL = "claude-opus-5-5"  # the default model for photos of diagrams; an admin can choose another under Settings
 def vision_key(s): return setting(s, "vision_key") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-def vision_on(u, s): return bool(vision_key(s)) and (not u.self_registered or pro_active(u))  # the college's Claude key: not for lite people, whose own key can only be DeepSeek
+def vision_on(u, s): return bool(vision_key(s)) and ai_plan(u) in ("college", "pro")  # the college's Claude key: not for lite people, whose own key can only be DeepSeek
 REFUSED = "I can't help with that photo. Ask me about something you are studying."
 async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
     """The only way a photo leaves the server: to Claude, which can see diagrams. Like deepseek(), the built-in safety rules come first,
@@ -1340,6 +1387,7 @@ async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
 def ai_down(u, why=""):  # students get the plain message; admins also get a pointer to the likely fix
     return HTTPException(503, AI_DOWN + (f" (Admin: {why})" if why and u.role == "admin" else ""))
 def school_learner(u): return u.role == "student" and bool(u.self_registered) and stage_of(u) == "school"  # signed up as a school student, or added by a parent
+def added_pupil(u): return u.role == "student" and not u.self_registered and stage_of(u) == "school"  # a school student the admin added: the school's key, within the Lite allowance
 def guardian_key(u, s):  # a school student's AI runs on a linked parent's or teacher's own key, a parent's first; never the college's
     if s is None: return None
     for g in sorted(guardians_of(s, u.id), key=lambda g: (g.relation != "parent", g.id)):
@@ -1670,7 +1718,7 @@ def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs 
     return out
 class RolloverIn(BaseModel): dry_run: bool = True; finishing: str = "keep"  # keep: leave the last semester's students where they are; deactivate: switch their accounts off
 @app.post("/api/admin/programs/{pid}/rollover")
-def rollover(pid: int, b: RolloverIn, _: User = Depends(admin), s: Session = Depends(db)):
+def rollover(pid: int, b: RolloverIn, bg: BackgroundTasks, _: User = Depends(admin), s: Session = Depends(db)):
     """Start of a new term: every active student in the program moves up one semester. Students already in the program's last semester are
     kept or deactivated. Run it once per term; the preview (dry_run) changes nothing."""
     p = s.get(Program, pid)
@@ -1684,6 +1732,7 @@ def rollover(pid: int, b: RolloverIn, _: User = Depends(admin), s: Session = Dep
         if b.finishing == "deactivate":
             for x in finishing: x.active = False
         s.commit()
+        for x in finishing if b.finishing == "deactivate" else []: notify_status(s, x, bg.add_task)
     names = lambda L: [x.name for x in L[:20]]
     return {"program": p.name, "dry_run": b.dry_run, "last_semester": top, "term": term_label(p), "moved": len(moving), "finishing": len(finishing), "finishing_action": b.finishing, "unplaced": len(unplaced),
             "finishing_names": names(finishing), "unplaced_names": names(unplaced)}
@@ -3177,6 +3226,7 @@ def pro_active(u): return bool(u.pro_until and u.pro_until > dt.datetime.utcnow(
 def ai_plan(u):  # school students: "family" on a parent's or teacher's key, else "off"
     if school_learner(u): return "family" if guardian_key(u, object_session(u)) else "off"
     if u.role == "guardian": return "own" if u.ai_key else "off"  # a parent or teacher never uses the college's key
+    if added_pupil(u): return "pro" if pro_active(u) else "lite"  # no key of their own to bring: an admin gives Pro for more
     return "college" if not u.self_registered else "own" if u.ai_key else "pro" if pro_active(u) else "lite"
 def lite_limits(s):
     def num(k, d):
@@ -3192,23 +3242,30 @@ def lite_row(s, u):
     return s.query(LiteUse).filter_by(user_id=u.id, day=day).one()
 def lite_tick(s, u):  # counts the current minute once, however many requests or heartbeats fall in it
     r = lite_row(s, u); m = int(time.time() // 60)
-    if r.last_min != m: r.minutes = (r.minutes or 0) + 1; r.last_min = m
-    s.commit(); return r
+    tick = r.last_min != m
+    if tick: r.minutes = (r.minutes or 0) + 1; r.last_min = m
+    s.commit()
+    if tick: lite_warn(s, u, r.minutes, lite_limits(s)[1], "minutes of learning with AI")
+    return r
 LITE_MORE = " Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+def lite_more(u): return LITE_MORE if u.self_registered else " Saved answers still work. To keep going today, ask your admin for more."  # only people who signed up can bring a key
 def lite_search_left(u, s):  # before asking: is a free search left today? Nothing is used up yet
     if ai_plan(u) != "lite": return
     r = lite_row(s, u); limit = lite_limits(s)[0]
-    if (r.searches or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free AI searches." + LITE_MORE)
+    if (r.searches or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free AI searches." + lite_more(u))
 def lite_search_used(u, s):  # after the AI has answered: a saved answer, a failed call or a timeout never uses one up
     if ai_plan(u) != "lite": return
-    r = lite_row(s, u); r.searches = (r.searches or 0) + 1; s.commit()
+    r = lite_row(s, u); r.searches = (r.searches or 0) + 1; s.commit(); lite_warn(s, u, r.searches, lite_limits(s)[0], "AI searches")
+def lite_warn(s, u, used, limit, what):  # one email the moment a day's allowance is four-fifths used; the counts only go up within a day, so it goes once
+    if limit < 2 or used != limit - max(1, limit // 5): return
+    notify(s, u, "quota", f"Today's free {what} are nearly used up", f"You have used {used} of today's {limit} free {what} on {APP_NAME}. It starts again tomorrow.{lite_more(u)}")  # Lite people all have an email
 def lite_time_or_fail(u, s):
     if ai_plan(u) != "lite": return
     r = lite_row(s, u); limit = lite_limits(s)[1]
-    if (r.minutes or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free minutes of learning with AI." + LITE_MORE)
+    if (r.minutes or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free minutes of learning with AI." + lite_more(u))
     lite_tick(s, u)
 def plan_json(u, s):
-    p = ai_plan(u); out = {"plan": p, "pro_until": utc_iso(u.pro_until) if p == "pro" else None}
+    p = ai_plan(u); out = {"plan": p, "pro_until": utc_iso(u.pro_until) if p == "pro" else None, "own_key": bool(u.self_registered) and not school_learner(u)}
     if p == "lite":
         r = s.query(LiteUse).filter_by(user_id=u.id, day=local_day(dt.datetime.utcnow())).first(); ls, lm = lite_limits(s)
         out.update(searches_used=r.searches if r else 0, searches_limit=ls, minutes_used=r.minutes if r else 0, minutes_limit=lm,
@@ -3235,7 +3292,7 @@ class ProIn(BaseModel): days: int | None = None; until: str | None = None; end: 
 def make_pro(uid: int, b: ProIn, bg: BackgroundTasks, a: User = Depends(admin), s: Session = Depends(db)):
     u = s.get(User, uid)
     if not u: raise HTTPException(404, "No such user")
-    if not u.self_registered: raise HTTPException(400, "Only self-registered people have a plan. Students your college added already use the college's AI.")
+    if not (u.self_registered or added_pupil(u)): raise HTTPException(400, "Only self-registered people and school students have a plan. Students your college added already use the college's AI.")
     if b.end: u.pro_until = None; s.commit(); return urow(u, None)
     if b.days is not None:
         if not 1 <= b.days <= 3660: raise HTTPException(400, "Choose between 1 day and 10 years")
@@ -3273,7 +3330,7 @@ def rewards(s, uid):
 @app.get("/api/me/profile")
 def my_profile(u: User = Depends(me), s: Session = Depends(db)):
     pr = s.get(Program, u.program_id) if u.program_id else None
-    return {"name": u.name, "email": u.email, "role": u.role, "lang": u.lang or "en", "program": pr.name if pr else "", "semester": u.semester, "term": term_label(pr) if pr else "",
+    return {"name": u.name, "email": u.email, "username": u.username, "role": u.role, "lang": u.lang or "en", "program": pr.name if pr else "", "semester": u.semester, "term": term_label(pr) if pr else "",
             "self_registered": bool(u.self_registered), "ai": plan_json(u, s), **({"rewards": rewards(s, u.id)} if u.role == "student" else {})}
 def own_key(u): return bool(u.self_registered and u.ai_key)  # paying with their own DeepSeek key: outside the college's allowance
 def egress(s, u, kind, topic_id, chars, ok, tokens=0):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request

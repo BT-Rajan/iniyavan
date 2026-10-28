@@ -1220,10 +1220,10 @@ function Profile({toast,onPassword,onKey}){
   if(!d)return <><Bar title={tl("My profile")}/><div className="main"><Skeleton/></div></>
   const r=d.rewards,src={search:tl("Search"),doubt:tl("Not clear?"),line:tl("Highlight")}
   return <><Bar title={tl("My profile")}/><div className="main">
-    <div className="card profcard"><span className="av big" aria-hidden="true">{initials(d.name)}</span><div><b>{d.name}</b><span>{d.email}</span>
+    <div className="card profcard"><span className="av big" aria-hidden="true">{initials(d.name)}</span><div><b>{d.name}</b><span>{d.email||d.username}</span>
       <span>{tl(cap(d.role))}{d.program?' · '+d.program+(d.semester?' · '+tl('{term} {n}',{term:d.term,n:d.semester}):''):''}</span></div></div>
     <div className="two"><button className="btn ghost" onClick={onPassword}>{tl("Change password")}</button>{d.self_registered&&<button className="btn ghost" onClick={onKey}>{tl("My AI key")}</button>}</div>
-    {d.self_registered&&<PlanCard toast={toast} onKey={onKey}/>}
+    {(d.self_registered||d.role==='student')&&<PlanCard toast={toast} onKey={onKey}/>}
     {r&&<><h3 className="sec">{tl("Rewards")}</h3>
       <div className="qbox rewards"><div className="rwtop"><b className="rwpts">{r.points.toLocaleString()}</b><span>{tl("points")}</span></div>
         <p className="known" style={{margin:'6px 0'}}>{tl("Other students were shown answers your questions brought {n} times.",{n:r.uses.toLocaleString()})}</p>
@@ -1713,7 +1713,7 @@ function PlanCard({toast,onKey}){
     {p.plan==='lite'&&<><p className="known" style={{margin:'4px 0 0'}}>{tl("Free each day: {s} AI searches and {m} minutes of learning with AI. Saved answers never count.",{s:p.searches_limit,m:p.minutes_limit})}</p>
       {meter(p.searches_used,p.searches_limit,tl("Searches today: {n} of {max}",{n:p.searches_used,max:p.searches_limit}))}
       {meter(p.minutes_used,p.minutes_limit,tl("Minutes today: {n} of {max}",{n:p.minutes_used,max:p.minutes_limit}))}
-      <div className="two" style={{marginTop:10}}><button className="btn ghost" onClick={onKey}>{tl("Use my own AI key")}</button>
+      <div className="two" style={{marginTop:10}}>{p.own_key&&<button className="btn ghost" onClick={onKey}>{tl("Use my own AI key")}</button>}
         {p.asked?<button className="btn ghost" disabled>{tl("Asked your admin")}</button>:<button className="btn ghost" onClick={()=>setAsking(true)}>{tl("Ask my admin for more")}</button>}</div></>}</div>
     {asking&&<Sheet close={()=>setAsking(false)}><h3>{tl("Ask for more AI")}</h3><p className="known">{tl("Your admin can give you more for a while. Say why if you like.")}</p>
       <label htmlFor="mnote">{tl("Note (optional)")}</label><input id="mnote" value={note} maxLength={300} onChange={e=>setNote(e.target.value)} placeholder={tl("Exams next week")}/>
@@ -1734,8 +1734,8 @@ function UserDetail({id,me,progs,back,toast}){
   return <><Bar title={u.name} sub={u.email} back={back}/><div className="main">
     <div className="stats"><div className="stat"><b>{u.topics_read}</b>{tl("Topics read")}</div><div className="stat"><b>{u.reads}</b>{tl("Total reads")}</div></div>
     <h3 className="sec">{tl("Profile")}</h3>
-    {row(roleName(u),'Role')}{u.username&&row(u.username,tl("Username"))}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(planLine(u),'AI plan')}</>}{row(day(u.last_active),'Last active')}
-    {u.self_registered&&<ProControl u={u} toast={toast} done={load}/>}
+    {row(roleName(u),'Role')}{u.username&&row(u.username,tl("Username"))}{row(u.active?'Active':'Disabled','Status')}{row(u.program||'Not set','Program')}{row(u.semester||'Not set',termOf(progs,u.program_id))}{u.self_registered&&<>{row(u.institution||'—','Institution')}{row(u.id_number||'—','ID number')}{row(u.phone||'—','Phone')}{row(planLine(u),'AI plan')}</>}{!u.self_registered&&(u.plan==='lite'||u.plan==='pro')&&row(planLine(u),'AI plan')}{row(day(u.last_active),'Last active')}
+    {(u.self_registered||u.plan==='lite'||u.plan==='pro')&&<ProControl u={u} toast={toast} done={load}/>}
     {u.role==='faculty'&&<><h3 className="sec">{tl("Courses they own")}</h3>{(u.course_ids||[]).length?allCourses.filter(c=>u.course_ids.includes(c.id)).map(c=><div className="row" key={c.id}><div>{c.label}</div></div>):<p className="known">{tl("None yet. They can read published content but edit nothing until they own a course.")}</p>}<button className="btn ghost" onClick={()=>setAsg([...(u.course_ids||[])])}>{tl("Assign courses")}</button></>}
     {(u.links||[]).length>0&&<><h3 className="sec">{u.role==='student'?tl("Parents and teachers"):u.relation==='teacher'?tl("Their students"):tl("Their children")}</h3>
       {u.links.map(x=><div className="row" key={x.id}><div>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}<small>{u.role==='student'?(x.who==='teacher'?tl("Teacher"):tl("Parent")):x.who}</small></div></div>)}</>}
