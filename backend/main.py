@@ -855,8 +855,26 @@ def invite_student(b: InviteIn, u: User = Depends(guardian_only), s: Session = D
         s.add(GuardianLink(guardian_id=u.id, student_id=x.id, status="invited")); s.commit()
     return {"ok": True, "message": f"If a student signs in as {who}, they will see your invitation and can accept it."}  # the same answer either way, so this can't be used to find out who has an account
 @app.delete("/api/guardian/students/{sid}")
-def unlink_student(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):  # stop following a student; their account and progress stay
-    s.delete(my_link(s, u.id, sid)); s.commit(); return {"ok": True}
+def unlink_student(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):
+    """Stop looking after a student. Their progress stays. A child or student with no email (a username account) whom no one else looks after
+    can't manage their account alone, so it is switched off; an admin can switch it back on."""
+    s.delete(my_link(s, u.id, sid)); s.flush(); x = s.get(User, sid); off = False
+    if x and not x.email and not s.query(GuardianLink.id).filter(GuardianLink.student_id == sid).first(): x.active, off = False, True
+    s.commit(); return {"ok": True, "switched_off": off}
+class StudentEditIn(BaseModel): name: str | None = None; program_id: int | None = None; semester: int | None = None
+@app.patch("/api/guardian/students/{sid}")
+def edit_student(sid: int, b: StudentEditIn, u: User = Depends(guardian_only), s: Session = Depends(db)):  # a child's name, program and grade, for a username account
+    if my_link(s, u.id, sid).status != "active": raise HTTPException(403, "The student has not accepted your invitation yet")
+    x = s.get(User, sid)
+    if x.email: raise HTTPException(403, "This student manages their own account.")
+    sent = b.dict(exclude_unset=True)
+    if "name" in sent:
+        name = " ".join((b.name or "").split())
+        if not 2 <= len(name) <= 100: raise HTTPException(400, "Enter each child's name")
+        x.name = name
+    if "program_id" in sent or "semester" in sent:
+        x.program_id, x.semester = check_place(s, u.level or x.level or "school", b.program_id, b.semester)
+    s.commit(); return {"ok": True}
 @app.get("/api/guardian/students/{sid}/progress")
 def student_progress(sid: int, u: User = Depends(guardian_only), s: Session = Depends(db)):  # read-only: per course, topics learned and opened, tests and when they last studied
     if my_link(s, u.id, sid).status != "active": raise HTTPException(403, "The student has not accepted your invitation yet")
@@ -868,7 +886,7 @@ def student_progress(sid: int, u: User = Depends(guardian_only), s: Session = De
         tids, reads, done, last, qids, bests = course_stats(c, [x], s); b = bests[x.id]
         rows.append({"course": c.name, "topics": len(tids), "completed": done[x.id], "opened": reads[x.id], "last_active": utc_iso(last.get(x.id)),
                      "tests": len(qids), "tests_taken": len(b), "test_average": round(sum(b.values()) / len(b)) if b else None})
-    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows, "can_reset": not x.email}  # a username account: no email to reset from
+    return {"name": x.name, "username": x.username, "place": place_line(s, x), "courses": rows, "can_reset": not x.email, "program_id": x.program_id, "semester": x.semester}  # a username account: no email to reset from
 class StudentPwIn(BaseModel): password: str
 @app.put("/api/guardian/students/{sid}/password")
 def set_student_password(sid: int, b: StudentPwIn, u: User = Depends(guardian_only), s: Session = Depends(db)):
@@ -1026,7 +1044,7 @@ USORT = {"name": (func.lower(User.name),), "role": (User.role, func.lower(User.n
          "semester": (func.coalesce(User.semester, 99), func.lower(User.name)), "newest": (User.id.desc(),)}
 def urow(u, prog): return {"id": u.id, "name": u.name, "email": u.email, "role": u.role, "active": u.active, "program_id": u.program_id, "program": prog, "semester": u.semester,
                            "self_registered": bool(u.self_registered), "institution": u.institution, "id_number": u.id_number, "phone": u.phone, "own_ai_key": bool(u.ai_key),
-                           "plan": ai_plan(u), "pro_until": utc_iso(u.pro_until) if pro_active(u) else None}
+                           "plan": ai_plan(u), "pro_until": utc_iso(u.pro_until) if pro_active(u) else None, "relation": u.relation, "username": u.username}
 @app.get("/api/admin/users")
 def users(q: str = "", program_id: int | None = None, semester: int | None = None, role: str = "", order: str = "role", limit: int = 50, offset: int = 0, plan: str = "",
           _: User = Depends(admin), s: Session = Depends(db)):
@@ -1058,7 +1076,10 @@ def user_detail(uid: int, a: User = Depends(admin), s: Session = Depends(db)):
     req = s.query(MoreRequest).filter_by(user_id=uid, done_at=None).order_by(MoreRequest.id.desc()).first()
     return {**urow(u, prog.name if prog else None), "asked": {"at": req.at.isoformat() + "Z", "note": req.note or ""} if req else None, "topics_read": n, "reads": int(reads), "last_active": (last.isoformat() + "Z") if last else None,
             "recent": [{"title": t, "reads": r, "last_read": (l.isoformat() + "Z") if l else None} for t, r, l in recent],
-            "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)]}  # the courses they own
+            "course_ids": [c.id for c in s.query(Course).filter_by(faculty_owner_id=uid).order_by(Course.id)],  # the courses they own
+            "links": [{"id": x.id, "name": x.name, "who": x.relation if u.role == "student" else (x.username or x.email or ""), "status": l.status}  # a guardian's students, or a student's parents and teachers
+                      for l, x in s.query(GuardianLink, User).join(User, User.id == (GuardianLink.guardian_id if u.role == "student" else GuardianLink.student_id))
+                                    .filter((GuardianLink.student_id if u.role == "student" else GuardianLink.guardian_id) == uid).order_by(User.name)]}
 class CoursesIn(BaseModel): course_ids: list[int]
 @app.put("/api/admin/users/{uid}/courses")
 def assign_courses(uid: int, b: CoursesIn, _: User = Depends(admin), s: Session = Depends(db)):  # make uid the owner of exactly these courses

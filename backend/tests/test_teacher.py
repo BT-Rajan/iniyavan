@@ -77,3 +77,28 @@ def test_a_parent_or_teacher_sets_a_new_password_for_a_username_account(env):
     o = h(env, "old@x.com"); lid = env.c.get("/api/me/invitations", headers=o).json()["invitations"][0]["id"]; env.c.post(f"/api/me/invitations/{lid}/accept", headers=o)
     r = env.c.put(f"/api/guardian/students/{i['old']}/password", headers=t, json={"password": "newpass123"})
     assert r.status_code == 403 and "own email" in r.json()["detail"] and env.c.get(f"/api/guardian/students/{i['old']}/progress", headers=t).json()["can_reset"] is False
+
+def test_a_parent_edits_a_childs_grade_and_removing_switches_the_account_off(env):
+    i = setup(); m = h(env, "mum@x.com")
+    env.c.post("/api/guardian/students", headers=m, json={"students": [STU("Kavin", "kavin", program_id=i["sch"], semester=6)]})
+    with Session_() as s: k = s.query(User).filter_by(username="kavin").one().id
+    assert env.c.patch(f"/api/guardian/students/{k}", headers=m, json={"name": "Kavin R"}).status_code == 200
+    assert env.c.patch(f"/api/guardian/students/{k}", headers=m, json={"program_id": i["sch"], "semester": 9}).status_code == 400  # no Grade 9 here
+    assert env.c.patch(f"/api/guardian/students/{k}", headers=m, json={"program_id": None, "semester": None}).status_code == 200  # "not listed": an admin places them
+    with Session_() as s: x = s.get(User, k); assert (x.name, x.program_id, x.semester) == ("Kavin R", None, None)
+    assert env.c.patch(f"/api/guardian/students/{k}", headers=h(env, "rani@school.in"), json={"name": "X"}).status_code == 404  # not her student
+    assert env.c.patch(f"/api/guardian/students/{i['old']}", headers=m, json={"name": "X"}).status_code == 404
+    r = env.c.delete(f"/api/guardian/students/{k}", headers=m).json(); assert r["switched_off"] is True
+    with Session_() as s: assert s.get(User, k).active is False  # nobody looks after a username account any more
+    assert env.c.post("/api/login", json={"email": "kavin", "password": "classpass1"}).status_code == 403
+
+def test_a_student_with_their_own_email_stays_on_and_admins_see_the_links(env):
+    i = setup(); t = h(env, "rani@school.in"); env.c.post("/api/guardian/invite", headers=t, json={"login": "old@x.com"})
+    o = h(env, "old@x.com"); lid = env.c.get("/api/me/invitations", headers=o).json()["invitations"][0]["id"]; env.c.post(f"/api/me/invitations/{lid}/accept", headers=o)
+    assert env.c.patch(f"/api/guardian/students/{i['old']}", headers=t, json={"name": "X"}).status_code == 403  # they manage their own account
+    with Session_() as s: tid = s.query(User).filter_by(email="rani@school.in").one().id
+    a = env.c.get(f"/api/admin/users/{tid}", headers=env.admin).json()
+    assert (a["role"], a["relation"], [(x["name"], x["who"], x["status"]) for x in a["links"]]) == ("guardian", "teacher", [("Old Student", "old@x.com", "active")])
+    b = env.c.get(f"/api/admin/users/{i['old']}", headers=env.admin).json(); assert [(x["name"], x["who"]) for x in b["links"]] == [("Ms Rani", "teacher")]
+    assert env.c.delete(f"/api/guardian/students/{i['old']}", headers=t).json()["switched_off"] is False
+    with Session_() as s: assert s.get(User, i["old"]).active is True

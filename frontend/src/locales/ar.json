@@ -1872,5 +1872,17 @@
 "They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.": "يسجّل الدخول باسم مستخدم، فلا يوجد بريد إلكتروني لإعادة تعيينها منه. عيّن كلمة مرور جديدة هنا وأخبره بها.",
 "Set a new password": "تعيين كلمة مرور جديدة",
 "Sign in with a username? Ask your parent or teacher to set a new password for you.": "تسجّل الدخول باسم مستخدم؟ اطلب من وليّ أمرك أو معلّمك تعيين كلمة مرور جديدة لك.",
-"This student has their own email and can reset their password from the sign-in page.": "لدى هذا الطالب بريده الإلكتروني الخاص ويمكنه إعادة تعيين كلمة المرور من صفحة تسجيل الدخول."
+"This student has their own email and can reset their password from the sign-in page.": "لدى هذا الطالب بريده الإلكتروني الخاص ويمكنه إعادة تعيين كلمة المرور من صفحة تسجيل الدخول.",
+"Teacher": "معلّم",
+"Parent": "وليّ أمر",
+"Parents and teachers": "أولياء الأمور والمعلمون",
+"Their students": "طلابه",
+"Their children": "أطفاله",
+"Email (optional)": "البريد الإلكتروني (اختياري)",
+"Remove {name}?": "إزالة {name}؟",
+"Their progress stays. If no other parent or teacher looks after them, their account is switched off, since they have no email of their own. An admin can switch it back on.": "يبقى تقدّمه. إذا لم يكن هناك وليّ أمر أو معلّم آخر يتابعه، يُوقف حسابه لأنه لا يملك بريدًا إلكترونيًا خاصًا به. يمكن للمسؤول إعادة تشغيله.",
+"Removed": "تمت الإزالة",
+"Change their name or grade": "تغيير الاسم أو الصف",
+"Remove {name} from my list": "إزالة {name} من قائمتي",
+"This student manages their own account.": "هذا الطالب يدير حسابه بنفسه."
 }

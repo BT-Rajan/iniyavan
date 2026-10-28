@@ -1872,5 +1872,17 @@
 "They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.": "அவர்கள் பயனர்பெயருடன் உள்நுழைவதால், மீட்டமைக்க மின்னஞ்சல் இல்லை. இங்கே புதியதை அமைத்து அவர்களிடம் சொல்லுங்கள்.",
 "Set a new password": "புதிய கடவுச்சொல்லை அமை",
 "Sign in with a username? Ask your parent or teacher to set a new password for you.": "பயனர்பெயருடன் உள்நுழைகிறீர்களா? புதிய கடவுச்சொல்லை அமைக்க உங்கள் பெற்றோர் அல்லது ஆசிரியரிடம் கேளுங்கள்.",
-"This student has their own email and can reset their password from the sign-in page.": "இந்த மாணவருக்குச் சொந்த மின்னஞ்சல் உள்ளது; உள்நுழைவுப் பக்கத்திலிருந்து கடவுச்சொல்லை மீட்டமைக்கலாம்."
+"This student has their own email and can reset their password from the sign-in page.": "இந்த மாணவருக்குச் சொந்த மின்னஞ்சல் உள்ளது; உள்நுழைவுப் பக்கத்திலிருந்து கடவுச்சொல்லை மீட்டமைக்கலாம்.",
+"Teacher": "ஆசிரியர்",
+"Parent": "பெற்றோர்",
+"Parents and teachers": "பெற்றோர் மற்றும் ஆசிரியர்கள்",
+"Their students": "அவர்களின் மாணவர்கள்",
+"Their children": "அவர்களின் குழந்தைகள்",
+"Email (optional)": "மின்னஞ்சல் (விருப்பத்தேர்வு)",
+"Remove {name}?": "{name} அவர்களை நீக்கவா?",
+"Their progress stays. If no other parent or teacher looks after them, their account is switched off, since they have no email of their own. An admin can switch it back on.": "அவர்களின் முன்னேற்றம் அப்படியே இருக்கும். வேறு பெற்றோர் அல்லது ஆசிரியர் அவர்களைக் கவனிக்கவில்லையெனில், சொந்த மின்னஞ்சல் இல்லாததால் அவர்களின் கணக்கு முடக்கப்படும். நிர்வாகி மீண்டும் இயக்கலாம்.",
+"Removed": "நீக்கப்பட்டது",
+"Change their name or grade": "பெயர் அல்லது வகுப்பை மாற்று",
+"Remove {name} from my list": "{name} அவர்களை என் பட்டியலிலிருந்து நீக்கு",
+"This student manages their own account.": "இந்த மாணவர் தங்கள் கணக்கைத் தாமே நிர்வகிக்கிறார்."
 }
