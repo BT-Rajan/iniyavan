@@ -3195,11 +3195,13 @@ def lite_tick(s, u):  # counts the current minute once, however many requests or
     if r.last_min != m: r.minutes = (r.minutes or 0) + 1; r.last_min = m
     s.commit(); return r
 LITE_MORE = " Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
-def lite_search_or_fail(u, s):
+def lite_search_left(u, s):  # before asking: is a free search left today? Nothing is used up yet
     if ai_plan(u) != "lite": return
     r = lite_row(s, u); limit = lite_limits(s)[0]
     if (r.searches or 0) >= limit: raise HTTPException(429, f"You have used today's {limit} free AI searches." + LITE_MORE)
-    r.searches = (r.searches or 0) + 1; s.commit()
+def lite_search_used(u, s):  # after the AI has answered: a saved answer, a failed call or a timeout never uses one up
+    if ai_plan(u) != "lite": return
+    r = lite_row(s, u); r.searches = (r.searches or 0) + 1; s.commit()
 def lite_time_or_fail(u, s):
     if ai_plan(u) != "lite": return
     r = lite_row(s, u); limit = lite_limits(s)[1]
@@ -3494,7 +3496,7 @@ async def doubt_ask(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = De
     """Step two, only when the app's own copy did not clear it up: the AI gets the program, semester, course and topic names and the phrase. Not the topic's text, not the student's notes."""
     t = doubt_topic(tid, u, s); phrase = doubt_phrase(b)
     if crisis(phrase): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}
-    key = key_or_fail(u, s); lite_search_or_fail(u, s); prompt, qh = doubt_key(u, t, phrase, s)
+    key = key_or_fail(u, s); lite_search_left(u, s); prompt, qh = doubt_key(u, t, phrase, s)
     hit = s.query(DoubtAnswer).filter_by(qhash=qh).first()
     if hit: hit.hits += 1; s.commit(); note_use(s, u, "doubt", hit.id, hit.author_id); return {"text": hit.text, "cached": True}
     if not is_staff(u) and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind == "doubt", AIEgress.ok == True, AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= DOUBT_DAILY:  # noqa: E712
@@ -3502,6 +3504,7 @@ async def doubt_ask(tid: int, b: DoubtIn, u: User = Depends(me), s: Session = De
     f = full(t, s)
     msg = f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nTopic: {f['title']}\n\nThe student does not understand this phrase:\n{phrase}"
     text, tokens = await ask_ai(u, s, key, prompt, msg, max_tokens=500, kind="doubt", topic_id=tid)
+    lite_search_used(u, s)
     try: s.add(DoubtAnswer(qhash=qh, topic_id=tid, phrase=phrase[:300], text=text, tokens=tokens, author_id=author_of(u))); s.commit()
     except Exception: s.rollback()
     return {"text": text, "cached": False}
@@ -3545,8 +3548,8 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
     if not is_staff(u) and s.query(func.count(AIEgress.id)).filter(AIEgress.user_id == u.id, AIEgress.kind.in_(("photo", "vision")), AIEgress.ok == True,  # noqa: E712
                                                                     AIEgress.at >= dt.datetime.utcnow() - dt.timedelta(hours=24)).scalar() >= PHOTO_DAILY:
         raise HTTPException(429, f"You have used today's {PHOTO_DAILY} photo questions. Try again tomorrow.")
-    if not see: key_or_fail(u, s)  # before counting a lite search, so a missing key doesn't use one up
-    lite_search_or_fail(u, s)
+    if not see: key_or_fail(u, s)
+    lite_search_left(u, s)
     who = ""
     if u.role == "student" and u.program_id:
         pr = s.get(Program, u.program_id); who = f"Student's program: {pr.name if pr else ''}" + (f", {term_label(pr)} {u.semester}" if u.semester else "") + "\n"
@@ -3558,9 +3561,9 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
         except Exception as e:
             egress(s, u, "vision", None, size, False); log.warning("Claude call failed: %s", type(e).__name__)
             raise ai_down(u, "Claude did not answer. Check the Claude key and model under Settings." if isinstance(e, anthropic.APIStatusError) else "Claude did not answer.")
-        egress(s, u, "vision", None, size, True, _t); return {"text": out, "via": "claude"}
+        egress(s, u, "vision", None, size, True, _t); lite_search_used(u, s); return {"text": out, "via": "claude"}
     out, _t = await ask_ai(u, s, key_or_fail(u, s), prompt, msg, max_tokens=900, kind="photo")
-    return {"text": out, "via": "deepseek"}
+    lite_search_used(u, s); return {"text": out, "via": "deepseek"}
 @app.get("/api/admin/budget")
 def budget_status(_: User = Depends(admin), s: Session = Depends(db)):
     out = {p: budget(s, p) for p in ("deepseek", "claude")}
@@ -3664,7 +3667,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
     q = " ".join(b.q.split())
     if not 2 <= len(q) <= 200: raise HTTPException(400, "Type what you want to look up (2 to 200 characters)")
     if crisis(q): return {"text": SUPPORT.get(u.lang or "en", SUPPORT["en"]), "cached": False, "support": True}  # answered with care at once: no AI, nothing saved or logged
-    key = key_or_fail(u, s); lite_search_or_fail(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
+    key = key_or_fail(u, s); lite_search_left(u, s); prompt = in_lang(u, prompt_for(s, "search")); qh = hashlib.sha256("|".join(["search", GUARD_VERSION, q.lower(), prompt]).encode()).hexdigest()
     if not b.refresh:
         hit = s.query(SearchAnswer).filter_by(qhash=qh).first()
         if hit: hit.hits += 1; s.commit(); note_use(s, u, "search", hit.id, hit.author_id); return {"text": hit.text, "cached": True, "id": hit.id}
@@ -3675,6 +3678,7 @@ async def search_ai(b: SearchAIIn, u: User = Depends(me), s: Session = Depends(d
         pr = s.get(Program, u.program_id); who = f"Student's program: {pr.name if pr else ''}" + (f", {term_label(pr)} {u.semester}" if u.semester else "") + "\n"
     msg = who + f"Search: {q}" + ("\n\nThe student was not satisfied with the first answer or the topics the app found. Give a fresh, clearer and more complete explanation from a different angle." if b.refresh else "")
     text, tokens = await ask_ai(u, s, key, prompt, msg, kind="search")
+    lite_search_used(u, s)
     s.add(SearchLog(user_id=u.id, refresh=b.refresh, query=q[:200], tokens=tokens))
     saved = None
     if not b.refresh:  # a recheck is the student asking for something different, so it is not saved for others

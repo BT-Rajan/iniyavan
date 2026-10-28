@@ -64,3 +64,15 @@ def test_the_admin_sets_the_free_allowance(env):
     assert env.c.put("/api/admin/settings", headers=env.admin, json={"lite_searches": 15, "lite_minutes": 30}).status_code == 200
     assert env.c.get("/api/admin/settings", headers=env.admin).json()["lite"] == {"searches": 15, "minutes": 30}
     assert env.c.put("/api/admin/settings", headers=env.admin, json={"lite_minutes": -1}).status_code == 400
+
+def test_a_saved_answer_or_a_failed_ai_call_uses_no_free_search(env, monkeypatch):
+    from tests.test_ai import FakeClient
+    ai_env(env, monkeypatch); h, uid = lite_person(env); set_limits(2, 20)
+    assert ask(env, "What is hard water?").status_code == 200  # a college student's question: now saved for everyone
+    assert ask(env, "what is HARD water?", h=h).json()["cached"] is True
+    assert env.c.get("/api/me/plan", headers=h).json()["searches_used"] == 0  # a saved answer costs nothing
+    FakeClient.mode = "boom"; assert ask(env, "Why does soap not lather?", h=h).status_code >= 500
+    FakeClient.mode = "500"; assert ask(env, "Why does soap not lather?", h=h).status_code >= 500
+    assert env.c.get("/api/me/plan", headers=h).json()["searches_used"] == 0  # nor does an AI call that failed
+    FakeClient.mode = "ok"; assert ask(env, "Why does soap not lather?", h=h).json()["cached"] is False
+    assert env.c.get("/api/me/plan", headers=h).json()["searches_used"] == 1
