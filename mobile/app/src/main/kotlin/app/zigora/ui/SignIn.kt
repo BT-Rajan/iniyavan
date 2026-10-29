@@ -309,11 +309,15 @@ fun ChangePassword(forced: Boolean, back: (() -> Unit)? = null, done: () -> Unit
     }
 }
 
-/** the server's root address for what someone typed: with no http(s):// both are tried, https first; any path (like /app/) is dropped */
+/** the server's address for what someone typed: with no http(s):// both are tried, https first. The site's folder is kept (apps.perennia.org/zigora,
+ *  for a server with BASE_PATH); the app's own part of a copied link (/app/..., #reset=...) is dropped */
 fun serverCandidates(typed: String): List<String> {
     val t = typed.trim()
     val withScheme = if (t.startsWith("http://", true) || t.startsWith("https://", true)) listOf(t) else listOf("https://$t", "http://$t")
     return withScheme.mapNotNull { u ->
-        runCatching { java.net.URI(u) }.getOrNull()?.takeIf { !it.host.isNullOrEmpty() }?.let { "${it.scheme.lowercase()}://${it.host}" + if (it.port != -1) ":${it.port}" else "" }
+        runCatching { java.net.URI(u) }.getOrNull()?.takeIf { !it.host.isNullOrEmpty() }?.let {
+            val folder = (it.rawPath ?: "").replace(Regex("/app(/.*)?$"), "").trimEnd('/').takeIf { f -> Regex("(/[A-Za-z0-9._~-]+)*").matches(f) } ?: ""
+            "${it.scheme.lowercase()}://${it.host}" + (if (it.port != -1) ":${it.port}" else "") + folder
+        }
     }.distinct()
 }

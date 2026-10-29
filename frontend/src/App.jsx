@@ -1,6 +1,7 @@
 import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,Fragment,isValidElement,memo} from 'react'
 import {createPortal} from 'react-dom'
 import {Md,Body} from './content.jsx'
+import {ROOT,at} from './base.js'
 import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
@@ -17,7 +18,7 @@ import './highlighter.js'
 import {t as tl,L,LANGS,locale,applyLang,firstLang,loadLang,srv,getLang} from './i18n.js'
 
 const api=async(p,o={})=>{const t=localStorage.t
-  const r=await fetch('/api'+p,{...o,headers:{'Content-Type':'application/json',...(t&&{Authorization:'Bearer '+t})},body:o.body&&JSON.stringify(o.body)})
+  const r=await fetch(ROOT+'/api'+p,{...o,headers:{'Content-Type':'application/json',...(t&&{Authorization:'Bearer '+t})},body:o.body&&JSON.stringify(o.body)})
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(typeof j.detail==='string'?srv(j.detail):tl('Something went wrong'));return j}  // the server's messages are looked up like any other text
 const TEMPLATE=`program,semester,course,unit,topic,content,question_pattern,sample_content,guideline
 B.E. Mechanical Engineering,Semester 3,Thermodynamics,Unit 1: Basic concepts,First law of thermodynamics,"Energy can change form but is never created or destroyed.","2 marks: define. 13 marks: derive and solve a numerical.","Q: State the first law for a closed system.","Introduction, labelled diagram, steps, units, conclusion"
@@ -42,7 +43,7 @@ const readTheme=()=>{try{return localStorage.theme||'system'}catch{return 'syste
 const applyTheme=t=>{const r=document.documentElement;if(t==='light'||t==='dark')r.dataset.theme=t;else delete r.dataset.theme;const dark=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);document.querySelector('meta[name=theme-color]')?.setAttribute('content',dark?'#120e17':'#f6f4f7')}
 // the Zigora mark: a Z in cream and coral on plum (the same drawing as public/favicon.svg)
 const ZMark=({size=40})=><svg className="zmark" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#722f99"/><rect x="16" y="15" width="32" height="8" rx="2.5" fill="#fee7c8"/><path d="M38.5 23H48L25.5 41H16Z" fill="#ff9292"/><rect x="16" y="41" width="32" height="8" rx="2.5" fill="#fee7c8"/></svg>
-const Logo=({src,size=40})=>src?<img className="logo" src={src} alt="" width={size} height={size} style={{width:size,height:size}}/>:<ZMark size={size}/>
+const Logo=({src,size=40})=>src?<img className="logo" src={at(src)} alt="" width={size} height={size} style={{width:size,height:size}}/>:<ZMark size={size}/>
 const Lockup=({logo,name,size=40})=><div className="lockup"><Logo src={logo} size={size}/><b>{name}</b></div>
 // sign-in, reset and first-password pages: the form, with a brand panel beside it on wide screens
 // the language switch: English, Arabic (the whole app turns right to left) or Tamil
@@ -668,17 +669,17 @@ function AdaptCard({toast}){
     <p className="known" style={{margin:'8px 0 0'}}>{tl("It learns only from the steps you open and your own “I had it” / “Not quite”. Your teachers never see this.")}</p>
     {(taps>0||d.checks>0)&&<button className="btn ghost" onClick={reset}>{tl("Start fresh")}</button>}</div></>}
 
-const uploadImg=async f=>{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':f.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));return j.url}
+const uploadImg=async f=>{const r=await fetch(ROOT+'/api/uploads',{method:'POST',headers:{'Content-Type':f.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));return j.url}
 // one image place on a question or an answer: shows the image, the file the CSV asked for, or a small "Add image" button
 function ImgSlot({url,need,label,onSet,toast,small}){
   const ref=useRef(),[busy,setBusy]=useState(false)
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;setBusy(true);try{onSet(await uploadImg(f))}catch(x){toast(x.message)}setBusy(false)}
   const input=<input ref={ref} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={pick}/>
-  if(url)return <div className={'islot'+(small?' sm':'')}>{input}<img src={url} alt={label}/><span><button className="tool" onClick={()=>ref.current.click()}>{tl("Replace")}</button><button className="tool" onClick={()=>onSet('')}>{tl("Remove image")}</button></span></div>
+  if(url)return <div className={'islot'+(small?' sm':'')}>{input}<img src={at(url)} alt={label}/><span><button className="tool" onClick={()=>ref.current.click()}>{tl("Replace")}</button><button className="tool" onClick={()=>onSet('')}>{tl("Remove image")}</button></span></div>
   if(need)return <div className="islot need" role="status">{input}<AlertTriangle size={16}/><span>{tl("Needs")}{" "}<b>{need}</b></span><button className="tool" disabled={busy} onClick={()=>ref.current.click()}>{busy?tl("Uploading…"):tl("Upload")}</button><button className="tool" onClick={()=>onSet('',true)}>{tl("Skip")}</button></div>
   return <>{input}<button className="tool" disabled={busy} onClick={()=>ref.current.click()} aria-label={tl("Add image to {label}",{label:label})}>{busy?tl("Uploading…"):small?tl("Image"):tl("Add image")}</button></>}
-const QImg=({src,alt})=>src?<img className="qimg" src={src} alt={alt} loading="lazy"/>:null
-const OptBody=({text,img,k})=><span className="obody">{img&&<img src={img} alt={tl("Answer {k}",{k:LET[k]})}/>}{text?<Md>{text}</Md>:!img&&<span>—</span>}</span>
+const QImg=({src,alt})=>src?<img className="qimg" src={at(src)} alt={alt} loading="lazy"/>:null
+const OptBody=({text,img,k})=><span className="obody">{img&&<img src={at(img)} alt={tl("Answer {k}",{k:LET[k]})}/>}{text?<Md>{text}</Md>:!img&&<span>—</span>}</span>
 const LET='ABCDEF'
 function QuizPlay({id,back,toast,role}){
   const [q,setQ]=useState(null),[ans,setAns]=useState([]),[res,setRes]=useState(null),[busy,setBusy]=useState(false),[topic,setTopic]=useState(null),[view,setView]=useState(null)
@@ -1052,7 +1053,7 @@ function StudyWizard({id,toast,back,done}){
   useEffect(()=>{load()},[id]);usePoll(!!c?.reading,()=>api('/study/courses/'+id).then(d=>setC(d)).catch(()=>{}))  // only the file list refreshes; the step and outline stay
   if(!c||step==null)return <><Bar title={tl("Set up your course")} back={back}/><div className="main"><Skeleton/></div></>
   const files=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs){if(tooBig(f)){toast(tl("{name} is over {MAX_FILE_MB} MB. Split it into smaller files.",{name:f.name,MAX_FILE_MB:MAX_FILE_MB}));continue}setBusy(tl("Reading {name}…",{name:f.name}))
-      try{const r=await fetch(`/api/study/courses/${id}/files?name=${encodeURIComponent(f.name)}`,{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));toast(j.status==='reading'?tl("{name} is scanned pages. Reading them now…",{name:f.name}):tl("{name}: {n} read",{name:f.name,n:pl(j.words,'word')}))}catch(x){toast(f.name+': '+x.message)}}
+      try{const r=await fetch(ROOT+`/api/study/courses/${id}/files?name=${encodeURIComponent(f.name)}`,{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));toast(j.status==='reading'?tl("{name} is scanned pages. Reading them now…",{name:f.name}):tl("{name}: {n} read",{name:f.name,n:pl(j.words,'word')}))}catch(x){toast(f.name+': '+x.message)}}
     setBusy('');load(1)}
   const paste=async()=>{setBusy('Adding…');try{const r=await api(`/study/courses/${id}/text`,{method:'POST',body:{text}});setText('');toast(tl("{n} added",{n:pl(r.words,'word')}))}catch(e){toast(e.message)}setBusy('');load(1)}
   const dropSrc=async i=>{if(!await confirm({title:tl("Remove this material?"),body:tl("Its text is taken out of the course. Any outline already made is cleared."),ok:tl("Remove"),danger:true}))return;try{await api(`/study/courses/${id}/sources/${i}`,{method:'DELETE'});load(1)}catch(e){toast(e.message)}}
@@ -1531,7 +1532,7 @@ function Reader({t,auto,toast,onList,close}){
       <button className={'tool rhl'+(panel?' on':'')} aria-expanded={panel} onClick={()=>setPanel(!panel)}><Highlighter size={15}/> {list?.length||0}<span className="rlab">{" "}{tl("highlight")}{list?.length===1?'':'s'}</span></button>
       <button className="ic" aria-label={fs?tl("Exit full screen"):tl("Full screen")} title={fs?tl("Exit full screen"):tl("Full screen")} onClick={toggleFs}>{fs?<Minimize2 size={19}/>:<Maximize2 size={19}/>}</button></div>
     <div className="rmain">
-      {inter?(ready&&<iframe ref={frame} className="rframe" title={t.title} src={t.frame_url} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"/>)
+      {inter?(ready&&<iframe ref={frame} className="rframe" title={t.title} src={at(t.frame_url)} sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-forms allow-downloads"/>)
         :<div className="rscroll"><div className="prose rtext" ref={box}>{ready?<Content text={t.content} format={t.content_format}/>:<Skeleton/>}</div></div>}
       {doubt&&<aside className="rpanel" aria-label={tl("Not clear?")}><DoubtBox tid={t.id} phrase={doubt} close={()=>setDoubt(null)} toast={toast}/></aside>}
       {!doubt&&panel&&<aside className="rpanel" aria-label={tl("Your highlights")}><b>{tl("Your highlights")}</b><p className="known">{tl("Select text and pick a colour. Tap a highlight to change its colour, add a note or remove it.")}</p>
@@ -1580,7 +1581,7 @@ function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a
       setF(cur=>({...cur,...['title','content','content_format','question_pattern','sample_content','guideline'].reduce((o,k)=>r[k]!==undefined?{...o,[k]:r[k]}:o,{}),...(r.published!==undefined?{published:r.published}:{}),...(r.learning_due_at?{due:r.learning_due_at}:{})}))
       setFromFiles({names:[...htmlF,...cfgF].map(x=>x.name),warnings:r.warnings,images:r.images_saved+imgs.length});setPrev(!!r.content&&['html','interactive'].includes(r.content_format));toast(tl("Filled from {v}. Check it, then save.",{v:[...htmlF,...cfgF].map(x=>x.name).join(' and ')}))}catch(er){toast(er.message)}setBusy(false)}
   const pickImg=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;if(file.size>3*1024*1024)return toast(tl("Image is too large. Keep it under 3 MB."))
-    setUp(true);try{const r=await fetch('/api/uploads',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:file});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Upload failed')
+    setUp(true);try{const r=await fetch(ROOT+'/api/uploads',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:file});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Upload failed')
       const pos=taRef.current?.selectionStart??f.content.length,tag=html||inter?`\n<p><img src="${d.url}" alt="Describe the image"></p>\n`:`\n\n![Describe the image](${d.url})\n\n`;setF({...f,content:f.content.slice(0,pos)+tag+f.content.slice(pos)});toast(tl("Image added"))}catch(er){toast(er.message)}setUp(false)}
   const all=tree.flatMap(p=>p.semesters.flatMap(s=>s.courses.filter(c=>!c.shared&&c.editable).flatMap(c=>c.units.map(n=>({...n,course_id:c.id,label:`${c.name} › ${n.name}`})))))
   const units=role==='admin'?all:all.filter(n=>n.course_id===cid)  // faculty move a topic only between units of its own course
@@ -1599,7 +1600,7 @@ function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a
     <label>{tl("Topic content")}</label><div className="seg" style={{gridTemplateColumns:'1fr 1fr 1fr',margin:'0 0 8px'}} role="group" aria-label={tl("Content format")}>{[['markdown',tl("Markdown")],['html',tl("HTML")],['interactive',tl("HTML + JavaScript")]].map(([k,l])=><button key={k} type="button" className={f.content_format===k?'on':''} aria-pressed={f.content_format===k} onClick={()=>setF({...f,content_format:k})}>{l}</button>)}</div>
     <div className="tools"><button type="button" disabled={up} onClick={()=>fileRef.current.click()}>{up?tl("Uploading…"):tl("Add image")}</button><button type="button" onClick={()=>setPrev(!prev)}>{prev?tl("Back to editing"):tl("Preview")}</button></div>
     <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" onChange={pickImg}/>
-    {prev&&inter?(f.content?(frameUrl?<iframe className="pframe" title={tl("Preview")} src={frameUrl} sandbox="allow-scripts allow-popups allow-modals allow-forms"/>:<Skeleton/>):<div className="prose"><Md>{tl("Nothing to preview yet.")}</Md></div>)
+    {prev&&inter?(f.content?(frameUrl?<iframe className="pframe" title={tl("Preview")} src={at(frameUrl)} sandbox="allow-scripts allow-popups allow-modals allow-forms"/>:<Skeleton/>):<div className="prose"><Md>{tl("Nothing to preview yet.")}</Md></div>)
       :prev?<div className="prose">{!f.content?<Md>{tl("Nothing to preview yet.")}</Md>:html?<Body text={shown} format="html"/>:<Md>{f.content}</Md>}</div>:<textarea ref={taRef} className={html||inter?'code':''} placeholder={html||inter?tl("HTML (or choose an HTML file above)"):tl("Paste notes or syllabus text")} value={f.content} onChange={set('content')}/>}
     <p className="known">{inter?tl("The page runs as it is, with its own scripts and styles, in a sandbox: it can't reach the app or anyone's account (so it also can't keep data in the browser between visits). Students open it full screen and can highlight its text."):html?tl("HTML content shows as it is laid out in the file. Scripts, styles, forms and outside frames are removed when you save, so the page takes the app's look in light and dark mode."):tl("Equations: $x^2$ inline. For a centred block, put $$ on its own line above and below the equation. Chemistry: $\\ce{CaCO3 + CO2 + H2O -> Ca(HCO3)2}$")}</p>{T('question_pattern','Question pattern','e.g. 2 marks: define · 13 marks: derive + numerical')}
     <label>{tl("Learning deadline")}</label><div className="qopt"><input type="datetime-local" aria-label={tl("Learning deadline")} value={f.due} onChange={set('due')}/>{f.due&&<button type="button" className="tool" onClick={()=>setF({...f,due:''})}>{tl("No deadline")}</button>}</div>
@@ -1627,7 +1628,7 @@ function MyMaterial({cid,name,back,toast}){  // a student's own material, filed 
   const base=`/courses/${cid}/my-material`,load=()=>api(base).then(setV).catch(e=>{toast(e.message);back()})
   useEffect(()=>{load()},[cid]);usePoll(!!v?.reading,()=>api(base).then(setV).catch(()=>{}))
   const run=async(label,fn,msg)=>{setBusy(label);try{const r=await fn();if(r&&r.syllabus)setV(r);else await load();msg&&toast(tl(msg))}catch(e){toast(e.message)}setBusy('')}
-  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)if(tooBig(f))toast(tl("{name} is over {MAX_FILE_MB} MB. Split it into smaller files.",{name:f.name,MAX_FILE_MB:MAX_FILE_MB}));else await run('file',async()=>{const r=await fetch('/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));if(j.status==='reading')toast(tl("{name} is scanned pages. Reading them now; you can stay or come back later.",{name:f.name}))},f.name.toLowerCase().endsWith('.pdf')?'':tl("Added {name}",{name:f.name}))}
+  const upload=async e=>{const fs=[...e.target.files];e.target.value='';for(const f of fs)if(tooBig(f))toast(tl("{name} is over {MAX_FILE_MB} MB. Split it into smaller files.",{name:f.name,MAX_FILE_MB:MAX_FILE_MB}));else await run('file',async()=>{const r=await fetch(ROOT+'/api'+base+'/files?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream',Authorization:'Bearer '+localStorage.t},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));if(j.status==='reading')toast(tl("{name} is scanned pages. Reading them now; you can stay or come back later.",{name:f.name}))},f.name.toLowerCase().endsWith('.pdf')?'':tl("Added {name}",{name:f.name}))}
   const match=m=>run(m,()=>api(base+'/match',{method:'POST',body:{method:m}}),'Matched to the syllabus. Check it below, then save.')
   const file=(i,tid)=>{setPick(null);return run('sec',()=>api(base+'/sections',{method:'PUT',body:{sections:v.sections.map((x,k)=>({from:x.from,to:x.to,topic_id:k===i?(tid?+tid:null):x.topic_id}))}}))}
   const read=async x=>{const k=x.from;if(open[k]!==undefined)return setOpen({...open,[k]:undefined});try{const r=await api(`${base}/preview?start=${x.from}&end=${x.to}`);setOpen({...open,[k]:r.content})}catch(e){toast(e.message)}}
@@ -2065,7 +2066,7 @@ function Branding({toast,onSaved}){
   const [name,setName]=useState(''),[logo,setLogo]=useState(null),[busy,setBusy]=useState(false),file=useRef(null)
   useEffect(()=>{api('/config').then(c=>{setName(c.name);setLogo(c.logo)}).catch(()=>{})},[])
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;setBusy(true)
-    try{const r=await fetch('/api/uploads',{method:'POST',headers:{Authorization:'Bearer '+localStorage.t,'Content-Type':f.type},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));setLogo(j.url)}catch(x){toast(x.message)}setBusy(false)}
+    try{const r=await fetch(ROOT+'/api/uploads',{method:'POST',headers:{Authorization:'Bearer '+localStorage.t,'Content-Type':f.type},body:f}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(tl(j.detail||'Upload failed'));setLogo(j.url)}catch(x){toast(x.message)}setBusy(false)}
   const save=async body=>{setBusy(true);try{await api('/admin/branding',{method:'PUT',body});toast(tl("Saved"));onSaved()}catch(e){toast(e.message)}setBusy(false)}
   return <><h3 className="sec first">{tl("Institution name and logo")}</h3><p className="known">{tl("Shown on the sign-in page and in the menu. Use a square PNG, JPG or WebP under 3 MB.")}</p>
     <div className="lpreview"><Logo src={logo} size={48}/><b>{name||tl("Name")}</b></div>
@@ -2163,7 +2164,7 @@ function Activity({toast}){
     <Pager page={page} total={total} onPage={setPage}/>
     {total>0&&<button className="btn ghost" onClick={()=>fetchFile('/admin/audit?format=csv&'+qs,'activity-log.csv',toast)}>{tl("Download as CSV")}</button>}</div></>}
 const day=d=>d?new Date(d).toLocaleDateString(locale(),{day:'numeric',month:'short'}):tl('never')
-const fetchFile=async(url,name,toast)=>{try{const r=await fetch('/api'+url,{headers:{Authorization:'Bearer '+localStorage.t}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Download failed')
+const fetchFile=async(url,name,toast)=>{try{const r=await fetch(ROOT+'/api'+url,{headers:{Authorization:'Bearer '+localStorage.t}});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||'Download failed')
   const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=name;a.click();URL.revokeObjectURL(a.href)}catch(e){toast(e.message)}}
 const Bar2=({v})=><div className="meter"><i style={{width:Math.min(100,v||0)+'%'}}/></div>
 function CourseReports({toast,onOpen}){

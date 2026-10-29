@@ -1,6 +1,7 @@
 // How a topic's content and the AI's answers are shown: Markdown with tables and maths (KaTeX, chemistry with mhchem), or the cleaned HTML of an
 // uploaded file. Shared by the web app and the reader page the Android app shows (reader.jsx), so both render the same text the same way.
-import Markdown from 'react-markdown'
+import Markdown,{defaultUrlTransform} from 'react-markdown'
+import {at,atHtml} from './base.js'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
@@ -17,6 +18,7 @@ export function fixTables(text){
     return '\n'+rows.map(r=>'|'+r.join('|')+'|').join('\n')+'\n'
   }).join('\n')
 }
-export const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]}>{fixTables(children)}</Markdown>
+const url=u=>defaultUrlTransform(at(u))  // saved pictures (/api/uploads/...) under the site's folder
+export const Md=({children})=><Markdown remarkPlugins={[remarkGfm,remarkMath]} rehypePlugins={[rehypeKatex]} urlTransform={url}>{fixTables(children)}</Markdown>
 // a topic's content: Markdown, or HTML from an uploaded file (the server cleans it on every save and every read, so it carries no scripts or styles)
-export const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:text||''}}/>:<Md>{text}</Md>
+export const Body=({text,format})=>format==='html'?<div className="htmlc" dangerouslySetInnerHTML={{__html:atHtml(text||'')}}/>:<Md>{text}</Md>

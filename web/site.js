@@ -52,7 +52,7 @@ function setLang(l){var d=l==='en'?EN:T[l]||EN;document.documentElement.lang=l;d
   try{localStorage.lang=l}catch(x){}android(l)}
 // the Android app: the newest version, which the server looks up on GitHub once a day
 var EX={and_ver:'Version {v} · {mb} MB',and_when:'Released {d} · Android 13 and later'},rel=null
-function android(l){var dl=document.getElementById('dl');if(!dl)return;document.getElementById('here').textContent=location.origin
+function android(l){var dl=document.getElementById('dl');if(!dl)return;document.getElementById('here').textContent=location.origin+location.pathname.replace(/\/[^/]*$/,'')
   if(!rel||!rel.version||!rel.url){dl.setAttribute('data-state','none');return}
   var d=(l==='en'?EX:T[l])||EX,day=rel.date?new Date(rel.date).toLocaleDateString(l==='ar'?'ar':l==='ta'?'ta-IN':'en-GB',{day:'numeric',month:'long',year:'numeric'}):''
   document.getElementById('apk').href=rel.url;document.getElementById('apkver').textContent=d.and_ver.replace('{v}',rel.version).replace('{mb}',rel.size?(rel.size/1048576).toFixed(1):'?')
@@ -60,12 +60,13 @@ function android(l){var dl=document.getElementById('dl');if(!dl)return;document.
 document.querySelectorAll('.lang button').forEach(function(b){b.addEventListener('click',function(){setLang(b.getAttribute('data-l'))})})
 var start='en';try{start=localStorage.lang||((navigator.language||'').slice(0,2))}catch(x){}setLang(['ar','ta'].indexOf(start)>=0?start:'en')
 document.getElementById('yr').textContent=new Date().getFullYear()
-fetch('/api/app/android').then(function(r){return r.ok?r.json():null}).then(function(r){rel=r;android(document.documentElement.lang)}).catch(function(){})
+fetch('api/app/android').then(function(r){return r.ok?r.json():null}).then(function(r){rel=r;android(document.documentElement.lang)}).catch(function(){})
 // someone already signed in on this device: "Open Zigora" becomes the main way in; an installed app opens straight into the app
 try{if(localStorage.t)document.querySelectorAll('[data-i=signup]').forEach(function(a){a.style.display='none'})}catch(x){}
-if(matchMedia('(display-mode: standalone)').matches)location.replace('/app/')
-// the app used to live here: a service worker it left at the site root would keep serving the old app, so it is removed
-if('serviceWorker' in navigator)navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){if(new URL(r.scope).pathname==='/')r.unregister()})})
+if(matchMedia('(display-mode: standalone)').matches)location.replace('app/')
+// the app used to live here: a service worker it left at the site root would keep serving the old app, so it is removed (only this site's own: under a
+// folder of a shared address, the root's belongs to someone else). Paths here are relative, so the page works at / and under a folder (BASE_PATH).
+if('serviceWorker' in navigator)navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){if(new URL(r.scope).pathname===new URL('./',location.href).pathname)r.unregister()})})
 // sections fade in as they come into view
 var io='IntersectionObserver' in window?new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12}):null
 document.querySelectorAll('.reveal').forEach(function(e){io?io.observe(e):e.classList.add('in')})
