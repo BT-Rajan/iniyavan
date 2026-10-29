@@ -1,0 +1,45 @@
+{
+  "company": "PERENNIA",
+  "logo": ".promo/logo.png",
+  "appLanguages": [
+    "en"
+  ],
+  "langs": [
+    "en"
+  ],
+  "healthPath": "/api/config",
+  "startTimeout": 120,
+  "colors": {
+    "ink": "#1E1626",
+    "ground": "#FBF9FC",
+    "accent": "#722F99",
+    "accentLight": "#C49BE0",
+    "accentDark": "#45106A",
+    "pop": "#FF9292",
+    "white": "#FFFFFF",
+    "muted": "#655B6E"
+  },
+  "displayFont": "Instrument Sans",
+  "fonts": [
+    {
+      "family": "Instrument Sans",
+      "weight": 600,
+      "file": "web/fonts/instrument-sans-latin-600-normal.woff2"
+    },
+    {
+      "family": "Instrument Sans",
+      "weight": 700,
+      "file": "web/fonts/instrument-sans-latin-700-normal.woff2"
+    },
+    {
+      "family": "Noto Sans Tamil",
+      "weight": 600,
+      "file": "web/fonts/noto-sans-tamil-tamil-600-normal.woff2"
+    },
+    {
+      "family": "Noto Sans Arabic",
+      "weight": 600,
+      "file": "web/fonts/noto-sans-arabic-arabic-600-normal.woff2"
+    }
+  ]
+}
