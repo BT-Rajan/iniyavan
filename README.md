@@ -37,6 +37,25 @@ The app is called Zigora (formerly Eng Tutor). The name comes from `APP_NAME` in
 ## Managing users from the terminal
 `./manage.sh add --name "Name" --email a@b.com [--role admin]` (prompts for the password), `passwd`, `enable`, `disable`, `role`, `list`. Use `VENV=/path/to/venv` if your venv is not `./venv`.
 
+## Under a folder of the address (BASE_PATH)
+To run Zigora at `https://apps.perennia.org/zigora` instead of at the root of an address:
+1. `.env`: `HOST=127.0.0.1`, `BASE_PATH=/zigora`, `APP_URL=https://apps.perennia.org/zigora`, then `./run.sh`. If a site address is saved in Settings, give it the folder too.
+2. The reverse proxy passes the folder through unchanged (no path after the port in `proxy_pass`). In CloudPanel: the site's **Vhost**, inside the `server { listen 443 ... }` block:
+```
+location /zigora/ {
+  proxy_pass http://127.0.0.1:5252;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_read_timeout 180s;
+  client_max_body_size 30m;
+}
+location = /zigora { return 301 /zigora/; }
+```
+3. The home page is `/zigora/`, the app `/zigora/app/`. Android: the server address is `apps.perennia.org/zigora`. Google's Authorized JavaScript origin is the address without the folder (`https://apps.perennia.org`).
+
+Saved links (pictures in topics, the logo) stay `/api/uploads/...` in the database, so moving the site between the root and a folder needs nothing else. The server still answers without the folder on `127.0.0.1:5252` (run.sh uses that).
+
 ## Sign in with Google
 Off until a Web client ID is set (Settings → Access, or `GOOGLE_CLIENT_ID` in `.env`). Works on the web and in the Android app; an account with the same email is linked on its first Google sign-in, and with self-registration on a new Google email can sign up without a code. Setup steps for the Google Cloud project (owned by Cogzidel Technologies): [docs/google-sign-in.md](docs/google-sign-in.md).
 

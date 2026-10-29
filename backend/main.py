@@ -18,6 +18,10 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session, object_sessi
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 APP_NAME = (os.getenv("APP_NAME") or "Zigora").strip()
 VERSION = "1.1.0"
+# the site under a folder of its address (BASE_PATH=/zigora for https://apps.perennia.org/zigora); empty means at the root. The reverse proxy passes
+# /zigora/... through unchanged; the app itself answers as if at the root, so saved links like /api/uploads/... keep working.
+BASE_PATH = "/" + (os.getenv("BASE_PATH") or "").strip().strip("/") if (os.getenv("BASE_PATH") or "").strip().strip("/") else ""
+if BASE_PATH and not re.fullmatch(r"(/[A-Za-z0-9._~-]+)+", BASE_PATH): raise SystemExit("BASE_PATH must look like /zigora")
 DB = os.getenv("DATABASE_URL", "mysql+pymysql://root:password@localhost/engtutor")
 log = logging.getLogger("engtutor")
 SECRET = (os.getenv("JWT_SECRET") or "").strip()
@@ -698,10 +702,11 @@ def register_resend(b: ForgotIn, request: Request, bg: BackgroundTasks, s: Sessi
 @app.get("/manifest.json")
 @app.get("/app/manifest.json")  # served dynamically so the installed app carries APP_NAME (the app lives under /app/)
 def manifest():
-    icons = [{"src": "/app/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-             {"src": "/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-             {"src": "/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
-    return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": "/app/", "scope": "/app/", "display": "standalone", "orientation": "portrait",
+    a = BASE_PATH + "/app/"
+    icons = [{"src": a + "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+             {"src": a + "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+             {"src": a + "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}]
+    return JSONResponse({"name": APP_NAME, "short_name": APP_NAME[:12], "start_url": a, "scope": a, "display": "standalone", "orientation": "portrait",
                          "background_color": "#f6f4f7", "theme_color": "#722f99", "icons": icons})
 
 def _addcol(table, col, typ):
@@ -1641,7 +1646,7 @@ def put_mail(b: MailIn, _: User = Depends(admin), s: Session = Depends(db)):
     if b.app_url is not None:
         u = b.app_url.strip().rstrip("/")
         u = re.sub(r"/app$", "", u)
-        if u and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d{1,5})?", u): raise HTTPException(400, "Enter the site's address only, such as https://learn.yourcollege.edu or http://169.58.13.213:5252")
+        if u and not re.fullmatch(r"https?://[A-Za-z0-9.-]+(:\d{1,5})?(/[A-Za-z0-9._~-]+)*", u): raise HTTPException(400, "Enter the site's address only, such as https://learn.yourcollege.edu or http://169.58.13.213:5252")
         if u: s.merge(Setting(k="app_url", v=u))
         else: s.query(Setting).filter_by(k="app_url").delete()  # back to APP_URL from .env
     s.commit(); return mail_state(s)
@@ -3029,7 +3034,7 @@ STORE_MAX = 100_000
 def frame_page(raw, store=None, keep=False):
     shim = "<script>" + STORE_SHIM.replace("__DATA__", json.dumps(store or {}).replace("<", "\\u003c")).replace("__KEEP__", "true" if keep else "false") + "</script>"
     tail = f"<script>{highlighter_js()}</script><script>{FRAME_BOOT}</script>"
-    raw = raw or ""
+    raw = uploads_under_base(raw or "")
     m = re.search(r"<head\b[^>]*>", raw, re.I) or re.search(r"<html\b[^>]*>", raw, re.I) or re.match(r"\s*<!doctype[^>]*>", raw, re.I)
     raw = raw[:m.end()] + shim + raw[m.end():] if m else shim + raw  # first, so the page's own scripts find it
     i = raw.lower().rfind("</body>")
@@ -5541,6 +5546,32 @@ def mcq_summary(s, uid):  # for a teacher who follows a student: sets done, thei
     st = mcq_topic_stats(s, uid); titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_(list(st) or [0]))}
     return {"sets": len(rows), "average": round(sum(p or 0 for p, _ in rows) / len(rows)), "last_at": iso(max(t for _, t in rows)),
             "revisit": [titles[t] for t, v in sorted(st.items(), key=lambda x: x[1]["percent"]) if v["percent"] < 50 and t in titles][:5]}
+def uploads_under_base(html):  # pictures saved as /api/uploads/... inside a page that is shown on its own (an interactive topic): under BASE_PATH too
+    if not BASE_PATH: return html
+    return re.sub(r"""((?:\b(?:src|href)\s*=\s*["']?|url\(\s*["']?))/api/uploads/""", lambda m: m.group(1) + BASE_PATH + "/api/uploads/", html, flags=re.I)
+class UnderBase:  # outermost: /zigora/x reaches the app as /x (so every route and check is unchanged), and its own redirects point back under /zigora
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        base, path = BASE_PATH, scope.get("path", "")
+        if not base or scope["type"] != "http" or not (path == base or path.startswith(base + "/")): return await self.app(scope, receive, send)
+        if path == base:  # /zigora -> /zigora/: the home page's links are relative to it
+            q = scope.get("query_string", b"")
+            await send({"type": "http.response.start", "status": 308, "headers": [(b"location", (base + "/" + ("?" + q.decode("latin-1") if q else "")).encode("latin-1")), (b"content-length", b"0")]})
+            return await send({"type": "http.response.body", "body": b""})
+        raw = scope.get("raw_path")
+        scope = {**scope, "path": path[len(base):], "raw_path": raw[len(base):] if raw and raw.startswith(base.encode()) else raw}
+        host = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"host"), "")
+        async def send_(m):
+            if m["type"] == "http.response.start" and 300 <= m["status"] < 400:
+                m = {**m, "headers": [(k, back_under(v.decode("latin-1"), base, host).encode("latin-1") if k.lower() == b"location" else v) for k, v in m["headers"]]}
+            await send(m)
+        await self.app(scope, receive, send_)
+def back_under(loc, base, host):  # a redirect the app made (/app -> /app/) goes back under the base; one to another site is left alone
+    from urllib.parse import urlsplit, urlunsplit
+    u = urlsplit(loc)
+    if not u.path.startswith("/") or u.path == base or u.path.startswith(base + "/") or (u.netloc and u.netloc != host): return loc
+    return urlunsplit(u._replace(path=base + u.path))
+app.add_middleware(UnderBase)  # added last, so it runs first
 # the site: the home page (web/) at the root, and the app itself under /app/
 web = os.path.join(os.path.dirname(__file__), "..", "web")
 if os.path.isdir(dist): app.mount("/app", StaticFiles(directory=dist, html=True), name="ui")
