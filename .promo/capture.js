@@ -13,6 +13,15 @@ const ROOT = process.cwd();
 const MOBILE = path.join(ROOT, 'mobile');
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: 'inherit' });
 
+// shots the Promo shots workflow committed (.promo/shots/): use them, so the video can be made where Android can't build. PROMO_FRESH=1 captures anew.
+const SAVED = path.join(ROOT, '.promo/shots');
+if (!process.env.PROMO_FRESH && fs.existsSync(SAVED) && fs.readdirSync(SAVED).some((f) => f.endsWith('.png'))) {
+  const saved = fs.readdirSync(SAVED).filter((f) => f.endsWith('.png'));
+  for (const f of saved) fs.copyFileSync(path.join(SAVED, f), path.join(OUT, `${LANG}-${f}`));
+  console.log(`${LANG}: ${saved.length} Android screens from .promo/shots (made by the Promo shots workflow)`);
+  process.exit(0);
+}
+
 // the app packs the web's reader page; build it if this checkout hasn't yet
 if (!fs.existsSync(path.join(ROOT, 'frontend/dist-reader/reader/reader.html'))) {
   if (!fs.existsSync(path.join(ROOT, 'frontend/node_modules'))) run('npm', ['ci', '--no-audit', '--no-fund'], path.join(ROOT, 'frontend'));
