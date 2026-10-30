@@ -59,7 +59,8 @@ class OnboardingTest {
     @Test fun signUpAsksSchoolOrCollegeThenWho() {
         app.store.server = server; app.store.signOut()
         rule.setContent { ZigoraRoot(null) {} }
-        see("Create an account"); tap("Create an account")
+        see("Create an account"); tap("Create an account")  // the Create an account tab: Google or email
+        see("Sign up with email"); shot("onboarding-00-create-an-account"); tap("Sign up with email")
         see("Who is studying?"); shot("onboarding-01-school-or-college")
         tap("A school student"); see("Who is signing up?"); shot("onboarding-02-who")
         tap("A parent"); see("Child 1"); see("Your children"); shot("onboarding-03-parent-form")

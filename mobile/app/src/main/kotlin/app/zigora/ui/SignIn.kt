@@ -4,6 +4,9 @@ import app.zigora.data.json
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import androidx.compose.foundation.Image
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -141,7 +144,16 @@ fun SignIn(done: (Me) -> Unit) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next))
                 }
                 val error = @Composable { if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                val back = @Composable { TextButton(onClick = { mode = "in"; msg = ""; info = ""; if (gTicket != null) { gTicket = null; email = "" } }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.back_to_sign_in)) } }
+                val toUp = mode != "forgot" && canRegister  // sign-up steps go back to the Create an account tab
+                val back = @Composable { TextButton(onClick = { mode = if (toUp) "up" else "in"; msg = ""; info = ""; if (gTicket != null) { gTicket = null; email = "" } }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (toUp) tl("Back") else stringResource(R.string.back_to_sign_in)) } }
+                if ((mode == "in" || mode == "up") && !editing && canRegister)  // two tabs when sign-up is open: Sign in, and Create an account
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        listOf("in" to stringResource(R.string.sign_in), "up" to stringResource(R.string.create_account)).forEachIndexed { i, (k, l) ->
+                            SegmentedButton(selected = mode == k, onClick = { mode = k; msg = "" },
+                                shape = SegmentedButtonDefaults.itemShape(i, 2)) { Text(l) }
+                        }
+                    }
                 when (mode) {
                     "forgot" -> {
                         Text(stringResource(R.string.forgot_title), style = MaterialTheme.typography.titleLarge)
@@ -151,6 +163,19 @@ fun SignIn(done: (Me) -> Unit) {
                                    enabled = !busy && email.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.send_reset_link)) }
                         }
                         back()
+                    }
+                    "up" -> {  // Create an account: with Google (no code to type: Google checked the email) or with an email and a code
+                        Text(stringResource(R.string.create_account), style = MaterialTheme.typography.titleLarge)
+                        Quiet(if (googleId != null) tl("Sign up with your Google account, or with your email.") else tl("Sign up with your email. We will send you a code to confirm it."))
+                        error()
+                        if (googleId != null) {
+                            Button(onClick = { google() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(tl("Sign up with Google")) }
+                            Text(tl("or"), Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                        val email1 = @Composable { Text(tl("Sign up with email")) }
+                        if (googleId != null) androidx.compose.material3.OutlinedButton(onClick = { gTicket = null; mode = "register"; msg = "" }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { email1() }
+                        else Button(onClick = { gTicket = null; mode = "register"; msg = "" }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { email1() }
+                        Quiet(tl("Students, parents and teachers can sign up here. Already have an account? Use Sign in."))
                     }
                     "register" -> {  // 1. who is studying: school or college
                         Text(stringResource(R.string.create_account), style = MaterialTheme.typography.titleLarge)
@@ -231,7 +256,7 @@ fun SignIn(done: (Me) -> Unit) {
                         TextButton(onClick = { mode = "form"; code = ""; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.change_my_details)) }
                     }
                     else -> {
-                        Text(stringResource(R.string.signin_lead), Modifier.fillMaxWidth().padding(bottom = 8.dp), style = MaterialTheme.typography.bodyLarge,
+                        Text(if (canRegister && !editing) tl("Welcome back.") else stringResource(R.string.signin_lead), Modifier.fillMaxWidth().padding(bottom = 8.dp), style = MaterialTheme.typography.bodyLarge,
                              color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         if (editing) {
                             OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.college_address)) },
@@ -252,7 +277,6 @@ fun SignIn(done: (Me) -> Unit) {
                         if (!editing) {
                             if (canReset) TextButton(onClick = { mode = "forgot"; msg = ""; info = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.forgot_password_q)) }
                             else Quiet(stringResource(R.string.forgot_ask_admin) + " " + tl("Sign in with a username? Ask your parent or teacher to set a new password for you."))
-                            if (canRegister) androidx.compose.material3.OutlinedButton(onClick = { mode = "register"; msg = "" }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.create_account)) }
                         }
                     }
                 }
