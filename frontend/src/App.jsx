@@ -185,7 +185,7 @@ function Register({onIn,toast,msg,appName,logo,back,google}){  // school or coll
     {!google&&<><label htmlFor="re">{tl("Email")}</label><input id="re" type="email" autoComplete="email" value={f.email} onChange={set('email')}/></>}
     <label htmlFor="rp">{tl("Phone")}</label><input id="rp" type="tel" autoComplete="tel" value={f.phone} onChange={set('phone')} placeholder="+91 98765 43210"/>
     {!google&&<><label htmlFor="rw">{tl("Password")}</label><input id="rw" type="password" autoComplete="new-password" value={f.password} onChange={set('password')}/></>}
-    <p className="known">{google?tl("You sign in with Google. You can set a password later with “Forgot password?”."):tl("At least 8 characters.")}{who==='student'&&!school?' '+tl("AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more."):''}</p>
+    <p className="known">{google?tl("You sign in with Google. You can set a password later with “Forgot password?”."):tl("At least 8 characters.")}{who==='student'&&!school?' '+tl("AI help starts on Lite: a free daily allowance. You can add your own AI key later for more."):''}</p>
     {who==='parent'&&<><h3 className="sec">{tl("Your children")}</h3><p className="known" style={{marginTop:0}}>{tl("Each child signs in with their own username and password. They don't need an email.")}</p>
       {kids.map((k,i)=><div className="qbox" key={i}><b>{tl("Child {n}",{n:i+1})}</b>
         <label htmlFor={'kn'+i}>{tl("Name")}</label><input id={'kn'+i} value={k.name} onChange={e=>setKid(i,{name:e.target.value})}/>
@@ -222,7 +222,7 @@ function GuardianHome({user,toast,onKey,onCalendar}){  // a parent's children, o
       <button className="btn" disabled={b||!inv.trim()} onClick={invite}>{tl("Send invitation")}</button>{sent&&<p className="known" role="status">{sent}</p>}</>}
     {k&&level==='school'&&<><h3 className="sec">{tl("AI help")}</h3><div className="qbox" style={{marginTop:0}}>
       <b>{k.key_set?tl("On, with your key {hint}",{hint:k.key_hint}):tl("Off")}</b>
-      <p className="known" style={{margin:'6px 0 0'}}>{k.key_set?(parent?tl("Your children's AI help runs on your DeepSeek key."):tl("Your students' AI help runs on your DeepSeek key, unless a parent has added theirs.")):(parent?tl("School students use AI only with a parent's or teacher's key. Add your DeepSeek key to turn it on for your children."):tl("School students use AI only with a parent's or teacher's key. Add your DeepSeek key to turn it on for your students."))}</p>
+      <p className="known" style={{margin:'6px 0 0'}}>{k.key_set?(parent?tl("Your children's AI help runs on your AI key."):tl("Your students' AI help runs on your AI key, unless a parent has added theirs.")):(parent?tl("School students use AI only with a parent's or teacher's key. Add your AI key to turn it on for your children."):tl("School students use AI only with a parent's or teacher's key. Add your AI key to turn it on for your students."))}</p>
       <button className="btn ghost" onClick={onKey}>{k.key_set?tl("Change the key"):tl("Add an AI key")}</button></div></>}
     {add&&<Sheet close={()=>setAdd(null)}><h3>{parent?tl("Add a child"):tl("Add students")}</h3><p className="known" style={{marginTop:0}}>{tl("Each one signs in with the username and password you give them. They don't need an email.")}</p>
       {add.map((x,i)=><div className="qbox" key={i}><b>{(parent?tl("Child {n}",{n:i+1}):tl("Student {n}",{n:i+1}))}</b>
@@ -263,13 +263,16 @@ function Invitations(){  // a teacher asked to follow this student's progress; n
 
 function MyAiKey({toast}){
   const confirm=useConfirm(),g=useContext(Ctx).role==='guardian'  // a parent's or teacher's key is for the school students linked to them
-  const [d,setD]=useState(null),[key,setKey]=useState(''),[b,setB]=useState(false)
-  const load=()=>api('/me/ai-key').then(setD).catch(e=>toast(e.message));useEffect(()=>{load()},[])
-  const save=async()=>{setB(true);try{await api('/me/ai-key',{method:'PUT',body:{key}});setKey('');toast(tl("Key saved. AI help is on."));load()}catch(e){toast(e.message)}setB(false)}
+  const [d,setD]=useState(null),[key,setKey]=useState(''),[b,setB]=useState(false),[prov,setProv]=useState('deepseek')
+  const load=()=>api('/me/ai-key').then(r=>{setD(r);setProv(r.provider||'deepseek')}).catch(e=>toast(e.message));useEffect(()=>{load()},[])
+  const pv=d?.providers?.find(x=>x.id===prov)
+  const save=async()=>{setB(true);try{await api('/me/ai-key',{method:'PUT',body:{key,provider:prov}});setKey('');toast(tl("Key saved. AI help is on."));load()}catch(e){toast(e.message)}setB(false)}
   const del=async()=>{if(!await confirm({title:tl("Remove your key?"),body:g?tl("AI help turns off for your school students, unless another parent or teacher linked to them has a key."):tl("You go back to Lite: the free daily allowance."),ok:tl("Remove key"),danger:true}))return;try{await api('/me/ai-key',{method:'DELETE'});toast(tl("Key removed"));load()}catch(e){toast(e.message)}}
-  return <><Bar title={tl("My AI key")} sub={d?.key_set?tl("AI is on · key {key_hint}",{key_hint:d.key_hint}):g?tl("No key yet"):tl("No key yet: you are on Lite")}/><div className="main">
-    <p className="known">{g?tl("Your DeepSeek key powers AI help for the school students linked to you. Usage is billed to your DeepSeek account. The key is stored encrypted and never shown to them."):tl("Optional. Without a key you are on Lite: a free daily allowance of AI on your college's key. With your own DeepSeek key there is no daily limit, and usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.")}</p>
-    <label htmlFor="k">{tl("DeepSeek API key")}</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?tl("Paste a new key to replace the current one"):tl("sk-…")}/>
+  return <><Bar title={tl("My AI key")} sub={d?.key_set?tl("AI is on · {name} key {key_hint}",{name:d.provider_name,key_hint:d.key_hint}):g?tl("No key yet"):tl("No key yet: you are on Lite")}/><div className="main">
+    <p className="known">{g?tl("Your AI key powers AI help for the school students linked to you. Usage is billed to your account with that provider. The key is stored encrypted and never shown to them."):tl("Optional. Without a key you are on Lite: a free daily allowance of AI on your college's key. With your own key from DeepSeek, ChatGPT, Claude, Qwen or Perplexity there is no daily limit, and usage is billed to your account with that provider. Choose the provider, paste its key and save. We check it with the provider first, then store it encrypted. It is never shown again in full.")}</p>
+    <label htmlFor="kp">{tl("AI provider")}</label><select id="kp" value={prov} onChange={e=>setProv(e.target.value)}>{(d?.providers||[]).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select>
+    {pv&&<p className="known" style={{marginTop:4}}>{tl("Create a key at {site}.",{site:pv.console})}</p>}
+    <label htmlFor="k">{tl("{name} API key",{name:pv?.name||'AI'})}</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?tl("Paste a new key to replace the current one"):tl("Paste the key")}/>
     <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?tl("Checking the key…"):tl("Save key")}</button>
     {d?.key_set&&<button className="btn ghost" onClick={del}>{tl("Remove my key")}</button>}</div></>}
 
@@ -384,7 +387,7 @@ function SelfReg({cfg,run}){
     <label htmlFor="dom">{tl("Only these email domains (optional)")}</label><input id="dom" value={shown} onChange={e=>setDom(e.target.value)} placeholder={tl("college.edu, mail.college.edu")}/>
     <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{allowed_domains:shown}}).then(()=>setDom(null)),'Domains saved')}>{tl("Save domains")}</button>
     <h3 className="sec">{tl("Free daily AI for self-registered people (Lite)")}</h3>
-    <p className="known">{tl("They use your DeepSeek key within this allowance each day. Beyond it they can add their own key, or ask you for more: make them Pro until a date from Users. Saved answers never count.")}</p>
+    <p className="known">{tl("They use your AI key within this allowance each day. Beyond it they can add their own key, or ask you for more: make them Pro until a date from Users. Saved answers never count.")}</p>
     <LiteLimits cfg={cfg} run={run}/></>}
 function GoogleSetting({cfg,run}){  // Sign in with Google: the web client ID from the Google Cloud project; the button shows on the sign-in page once it is set
   const [v,setV]=useState(null),shown=v??cfg.google_client_id??''
@@ -614,7 +617,7 @@ function StaffHome({user,toast,open,goUsers}){
   return <><Bar title={tl(hi,{name:firstName(user.name)})} sub={admin?tl("Across the whole college"):tl("Your courses")}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {o&&<div className="stats">{stats.map(([n,l0,k])=>{const l=tl(l0);return <button className="stat" key={l0} style={{textAlign:'start',width:'100%'}} onClick={()=>setList(k)} aria-label={tl("{v} {l}. Show the list",{v:(n??0).toLocaleString(),l:l})}><b>{(n??0).toLocaleString()}</b>{l}</button>})}</div>}
-    {bud&&['deepseek','claude'].filter(p=>bud[p].limit&&bud[p].share>=bud.warn_at).map(p=><div key={p} className="qbox budwarn" role="status"><b>{tl(bud[p].share>=1?"This month's {name} allowance is used up":"This month's {name} allowance is {p}% used",{name:p==='claude'?'Claude':'DeepSeek',p:Math.round(100*bud[p].share)})}</b>
+    {bud&&Object.keys(bud.names||{}).filter(p=>bud[p].limit&&bud[p].share>=bud.warn_at).map(p=><div key={p} className="qbox budwarn" role="status"><b>{tl(bud[p].share>=1?"This month's {name} allowance is used up":"This month's {name} allowance is {p}% used",{name:bud.names[p],p:Math.round(100*bud[p].share)})}</b>
       <p className="known" style={{margin:'4px 0 0'}}>{bud[p].share>=1?tl("New AI answers have stopped until the 1st; saved answers still work. You can raise the allowance under Settings → AI."):tl("When it is used up, new AI answers stop until the 1st. You can raise it under Settings → AI.")}</p></div>)}
     {flags>0&&<button className="card flagcard" style={{textAlign:'start',width:'100%'}} onClick={()=>setFp(true)}><span className="dot" style={{background:'var(--coral)'}}><Flag size={18}/></span><div style={{flex:1}}><b>{tl(flags===1?'1 AI answer flagged by students':'{n} AI answers flagged by students',{n:flags})}</b><span>{tl("Check it, then have it written again or let it stand")}</span></div><ChevronRight size={18}/></button>}
     {o&&<><h3 className="sec">{tl("Needs attention")}</h3>
@@ -1233,7 +1236,7 @@ function StudyCourse({id,topic:first,toast,back,setup}){
       <button className="btn danger" onClick={del}>{tl("Delete course")}</button></>}
     {ren!=null&&<Sheet close={()=>setRen(null)}><h3>{tl("Rename course")}</h3><label htmlFor="rnm">{tl("Course name")}</label><input id="rnm" autoFocus value={ren} onChange={e=>setRen(e.target.value)}/>
       <button className="btn" disabled={!ren.trim()} onClick={async()=>{try{await api('/study/courses/'+id,{method:'PUT',body:{title:ren}});setRen(null);load()}catch(e){toast(e.message)}}}>{tl("Save")}</button><button className="btn ghost" onClick={()=>setRen(null)}>{tl("Cancel")}</button></Sheet>}</div></>}
-const AiNote=({o})=>!o?null:!o.ai_available?<p className="known" role="note">{o.ai_off?tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account."):o.ai_own_key?tl("Add your own DeepSeek API key under “My AI key” in the menu to use explanations, quick checks and quizzes."):tl("AI help is switched off right now. Ask your admin to add an AI key.")}</p>
+const AiNote=({o})=>!o?null:!o.ai_available?<p className="known" role="note">{o.ai_off?tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account."):o.ai_own_key?tl("Add your own AI key under “My AI key” in the menu to use explanations, quick checks and quizzes."):tl("AI help is switched off right now. Ask your admin to add an AI key.")}</p>
   :o.ai_left!=null&&o.ai_left<=10?<p className="known" role="note">{o.ai_left?tl("{n} left today for your own courses.",{n:pl(o.ai_left,'AI request')}):tl("You have used today's AI requests for your own courses. Reviews still work; new questions come back tomorrow.")}</p>:null
 function StudyTopicPage({id,toast,back,go}){
   useLearnClock()  // a lite person's learning minutes
@@ -1370,7 +1373,7 @@ function Topic({id:first,back,toast,role}){
   if(!t)return <><Bar title={tl("Loading")} back={back}/><div className="main"><div className="sk"/><div className="sk"/></div></>
   const flip=async()=>{const on=!bm;setBm(on);try{await api(`/topics/${id}/bookmark`,{method:on?'PUT':'DELETE'});toast(on?tl("Bookmarked"):tl("Bookmark removed"))}catch(e){setBm(!on);toast(e.message)}}
   const view=k=>ai[k]?<div className="prose">{ai[k].cached&&<span className="chip">{tl("Saved answer · no tokens used")}</span>}{ai[k].own_notes&&<span className="chip">{tl("Written with your own notes")}</span>}<Md>{ai[k].text}</Md><FlagLink source="topic" id={ai[k].id} topicId={id} excerpt={ai[k].text}/></div>
-    :aiOk===false?<p className="known">{aiOff?tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account."):ownKey?tl("Add your own DeepSeek API key under “My AI key” in the menu to use AI help."):tl("AI unavailable. Try again later.")}</p>
+    :aiOk===false?<p className="known">{aiOff?tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account."):ownKey?tl("Add your own AI key under “My AI key” in the menu to use AI help."):tl("AI unavailable. Try again later.")}</p>
     :<><button className="btn" disabled={busy} onClick={()=>ask(k)}><Sparkles size={16}/> {busy?tl("Thinking…"):k==='explain'?tl("Explain it to me"):tl("Show a sample answer")}</button>{t.my_notes&&<p className="known">{tl("Uses your own notes too. It counts toward your daily AI requests.")}</p>}{aiMsg&&<p className="known">{aiMsg}</p>}</>
   return <><Bar title={t.title} sub={[t.program,t.semester,t.course,t.unit].filter(Boolean).join(' › ')} back={back} right={role!=='admin'&&<button className={'ic'+(bm?' on':'')} aria-label={bm?tl("Remove bookmark"):tl("Bookmark this topic")} aria-pressed={bm} onClick={flip}><Bookmark fill={bm?'currentColor':'none'}/></button>}/><div className="main">
     {t.can_edit&&pv&&<div className="qbox" style={{marginTop:0}}><b>{tl("Previewing as a student")}</b><p className="known" style={{margin:'4px 0 8px'}}>{tl("This is what students see: no editing buttons, and drafts show as unavailable to them.")}</p><button className="btn ghost" style={{marginTop:0}} onClick={()=>setPv(false)}>{tl("Back to editing")}</button></div>}
@@ -1946,13 +1949,13 @@ function Users({toast,me}){
 
 // AI plans of self-registered people: lite (a free daily allowance on the college's key), their own key, or pro (more, given by an admin until a date)
 const PLAN_NAME={lite:'Lite',pro:'Pro',own:'Own key',college:'College',family:'Family key',off:'No AI'}
-const planLine=u=>u.plan==='pro'?tl("Pro until {date}",{date:day(new Date(new Date(u.pro_until)-1).toISOString())}):u.plan==='own'?tl("Own key: uses their own DeepSeek key"):tl("Lite: the free daily allowance")
+const planLine=u=>u.plan==='pro'?tl("Pro until {date}",{date:day(new Date(new Date(u.pro_until)-1).toISOString())}):u.plan==='own'?tl("Own key: uses their own AI key"):tl("Lite: the free daily allowance")
 function ProControl({u,toast,done}){
   const [until,setUntil]=useState(''),[busy,setBusy]=useState(false),confirm=useConfirm()
   const set=async body=>{setBusy(true);try{await api(`/admin/users/${u.id}/pro`,{method:'PUT',body});toast(body.end?tl("Back on Lite"):tl("{name} is Pro now",{name:u.name}));setUntil('');done()}catch(e){toast(srv(e.message))}setBusy(false)}
   return <><h3 className="sec">{tl("More AI")}</h3>
     {u.asked&&<div className="qbox" style={{marginTop:0}}><b>{tl("Asked for more AI")}</b> · <small>{when(u.asked.at)}</small>{u.asked.note&&<p style={{margin:'4px 0 0'}}>“{u.asked.note}”</p>}</div>}
-    <p className="known">{u.plan==='pro'?tl("Pro: the college's AI with the usual limits, until the date below. Then back to Lite."):u.plan==='own'?tl("They use their own DeepSeek key, so no limit applies. Pro would also let them ask about diagrams in photos."):tl("Lite: a few free AI searches and minutes of learning a day. Pro lifts that until a date you choose.")}</p>
+    <p className="known">{u.plan==='pro'?tl("Pro: the college's AI with the usual limits, until the date below. Then back to Lite."):u.plan==='own'?tl("They use their own AI key, so no limit applies. Pro would also let them ask about diagrams in photos."):tl("Lite: a few free AI searches and minutes of learning a day. Pro lifts that until a date you choose.")}</p>
     <div className="chips wrap">{[7,30,90,365].map(d=><button key={d} className="stepchip" disabled={busy} onClick={()=>set({days:d})}>{d===365?tl("1 year"):tl("{n} days",{n:d})}</button>)}</div>
     <label htmlFor="prou">{tl("Or Pro until")}</label><div className="two"><input id="prou" type="date" value={until} onChange={e=>setUntil(e.target.value)} min={new Date().toISOString().slice(0,10)}/><button className="btn" style={{marginTop:0}} disabled={busy||!until} onClick={()=>set({until})}>{tl("Make Pro")}</button></div>
     {u.plan==='pro'&&<button className="btn ghost" disabled={busy} onClick={async()=>{if(await confirm({title:tl("End Pro for {name}?",{name:u.name}),body:tl("They go back to the free daily allowance straight away."),ok:tl("End Pro"),danger:true}))set({end:true})}}>{tl("End Pro now")}</button>}</>}
@@ -1973,8 +1976,8 @@ function PlanCard({toast,onKey}){
   return <><h3 className="sec">{tl("AI help")}</h3><div className="qbox">
     <b>{tl(PLAN_NAME[p.plan])}</b>
     {p.plan==='pro'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("No daily limit until {date}. Then you are back on Lite.",{date:day(new Date(new Date(p.pro_until)-1).toISOString())})}</p>}
-    {p.plan==='own'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("You use your own DeepSeek key, so there is no daily limit.")}</p>}
-    {p.plan==='family'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("Your AI help runs on your parent's or teacher's DeepSeek key.")}</p>}
+    {p.plan==='own'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("You use your own AI key, so there is no daily limit.")}</p>}
+    {p.plan==='family'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("Your AI help runs on your parent's or teacher's AI key.")}</p>}
     {p.plan==='off'&&<p className="known" style={{margin:'4px 0 0'}}>{tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account.")}</p>}
     {p.plan==='lite'&&<><p className="known" style={{margin:'4px 0 0'}}>{tl("Free each day: {s} AI searches and {m} minutes of learning with AI. Saved answers never count.",{s:p.searches_limit,m:p.minutes_limit})}</p>
       {meter(p.searches_used,p.searches_limit,tl("Searches today: {n} of {max}",{n:p.searches_used,max:p.searches_limit}))}
@@ -2175,18 +2178,21 @@ function Branding({toast,onSaved}){
     <button className="btn" disabled={busy} onClick={()=>save({name,logo_url:logo||undefined})}>{tl("Save name and logo")}</button></>}
 function AiConfig({toast,onBrand}){
   const confirm=useConfirm()
-  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({deepseek:'',claude:''})
-  const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model);setVmodel(c.vision_model);setLim({deepseek:String(c.budget?.deepseek.limit||''),claude:String(c.budget?.claude.limit||'')})});api('/admin/stats').then(setSt)};useEffect(load,[])
-  const run=useRun(toast,load)
-  return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")],['mail',tl("Email")],['costs',tl("AI costs")]]} value={tab} onChange={setTab}/>
+  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({}),[prov,setProv]=useState('')
+  const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setProv(p=>p||c.provider);setVmodel(c.vision_model);setLim(Object.fromEntries(Object.entries(c.budget||{}).map(([p,b])=>[p,String(b.limit||'')])))});api('/admin/stats').then(setSt)};useEffect(load,[])
+  const run=useRun(toast,load),provs=cfg.providers||[],pv=provs.find(x=>x.id===prov),active=prov===cfg.provider
+  useEffect(()=>{setModel(pv?.model_saved||'');setKey('')},[prov,pv?.model_saved])
+  return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · {name} key {key_hint}",{name:cfg.provider_name,key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")],['mail',tl("Email")],['costs',tl("AI costs")]]} value={tab} onChange={setTab}/>
     {tab==='school'&&<Branding toast={toast} onSaved={onBrand}/>}{tab==='ai'&&<>
-    <label>{tl("DeepSeek API key")}</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={cfg.key_set?tl("Leave blank to keep the current key"):tl("sk-…")}/>
-    <label>{tl("Model")}</label><input value={model} onChange={e=>setModel(e.target.value)} placeholder="deepseek-chat"/>
-    <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{deepseek_key:key,model}}).then(()=>setKey('')),'AI settings saved')}>{tl("Save")}</button>
-    {cfg.key_set&&<><button className="btn ghost" onClick={async()=>{try{toast((await api('/admin/ai/test',{method:'POST'})).message)}catch(e){toast(e.message)}}}>{tl("Test the key")}</button>
-      <button className="btn ghost" onClick={async()=>{if(await confirm({title:tl("Turn AI off for everyone?"),body:tl("Students will see “AI unavailable” until you save a key again."),ok:tl("Turn AI off"),danger:true}))run(()=>api('/admin/settings',{method:'PUT',body:{remove_key:true}}),'AI is off')}}>{tl("Remove the key (turn AI off)")}</button></>}
+    <label htmlFor="aip">{tl("AI provider")}</label><select id="aip" value={prov} onChange={e=>setProv(e.target.value)}>{provs.map(x=><option key={x.id} value={x.id}>{x.name}{x.id===cfg.provider?' · '+tl("in use"):x.key_set?' · '+tl("key saved"):''}</option>)}</select>
+    <p className="known" style={{marginTop:4}}>{tl("The college answers with one provider at a time. Keys saved for the others are kept, so you can switch back. Saved answers keep working after a switch.")}{pv?' '+tl("Create a key at {site}.",{site:pv.console}):''}</p>
+    {pv&&<><label htmlFor="aik">{tl("{name} API key",{name:pv.name})}</label><input id="aik" type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={pv.key_set?tl("Leave blank to keep the current key")+' ('+pv.key_hint+')':tl("Paste the key")}/>
+    <label htmlFor="aim">{tl("Model")}</label><input id="aim" value={model} onChange={e=>setModel(e.target.value)} placeholder={pv.model}/>
+    <button className="btn" disabled={!pv.key_set&&!key.trim()} onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{ai_provider:prov,keys:{[prov]:key},models:{[prov]:model}}}).then(()=>setKey('')),active?'AI settings saved':'AI provider changed')}>{active?tl("Save"):tl("Save and use {name}",{name:pv.name})}</button>
+    {active&&cfg.key_set&&<button className="btn ghost" onClick={async()=>{try{toast(srv((await api('/admin/ai/test',{method:'POST'})).message))}catch(e){toast(e.message)}}}>{tl("Test the key")}</button>}
+    {pv.key_set&&<button className="btn ghost" onClick={async()=>{if(!active||await confirm({title:tl("Turn AI off for everyone?"),body:tl("Students will see “AI unavailable” until you save a key again."),ok:tl("Turn AI off"),danger:true}))run(()=>api('/admin/settings',{method:'PUT',body:{remove_keys:[prov]}}),active?'AI is off':'Key removed')}}>{active?tl("Remove the key (turn AI off)"):tl("Remove this key")}</button>}</>}
     <h3 className="sec">{tl("Photos of diagrams (Claude)")}</h3>
-    <p className="known" style={{marginTop:0}}>{tl("Students can photograph a question, text or diagram and ask about it. The text in a photo is read on this server and only that text goes to DeepSeek. To let the AI look at diagrams, add a Claude API key: then, when a student says their question is about a diagram, the photo goes to Claude. Without a key, diagrams are read for their labels only.")}{" "}{cfg.ocr?'':tl("Reading text from photos needs Tesseract on this server (see Production first run in the README).")}</p>
+    <p className="known" style={{marginTop:0}}>{tl("Students can photograph a question, text or diagram and ask about it. The text in a photo is read on this server and only that text goes to the AI provider above. To let the AI look at diagrams, add a Claude API key: then, when a student says their question is about a diagram, the photo goes to Claude. Without a key, diagrams are read for their labels only.")}{" "}{cfg.ocr?'':tl("Reading text from photos needs Tesseract on this server (see Production first run in the README).")}</p>
     <label>{tl("Claude API key")}</label><input type="password" value={vkey} onChange={e=>setVkey(e.target.value)} placeholder={cfg.vision_set?tl("Leave blank to keep the current key")+' ('+cfg.vision_hint+')':'sk-ant-…'}/>
     <label>{tl("Vision model")}</label><input value={vmodel} onChange={e=>setVmodel(e.target.value)} placeholder="claude-opus-5-5"/>
     <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{vision_key:vkey,vision_model:vmodel}}).then(()=>setVkey('')),'Claude settings saved')}>{tl("Save")}</button>
@@ -2194,11 +2200,11 @@ function AiConfig({toast,onBrand}){
       <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{remove_vision_key:true}}),'Claude key removed')}>{tl("Remove the Claude key")}</button></>}
     <h3 className="sec">{tl("Monthly AI allowance")}</h3>
     <p className="known" style={{marginTop:0}}>{tl("A limit on the tokens the college's keys can use each month. When one is used up, new AI answers stop until the 1st; saved answers keep working, and people using their own key are not affected. You are warned on Home at 80%. Leave it at 0 for no limit.")}</p>
-    {['deepseek','claude'].map(p=>{const b=cfg.budget?.[p]||{used:0,limit:0};return <div key={p}><label>{p==='claude'?tl("Claude tokens a month"):tl("DeepSeek tokens a month")}</label>
+    {provs.filter(x=>x.key_set||x.budget.limit||x.budget.used).map(({id:p,name})=>{const b=cfg.budget?.[p]||{used:0,limit:0};return <div key={p}><label>{tl("{name} tokens a month",{name})}</label>
       <input inputMode="numeric" value={lim[p]} onChange={e=>setLim({...lim,[p]:e.target.value.replace(/\D/g,'')})} placeholder="0"/>
       <small className="known">{tl("Used this month: {used}",{used:b.used.toLocaleString()})}{b.limit?' · '+tl("{p}% of the allowance",{p:Math.round(100*b.used/b.limit)}):''}</small>
       {b.limit>0&&<div className="meter"><i style={{width:Math.min(100,Math.round(100*b.used/b.limit))+'%'}}/></div>}</div>})}
-    <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{budget_deepseek:+lim.deepseek||0,budget_claude:+lim.claude||0}}),'Allowance saved')}>{tl("Save allowance")}</button>
+    <button className="btn" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{budgets:Object.fromEntries(Object.entries(lim).map(([p,v])=>[p,+v||0]))}}),'Allowance saved')}>{tl("Save allowance")}</button>
     <p className="known" style={{marginTop:20}}>{tl("One key serves every student added by staff (people who register themselves use their own key). Until a key is saved, students see “AI unavailable. Try again later.” Each topic is explained once and the answer is shared with every student. {v} answers are saved so far, which has saved about {v2} tokens.",{v:(st.cached??0).toLocaleString(),v2:(st.tokens_saved??0).toLocaleString()})}</p>
     </>}{tab==='prompts'&&<PromptEditor toast={toast}/>}
     {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/><GoogleSetting cfg={cfg} run={run}/>
@@ -2209,22 +2215,24 @@ function AiConfig({toast,onBrand}){
 // By plan with the spread per person, by kind of request, and the people who used the most. Own keys cost the college nothing and are shown apart.
 const KIND_NAME={...FLAG_KIND,mcq:'MCQ sets',vision:'Photos of diagrams (Claude)',translate:'Translations',doubt:'Doubts',review:'Review',other:'Other'}
 function AiCosts({toast}){
-  const [days,setDays]=useState('30'),[r,setR]=useState(null),[rate,setRate]=useState({deepseek:'',claude:'',currency:''}),[busy,setBusy]=useState(false)
-  const load=()=>api('/admin/costs?days='+days).then(x=>{setR(x);setRate({deepseek:x.rates.deepseek?String(x.rates.deepseek):'',claude:x.rates.claude?String(x.rates.claude):'',currency:x.rates.currency})}).catch(e=>toast(e.message))
+  const [days,setDays]=useState('30'),[r,setR]=useState(null),[rate,setRate]=useState({}),[cur0,setCur0]=useState(''),[names,setNames]=useState([]),[busy,setBusy]=useState(false)
+  const load=()=>api('/admin/costs?days='+days).then(x=>{setR(x);setRate(Object.fromEntries(Object.entries(x.rates.prices).map(([p,v])=>[p,v?String(v):''])));setCur0(x.rates.currency)}).catch(e=>toast(e.message))
+  useEffect(()=>{api('/admin/budget').then(b=>setNames(Object.entries(b.names||{}))).catch(()=>{})},[])
   useEffect(()=>{load()},[days])
-  const save=async()=>{setBusy(true);try{await api('/admin/costs/rates',{method:'PUT',body:{deepseek:+rate.deepseek||0,claude:+rate.claude||0,currency:rate.currency}});toast(tl("Prices saved"));await load()}catch(e){toast(srv(e.message))}setBusy(false)}
+  const save=async()=>{setBusy(true);try{await api('/admin/costs/rates',{method:'PUT',body:{prices:Object.fromEntries(Object.entries(rate).map(([p,v])=>[p,+v||0])),currency:cur0}});toast(tl("Prices saved"));await load()}catch(e){toast(srv(e.message))}setBusy(false)}
   if(!r)return <Skeleton rows={4}/>
   const cur=r.rates.currency,money=v=>cur+(v<1&&v>0?v.toFixed(2):Math.round(v).toLocaleString()),num=v=>(v||0).toLocaleString(),t=r.total
   return <><h3 className="sec first">{tl("Prices")}</h3>
     <p className="known" style={{marginTop:0}}>{tl("What your providers charge for a million tokens, from their price pages or your bill. Tokens are counted as the providers bill them; questions sent with a person's own key cost the college nothing and are shown apart.")}</p>
-    <div className="two"><div><label htmlFor="cds">{tl("DeepSeek, per million tokens")}</label><input id="cds" inputMode="decimal" value={rate.deepseek} onChange={e=>setRate({...rate,deepseek:e.target.value.replace(/[^\d.]/g,'')})} placeholder="0"/></div>
-      <div><label htmlFor="ccl">{tl("Claude, per million tokens")}</label><input id="ccl" inputMode="decimal" value={rate.claude} onChange={e=>setRate({...rate,claude:e.target.value.replace(/[^\d.]/g,'')})} placeholder="0"/></div></div>
-    <label htmlFor="ccur">{tl("Currency sign")}</label><input id="ccur" value={rate.currency} maxLength={4} onChange={e=>setRate({...rate,currency:e.target.value})} placeholder="₹"/>
+    {names.map(([p,name])=><div key={p}><label htmlFor={'cp'+p}>{tl("{name}, per million tokens",{name})}</label><input id={'cp'+p} inputMode="decimal" value={rate[p]||''} onChange={e=>setRate({...rate,[p]:e.target.value.replace(/[^\d.]/g,'')})} placeholder="0"/></div>)}
+    <label htmlFor="ccur">{tl("Currency sign")}</label><input id="ccur" value={cur0} maxLength={4} onChange={e=>setCur0(e.target.value)} placeholder="₹"/>
     <button className="btn" disabled={busy} onClick={save}>{tl("Save prices")}</button>
     <h3 className="sec">{tl("Usage")}</h3>
     <div className="filters fit"><Opts label={tl("Period")} value={days} set={setDays} items={[['7',tl("Last 7 days")],['30',tl("Last 30 days")],['90',tl("Last 90 days")]]}/></div>
     <div className="qbox" style={{marginTop:0}} role="status">{r.priced?<><b>{money(t.cost)}</b>{" "}{tl("in the last {n} days",{n:r.days})}{r.days!==30&&<> · {tl("about {v} a month",{v:money(t.per_30_days)})}</>}</>:<b>{tl("Enter the prices above to see costs.")}</b>}
-      <p className="known" style={{margin:'4px 0 0'}}>{tl("{n} requests · DeepSeek {d} tokens · Claude {c} tokens",{n:num(t.requests),d:num(t.deepseek),c:num(t.claude)})}{t.own_tokens?' · '+tl("own keys {o} tokens",{o:num(t.own_tokens)}):''}</p></div>
+      <p className="known" style={{margin:'4px 0 0'}}>{tl("{n} requests · {k} tokens",{n:num(t.requests),k:num(t.tokens)})}{t.own_tokens?' · '+tl("own keys {o} tokens",{o:num(t.own_tokens)}):''}</p></div>
+    {r.providers.length>0&&<><h3 className="sec">{tl("By provider")}</h3>
+    {r.providers.map(p=><div key={p.provider} className="row"><div><b>{p.name}</b><small>{tl("{k} tokens",{k:num(p.tokens)})}{p.own_tokens?' · '+tl("own keys {o} tokens",{o:num(p.own_tokens)}):''}</small></div>{r.priced&&<span className="chip">{money(p.cost)}</span>}</div>)}</>}
     <h3 className="sec">{tl("By plan")}</h3>
     <p className="known" style={{marginTop:0}}>{tl("Cost a month for each person who used AI: the average, the middle person, the top 10% and the highest. Use it to set prices that cover heavy users.")}</p>
     {!r.plans.length?<p className="known">{tl("No AI use in this period.")}</p>:r.plans.map(p=><div key={p.plan} className="row"><div><b>{tl(PLAN_NAME[p.plan]||(p.plan==='staff'?'Staff':'Deleted accounts'))}</b>
@@ -2234,7 +2242,7 @@ function AiCosts({toast}){
     <h3 className="sec">{tl("By kind")}</h3>
     {r.kinds.map(k=><div key={k.kind} className="row"><div>{tl(KIND_NAME[k.kind]||k.kind)}<small>{tl("{q} requests · {k} tokens",{q:num(k.requests),k:num(k.tokens)})}{k.own_tokens?' · '+tl("own keys {o} tokens",{o:num(k.own_tokens)}):''}</small></div>{r.priced&&<span className="chip">{money(k.cost)}</span>}</div>)}
     <h3 className="sec">{tl("Who used the most")}</h3>
-    {r.top.map(u=><div key={u.id} className="row"><div><b>{u.name}</b><small>{u.email}{u.email?' · ':''}{tl(PLAN_NAME[u.plan]||(u.plan==='staff'?'Staff':'Deleted accounts'))} · {tl("{q} requests · {k} tokens",{q:num(u.requests),k:num(u.deepseek+u.claude)})}</small></div>{r.priced&&<span className="chip">{money(u.cost)}</span>}</div>)}
+    {r.top.map(u=><div key={u.id} className="row"><div><b>{u.name}</b><small>{u.email}{u.email?' · ':''}{tl(PLAN_NAME[u.plan]||(u.plan==='staff'?'Staff':'Deleted accounts'))} · {tl("{q} requests · {k} tokens",{q:num(u.requests),k:num(Object.values(u.tokens).reduce((a,b)=>a+b,0))})}</small></div>{r.priced&&<span className="chip">{money(u.cost)}</span>}</div>)}
     {r.top.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/admin/costs?days=${days}&format=csv`,`ai-costs-${days}-days.csv`,toast)}>{tl("Download everyone as CSV")}</button>}</>}
 // Settings > Email: the Gmail account that sends password resets, registration codes and daily summaries (its App Password is stored sealed
 // and never shown again), the site address used in links, how sending is going, and a log of what was sent (who and when, never the text)
@@ -2365,5 +2373,5 @@ function About({user}){
   const {appName}=useContext(Ctx),[c,setC]=useState({});useEffect(()=>{api('/config').then(setC)},[])
   return <><Bar title={tl("About")}/><div className="main"><div className="hero"><h2>{appName}</h2><p>{tl("Version")}{" "}{c.version||''}</p></div>
     <div className="prose"><p>{tl("A study companion for engineering students. Your admin adds programs, semesters, courses, units and topics along with the question pattern and answer guideline. Open a topic to get a clear explanation and a sample answer that follows the guideline.")}</p>
-    <p>{tl("The app remembers which topics you have read. Explanations and sample answers are generated once with DeepSeek and shared, so they open instantly.")}</p>
+    <p>{tl("The app remembers which topics you have read. Explanations and sample answers are generated once with AI and shared, so they open instantly.")}</p>
     <p>{tl("Signed in as")}{" "}<strong>{user.name}</strong> ({user.role}).</p></div></div></>}

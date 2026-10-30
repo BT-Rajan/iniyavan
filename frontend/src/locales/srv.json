@@ -120,16 +120,16 @@
 "You have used today's {n} MCQ sets. More from tomorrow."
 ],
 [
-"^You have used today's (?<n>\\d+) free AI searches\\. Saved answers still work\\. To keep going today, add your own DeepSeek key, or ask your admin for more\\.$",
-"You have used today's {n} free AI searches. Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+"^You have used today's (?<n>\\d+) free AI searches\\. Saved answers still work\\. To keep going today, add your own AI key, or ask your admin for more\\.$",
+"You have used today's {n} free AI searches. Saved answers still work. To keep going today, add your own AI key, or ask your admin for more."
 ],
 [
 "^You have used today's (?<n>\\d+) free AI searches\\. Saved answers still work\\. To keep going today, ask your admin for more\\.$",
 "You have used today's {n} free AI searches. Saved answers still work. To keep going today, ask your admin for more."
 ],
 [
-"^You have used today's (?<n>\\d+) free minutes of learning with AI\\. Saved answers still work\\. To keep going today, add your own DeepSeek key, or ask your admin for more\\.$",
-"You have used today's {n} free minutes of learning with AI. Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+"^You have used today's (?<n>\\d+) free minutes of learning with AI\\. Saved answers still work\\. To keep going today, add your own AI key, or ask your admin for more\\.$",
+"You have used today's {n} free minutes of learning with AI. Saved answers still work. To keep going today, add your own AI key, or ask your admin for more."
 ],
 [
 "^You have used today's (?<n>\\d+) free minutes of learning with AI\\. Saved answers still work\\. To keep going today, ask your admin for more\\.$",
@@ -166,5 +166,29 @@
 [
 "^(?<n>\\d+) min$",
 "{n} min"
+],
+[
+"^Could not reach (?<name>[A-Za-z]+) to check the key\\. Try again in a moment\\.$",
+"Could not reach {name} to check the key. Try again in a moment."
+],
+[
+"^(?<name>[A-Za-z]+) did not answer\\. Try again in a moment\\.$",
+"{name} did not answer. Try again in a moment."
+],
+[
+"^That does not look like a (?<name>[A-Za-z]+) API key\\. Copy the whole key from your [A-Za-z]+ account\\.$",
+"That does not look like a {name} API key. Copy the whole key from your {name} account."
+],
+[
+"^(?<name>[A-Za-z]+) rejected this key \\((?<code>\\d+)\\)\\. Check that you copied it correctly\\.$",
+"{name} rejected this key ({code}). Check that you copied it correctly."
+],
+[
+"^(?<name>[A-Za-z]+) rejected this key \\((?<code>\\d+)\\)\\. Check your [A-Za-z]+ balance\\.$",
+"{name} rejected this key ({code}). Check your {name} balance."
+],
+[
+"^(?<name>[A-Za-z]+) refused the key \\((?<code>\\d+)\\)\\. Check it, or the [A-Za-z]+ balance, under AI key in the menu\\.$",
+"{name} refused the key ({code}). Check it, or the {name} balance, under AI key in the menu."
 ]
 ]

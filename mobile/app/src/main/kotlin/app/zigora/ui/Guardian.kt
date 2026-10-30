@@ -184,9 +184,9 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
             Loaded(key) { k ->
                 Panel {
                     Text(if (k.key_set) tl("On, with your key {hint}", "hint" to k.key_hint) else tl("Off"), style = MaterialTheme.typography.titleMedium)
-                    Quiet(if (k.key_set) (if (parent) tl("Your children's AI help runs on your DeepSeek key.") else tl("Your students' AI help runs on your DeepSeek key, unless a parent has added theirs."))
-                          else (if (parent) tl("School students use AI only with a parent's or teacher's key. Add your DeepSeek key to turn it on for your children.")
-                                else tl("School students use AI only with a parent's or teacher's key. Add your DeepSeek key to turn it on for your students.")))
+                    Quiet(if (k.key_set) (if (parent) tl("Your children's AI help runs on your AI key.") else tl("Your students' AI help runs on your AI key, unless a parent has added theirs."))
+                          else (if (parent) tl("School students use AI only with a parent's or teacher's key. Add your AI key to turn it on for your children.")
+                                else tl("School students use AI only with a parent's or teacher's key. Add your AI key to turn it on for your students.")))
                     OutlinedButton(onClick = { keyOpen = true }) { Text(if (k.key_set) tl("Change the key") else tl("Add an AI key")) }
                 }
             }

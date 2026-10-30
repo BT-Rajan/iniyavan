@@ -34,7 +34,7 @@ class FakeAI:  # stands in for DeepSeek: answers by what the system prompt asks 
 fake = FakeAI()
 
 def setup(env, monkeypatch, key="sk-test"):
-    monkeypatch.setattr(main, "deepseek", fake); FakeAI.calls = []
+    monkeypatch.setattr(main, "chat", lambda k, messages, **kw: (fake)(k.key, k.model, messages, **kw)); FakeAI.calls = []
     if key:
         with Session_() as s: s.merge(Setting(k="deepseek_key", v=key)); s.commit()
 def new(env, h=None, title="Chemistry notes"): r = env.c.post("/api/study/courses", headers=h or env.stu, json={"title": title}); assert r.status_code == 200, r.text; return r.json()["id"]

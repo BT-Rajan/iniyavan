@@ -72,7 +72,7 @@ import java.net.URLEncoder
 /** the line about AI help for your own courses: switched off, or only a few requests left today */
 @Composable
 fun AiNote(available: Boolean, left: Int?, ownKey: Boolean) = when {
-    !available -> Quiet(if (ownKey) tl("Add your own DeepSeek API key under “My AI key” in the menu to use explanations, quick checks and quizzes.")
+    !available -> Quiet(if (ownKey) tl("Add your own AI key under “My AI key” in the menu to use explanations, quick checks and quizzes.")
                         else tl("AI help is switched off right now. Ask your admin to add an AI key."))
     left != null && left <= 10 -> Quiet(if (left > 0) tl("{n} left today for your own courses.", "n" to pl(left, "AI request"))
                                          else tl("You have used today's AI requests for your own courses. Reviews still work; new questions come back tomorrow."))

@@ -77,7 +77,7 @@ fun MoreAiPanel() {
 
 private fun planLine(u: PlanUser) = when (u.plan) {
     "pro" -> tl("Pro until {date}", "date" to stamp(u.pro_until.orEmpty()))
-    "own" -> tl("Own key: uses their own DeepSeek key")
+    "own" -> tl("Own key: uses their own AI key")
     "lite" -> tl("Lite: the free daily allowance")
     else -> u.plan
 }

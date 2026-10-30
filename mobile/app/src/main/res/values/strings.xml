@@ -6,7 +6,7 @@
     <string name="about_diagram">It\'s about a diagram</string>
     <string name="about_diagram_hint">Sends the photo itself, so the AI can see the drawing</string>
     <string name="about_text_1">A study companion for engineering students. Your admin adds programs, semesters, courses, units and topics along with the question pattern and answer guideline. Open a topic to get a clear explanation and a sample answer that follows the guideline.</string>
-    <string name="about_text_2">The app remembers which topics you have read. Explanations and sample answers are generated once with DeepSeek and shared, so they open instantly.</string>
+    <string name="about_text_2">The app remembers which topics you have read. Explanations and sample answers are generated once with AI and shared, so they open instantly.</string>
     <string name="account">Account</string>
     <string name="add">Add</string>
     <string name="add_a_file">Add a file</string>
@@ -58,7 +58,6 @@
     <string name="daily_email">Email me a daily summary of new ones</string>
     <string name="daily_note">A quiet daily note</string>
     <string name="daily_note_hint">Once a day, only when a teacher\'s date or a calendar event is coming up, or there is a new test</string>
-    <string name="deepseek_key">DeepSeek API key</string>
     <string name="done">Done</string>
     <string name="done_answers_below">Done. The answers are below.</string>
     <string name="done_new_set">Done. A new set is there whenever you want one.</string>
@@ -102,7 +101,7 @@
     <string name="institution">Institution</string>
     <string name="interactive_note_long">This topic is an interactive page. Open it above to use it and highlight its text.</string>
     <string name="ive_learned_this">I\'ve learned this</string>
-    <string name="key_explain">Optional. Without a key you are on Lite: a free daily allowance of AI on your college\'s key. With your own DeepSeek key there is no daily limit, and usage is billed to your DeepSeek account. Create a key at platform.deepseek.com, paste it here and save. We check it with DeepSeek first, then store it encrypted. It is never shown again in full.</string>
+    <string name="key_explain">Optional. Without a key you are on Lite: a free daily allowance of AI on your college\'s key. With your own key from DeepSeek, ChatGPT, Claude, Qwen or Perplexity there is no daily limit, and usage is billed to your account with that provider. Choose the provider, paste its key and save. We check it with the provider first, then store it encrypted. It is never shown again in full.</string>
     <string name="key_off">No key yet: you are on Lite</string>
     <string name="key_on">AI is on · key %1$s</string>
     <string name="key_placeholder">sk-…</string>
@@ -182,8 +181,7 @@
     <string name="open_interactive">Open the interactive page</string>
     <string name="open_title">Open %1$s</string>
     <string name="original">Original</string>
-    <string name="own_key_how">Paste a DeepSeek API key (from platform.deepseek.com). It is checked, then stored encrypted; usage is billed to your DeepSeek account.</string>
-    <string name="own_key_note">You use your own DeepSeek key, so there is no daily limit.</string>
+    <string name="own_key_note">You use your own AI key, so there is no daily limit.</string>
     <string name="page_of">%1$d of %2$d</string>
     <string name="part_n_words">Part %1$d · %2$d words</string>
     <string name="password">Password</string>
@@ -213,7 +211,7 @@
     <string name="reading_photo">Reading the text in the photo…</string>
     <string name="reading_scanned_n">Reading scanned pages… %1$d of %2$d</string>
     <string name="register_lead">We will email you a code to confirm your address.</string>
-    <string name="register_password_note">At least 8 characters. AI help starts on Lite: a free daily allowance. You can add your own DeepSeek key later for more.</string>
+    <string name="register_password_note">At least 8 characters. AI help starts on Lite: a free daily allowance. You can add your own AI key later for more.</string>
     <string name="remember_this">Remember this?</string>
     <string name="remove">Remove</string>
     <string name="remove_bookmark">Remove bookmark</string>
