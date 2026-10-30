@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonObject
 
 // The shapes the server sends. Only what the app shows is read; anything new the server adds is ignored.
 
-@Serializable data class Config(val name: String = "Zigora", val self_registration: Boolean = false, val email_reset: Boolean = false, val version: String? = null,
+@Serializable data class Config(val name: String = "Zigora", val self_registration: Boolean = false, val email_signup: Boolean = true, val email_reset: Boolean = false, val version: String? = null,
                                 val google_client_id: String? = null)  // Sign in with Google: the server's web client ID, which Google's sheet on Android asks a token for
 @Serializable data class Me(val id: Int, val name: String, val role: String, val must_change: Boolean = false, val self_registered: Boolean = false, val placed: Boolean = true, val lang: String = "en",
                             val username: String? = null, val relation: String? = null, val level: String? = null, val ai_off: Boolean = false)  // relation: a guardian's "parent" or "teacher"; ai_off: a school student with no parent's or teacher's key
