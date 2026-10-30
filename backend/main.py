@@ -49,6 +49,7 @@ class User(Base):
     ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
     digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)
     google_sub = Column(String(64), unique=True, nullable=True)  # the Google account that signs in to this one (Google's own id for it, which never changes)
+    cal_token = Column(String(64), unique=True, nullable=True)  # a hash of the private link a phone's calendar subscribes to (the link itself is never stored)
     username = Column(String(40), unique=True, nullable=True)  # sign-in name for a child a parent or teacher created (no email of their own); lower case
     relation = Column(String(10), nullable=True)  # a guardian's relation to the students they manage: "parent" or "teacher"
     level = Column(String(8), nullable=True)  # "school" or "college", chosen at sign-up; a student placed in a program takes it from the program instead
@@ -847,7 +848,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0028_pending_onboarding", lambda c: [_addcol("pending_registrations", col, typ)(c) for col, typ in (("who", "VARCHAR(10) NULL"), ("level", "VARCHAR(8) NULL"),
                                                      ("program_id", "INTEGER NULL"), ("semester", "INTEGER NULL"), ("children", "TEXT NULL"))]),
               ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__])),  # new tables only
-              ("0030_users_google", lambda c: google_columns(c))]
+              ("0030_users_google", lambda c: google_columns(c)),
+              ("0031_calendar", lambda c: calendar_tables(c))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -4964,12 +4966,12 @@ def stop_routine(u: User = Depends(me), s: Session = Depends(db)):  # back to st
     s.query(DaySession).filter_by(user_id=u.id).delete(); s.query(Routine).filter_by(user_id=u.id).delete(); s.commit(); return {"routine": None}
 # ---- notifications: worked out from what needs doing now, with each person's seen ones remembered, and an optional daily email ----
 STUDENT_NOTES = ("due_soon", "quiz_new")  # a teacher's date coming up and a new test; no reminders about being late or scoring low
-def notes_for(u, s):  # [{key, text, sub}]: staff get what needs attention, students their deadlines and tests. The key changes when the item does
-    if u.role == "guardian": return []
+def notes_for(u, s):  # [{key, text, sub}]: staff get what needs attention, students their deadlines, tests and calendar events. The key changes when the item does
+    if u.role == "guardian": return cal_notes(u, s)
     if u.role == "student":
         asks = [{"key": f"invite:{l.id}", "text": f"{g.name} wants to follow your progress", "sub": "Accept or decline on Home"} for l, g in invitations(s, u.id)]
         return asks + [{"key": f"{i['kind']}:{i.get('quiz_id') or i.get('id')}"[:120], "text": i.get("title") or "", "sub": i.get("reason") or ""}
-                for i in my_today(u=u, s=s)["focus"] if i.get("kind") in STUDENT_NOTES]
+                for i in my_today(u=u, s=s)["focus"] if i.get("kind") in STUDENT_NOTES] + cal_notes(u, s)
     return [{"key": f"{a['kind']}:{a['count']}"[:120], "text": a["text"], "sub": ""} for a in overview(u=u, s=s)["attention"]]
 @app.get("/api/me/notifications")
 def my_notifications(u: User = Depends(me), s: Session = Depends(db)):
@@ -5549,6 +5551,246 @@ def mcq_summary(s, uid):  # for a teacher who follows a student: sets done, thei
     st = mcq_topic_stats(s, uid); titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_(list(st) or [0]))}
     return {"sets": len(rows), "average": round(sum(p or 0 for p, _ in rows) / len(rows)), "last_at": iso(max(t for _, t in rows)),
             "revisit": [titles[t] for t, v in sorted(st.items(), key=lambda x: x[1]["percent"]) if v["percent"] < 50 and t in titles][:5]}
+# ---- calendar: one place for what is coming up and what was done. Events people add (exams, holidays, tests, due work, reminders) sit with what
+# ---- Zigora already knows (learn-by deadlines, the study routine's sessions, days studied, quiz and MCQ results, Pro ending). Days are the student's
+# ---- local days (DAY_OFFSET_MINUTES), and an event's time is on that clock too. A private link lets a phone's calendar subscribe (iCalendar).
+class CalendarEvent(Base):
+    __tablename__ = "calendar_events"
+    id = Column(Integer, primary_key=True); title = Column(String(200)); notes = Column(Text, nullable=True); kind = Column(String(12), default="event")
+    day = Column(Date, index=True); end_day = Column(Date, nullable=True); at = Column(String(5), nullable=True)  # a local day (to end_day for several days); "09:30" or all day
+    scope = Column(String(10), default="user")  # who sees it: all, program, semester (a program's term), course, or user (one person)
+    program_id = Column(Integer, nullable=True, index=True); semester = Column(Integer, nullable=True); course_id = Column(Integer, nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)  # a course's exam stays when its author's account goes
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+def calendar_tables(c):
+    Base.metadata.create_all(c, tables=[CalendarEvent.__table__])
+    _addcol("users", "cal_token", "VARCHAR(64) NULL")(c); ins = inspect(c)
+    if not any(x["column_names"] == ["cal_token"] for x in ins.get_indexes("users") + ins.get_unique_constraints("users")):
+        c.execute(text("CREATE UNIQUE INDEX ix_users_cal_token ON users (cal_token)"))
+EVENT_KINDS = ("exam", "test", "assignment", "holiday", "event", "reminder")
+CAL_SPAN, EVENT_DAYS, FEED_BACK, FEED_AHEAD = 92, 60, 30, 180  # longest range asked for at once; longest event; what the subscribed calendar covers
+HHMM = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+def day_of(v, what="date"):
+    try: return dt.date.fromisoformat(str(v)[:10])
+    except ValueError: raise HTTPException(400, f"Give the {what} as YYYY-MM-DD")
+def student_course_ids(st, s):  # the courses this student sees in their own list (the same rule as the reports)
+    if st.program_id is None: return set()
+    sems = {x.id: x for x in s.query(Semester)}; links = defaultdict(list)
+    for l in s.query(CourseLink): links[l.course_id].append(l.semester_id)
+    return {c.id for c in s.query(Course) if course_audience(c, [st], sems, links)}
+def event_rows(s, d0, d1, who=None, mine=None, staff_of=None):
+    """Events overlapping d0..d1. who: the student they are for (everyone's, their program's and term's, their courses', their own);
+    mine: a person's own (made by them or for them); staff_of: what a member of staff manages."""
+    q = s.query(CalendarEvent).filter(CalendarEvent.day <= d1, or_(CalendarEvent.end_day >= d0, and_(CalendarEvent.end_day.is_(None), CalendarEvent.day >= d0)))
+    if who is not None:
+        cids = student_course_ids(who, s); conds = [CalendarEvent.scope == "all", and_(CalendarEvent.scope == "user", CalendarEvent.user_id == who.id)]
+        if who.program_id: conds += [and_(CalendarEvent.scope == "program", CalendarEvent.program_id == who.program_id),
+                                     and_(CalendarEvent.scope == "semester", CalendarEvent.program_id == who.program_id, CalendarEvent.semester == who.semester)]
+        if cids: conds.append(and_(CalendarEvent.scope == "course", CalendarEvent.course_id.in_(cids)))
+        q = q.filter(or_(*conds))
+    elif mine is not None: q = q.filter(or_(CalendarEvent.created_by == mine.id, and_(CalendarEvent.scope == "user", CalendarEvent.user_id == mine.id)))
+    elif staff_of is not None and staff_of.role != "admin":
+        own = [c.id for c in my_courses(staff_of, s)]
+        q = q.filter(or_(CalendarEvent.scope == "all", CalendarEvent.created_by == staff_of.id, and_(CalendarEvent.scope == "course", CalendarEvent.course_id.in_(own or [0]))))
+    return q.order_by(CalendarEvent.day, CalendarEvent.at).all()
+def scope_label(e, s):
+    if e.scope == "all": return "Everyone"
+    if e.scope == "course": c = s.get(Course, e.course_id); return c.name if c else "A course"
+    if e.scope in ("program", "semester"):
+        p = s.get(Program, e.program_id); n = p.name if p else "A program"
+        return f"{n} · {term_label(p) if p else 'Semester'} {e.semester}" if e.scope == "semester" else n
+    o = s.get(User, e.user_id); return o.name if o else ""
+def event_item(e, u, s):
+    return {"id": f"ev:{e.id}", "kind": e.kind, "date": e.day.isoformat(), "end": e.end_day.isoformat() if e.end_day else None, "at": e.at, "title": e.title, "sub": scope_label(e, s),
+            "state": None, "event": {"id": e.id, "notes": e.notes or "", "scope": e.scope, "program_id": e.program_id, "semester": e.semester, "course_id": e.course_id,
+                                     "user_id": e.user_id, "can_edit": e.created_by == u.id or u.role == "admin"}}
+def local_hhmm(t): return (t + dt.timedelta(minutes=DAY_OFFSET)).strftime("%H:%M")
+def student_items(st, s, d0, d1, now):
+    """What Zigora already knows about this student, day by day: deadlines, study sessions, days studied, results, Pro ending, the next free MCQ set."""
+    out, today = [], local_day(now)
+    for p in tree(st, s):  # learn-by deadlines on the topics they see
+        for sm in p["semesters"]:
+            for c in sm["courses"]:
+                for un in c["units"]:
+                    for t in un["topics"]:
+                        if not t.get("learning_due_at"): continue
+                        due = dt.datetime.fromisoformat(t["learning_due_at"].replace("Z", "")); d = local_day(due)
+                        if d0 <= d <= d1: out.append({"id": f"due:{t['id']}", "kind": "deadline", "date": d.isoformat(), "at": local_hhmm(due), "title": t["title"], "sub": c["name"],
+                                                       "state": "done" if t["status"] == "completed" else "overdue" if t.get("overdue") else "planned", "link": {"topic": t["id"]}})
+    r = s.get(Routine, st.id)
+    if r:  # the routine's sessions: done, missed, or coming
+        start = max(d0, local_day(r.started_at or now)); done = {x.day: x for x in s.query(DaySession).filter(DaySession.user_id == st.id, DaySession.day >= d0, DaySession.day <= d1)}
+        d = start
+        while d <= d1:
+            ds = done.get(d)
+            if r.days[d.weekday()] == "1" or ds:
+                state = "done" if ds and ds.done_at else "planned" if d >= today else "missed"
+                out.append({"id": f"ses:{d.isoformat()}", "kind": "session", "date": d.isoformat(), "at": r.at, "title": "Study session", "sub": f"{r.minutes} min", "state": state, "link": {"session": True}})
+            d += dt.timedelta(days=1)
+    for a in s.query(ActivityDay).filter(ActivityDay.user_id == st.id, ActivityDay.day >= d0, ActivityDay.day <= d1):
+        out.append({"id": f"day:{a.day.isoformat()}", "kind": "studied", "date": a.day.isoformat(), "at": None, "title": "Studied", "sub": "", "state": "done"})
+    lo, hi = day_start(d0), day_start(d1 + dt.timedelta(days=1))
+    for a, q in s.query(Attempt, Quiz).join(Quiz, Quiz.id == Attempt.quiz_id).filter(Attempt.user_id == st.id, Attempt.at >= lo, Attempt.at < hi):
+        out.append({"id": f"quiz:{a.id}", "kind": "result", "date": local_day(a.at).isoformat(), "at": local_hhmm(a.at), "title": q.title, "sub": f"{a.percent}%", "state": "done", "link": {"quiz": q.id}})
+    for a in s.query(McqAttempt).filter(McqAttempt.user_id == st.id, McqAttempt.status == "submitted", McqAttempt.submitted_at >= lo, McqAttempt.submitted_at < hi):
+        out.append({"id": f"mcq:{a.id}", "kind": "result", "date": local_day(a.submitted_at).isoformat(), "at": local_hhmm(a.submitted_at), "title": "MCQ practice set",
+                    "sub": f"{a.score} / {a.total} · {a.percent}%", "state": "done", "link": {"mcq": a.id}})
+    if st.pro_until and d0 <= local_day(st.pro_until) <= d1:
+        out.append({"id": "pro", "kind": "plan", "date": local_day(st.pro_until).isoformat(), "at": local_hhmm(st.pro_until), "title": "Pro ends", "sub": "Back to Lite after this", "state": None})
+    nxt = mcq_quota(st, s, now).get("next_at")
+    if nxt:
+        t = dt.datetime.fromisoformat(nxt[:-1])
+        if d0 <= local_day(t) <= d1: out.append({"id": "mcq-next", "kind": "plan", "date": local_day(t).isoformat(), "at": local_hhmm(t), "title": "Next MCQ set", "sub": "Your next set is free from then", "state": None, "link": {"mcq": True}})
+    return out
+def linked_students(s, g):  # a parent's or teacher's students who accepted (or were added by them)
+    return [x for _, x in s.query(GuardianLink, User).join(User, User.id == GuardianLink.student_id).filter(GuardianLink.guardian_id == g.id, GuardianLink.status == "active", User.active == True).order_by(User.name)]
+def cal_student(u, s, student):  # whose calendar this is: a student's own, or one a parent or teacher follows
+    if not student: return u if u.role == "student" else None
+    if u.role == "guardian":
+        st = next((x for x in linked_students(s, u) if x.id == student), None)
+        if st: return st
+    if u.role == "student" and student == u.id: return u
+    raise HTTPException(404, "Not one of your students")
+def calendar_items(u, s, d0, d1, student=0, now=None):
+    now = now or dt.datetime.utcnow(); st = cal_student(u, s, student)
+    if st is not None:
+        evs = {e.id: e for e in event_rows(s, d0, d1, who=st)}
+        if st.id != u.id: evs.update({e.id: e for e in event_rows(s, d0, d1, mine=u) if e.scope == "user" and e.user_id in (u.id, st.id)})  # the parent's own notes too
+        items = [event_item(e, u, s) for e in evs.values()] + student_items(st, s, d0, d1, now)
+    elif u.role == "guardian": items = [event_item(e, u, s) for e in event_rows(s, d0, d1, mine=u)]
+    else: items = [event_item(e, u, s) for e in event_rows(s, d0, d1, staff_of=u)]
+    return st, sorted(items, key=lambda x: (x["date"], x.get("at") or "", x["kind"] != "deadline", x["title"]))
+@app.get("/api/calendar")
+def calendar(start: str, end: str, student: int = 0, u: User = Depends(me), s: Session = Depends(db)):
+    d0, d1 = day_of(start, "start"), day_of(end, "end")
+    if d1 < d0 or (d1 - d0).days > CAL_SPAN: raise HTTPException(400, f"Ask for up to {CAL_SPAN} days at a time")
+    st, items = calendar_items(u, s, d0, d1, student)
+    return {"items": items, "today": local_day(dt.datetime.utcnow()).isoformat(), "student": {"id": st.id, "name": st.name} if st and st.id != u.id else None,
+            "students": [{"id": x.id, "name": x.name} for x in linked_students(s, u)] if u.role == "guardian" else []}
+@app.get("/api/calendar/options")
+def calendar_options(u: User = Depends(me), s: Session = Depends(db)):  # where the person may put an event, for the form
+    if u.role == "admin":
+        progs = s.query(Program).filter(Program.archived_at.is_(None)).order_by(Program.name).all()
+        return {"scopes": ["all", "program", "semester", "course", "user"], "programs": [{"id": p.id, "name": p.name, "term": term_label(p)} for p in progs],
+                "courses": [{"id": c.id, "name": c.name} for c in live_courses(u, s)], "students": [], "kinds": EVENT_KINDS}
+    if u.role == "faculty": return {"scopes": ["course", "user"], "programs": [], "courses": [{"id": c.id, "name": c.name} for c in live_courses(u, s)], "students": [], "kinds": EVENT_KINDS}
+    if u.role == "guardian": return {"scopes": ["user"], "programs": [], "courses": [], "students": [{"id": x.id, "name": x.name} for x in linked_students(s, u)], "kinds": EVENT_KINDS}
+    return {"scopes": ["user"], "programs": [], "courses": [], "students": [], "kinds": EVENT_KINDS}
+class EventIn(BaseModel):
+    title: str; kind: str = "event"; day: str; end_day: str | None = None; at: str | None = None; notes: str = ""
+    scope: str = "user"; program_id: int | None = None; semester: int | None = None; course_id: int | None = None; user_id: int | None = None
+def clean_event(b, u, s):
+    title, notes = " ".join(b.title.split()), b.notes.strip()
+    if not 1 <= len(title) <= 200: raise HTTPException(400, "Give the event a title (up to 200 characters)")
+    if len(notes) > 1000: raise HTTPException(400, "Keep the notes under 1000 characters")
+    if b.kind not in EVENT_KINDS: raise HTTPException(400, "Pick what kind of event it is")
+    day = day_of(b.day); end = day_of(b.end_day, "end date") if b.end_day else None
+    if end is not None and end == day: end = None
+    if end is not None and not 0 < (end - day).days <= EVENT_DAYS: raise HTTPException(400, f"The end date comes after the start, within {EVENT_DAYS} days")
+    at = (b.at or "").strip() or None
+    if at and not HHMM.fullmatch(at): raise HTTPException(400, "Give the time as HH:MM, for example 09:30")
+    v = {"title": title, "notes": notes or None, "kind": b.kind, "day": day, "end_day": end, "at": at, "scope": b.scope, "program_id": None, "semester": None, "course_id": None, "user_id": None}
+    if b.scope == "user":
+        uid = b.user_id or u.id
+        if uid != u.id and not (u.role == "guardian" and any(x.id == uid for x in linked_students(s, u))) and u.role != "admin": raise HTTPException(403, "You can add events for yourself or your own students")
+        if not s.get(User, uid): raise HTTPException(404, "User not found")
+        v["user_id"] = uid
+    elif b.scope == "course":
+        c = s.get(Course, b.course_id or 0)
+        if not c: raise HTTPException(404, "Course not found")
+        if u.role != "admin" and not (u.role == "faculty" and c.faculty_owner_id == u.id): raise HTTPException(403, "Only the course's owner or an admin can add events for a course")
+        v["course_id"] = c.id
+    elif b.scope in ("all", "program", "semester"):
+        if u.role != "admin": raise HTTPException(403, "Only admins can add events for everyone, a program or a semester")
+        if b.scope != "all":
+            p = s.get(Program, b.program_id or 0)
+            if not p: raise HTTPException(404, "Program not found")
+            v["program_id"] = p.id
+            if b.scope == "semester":
+                if not b.semester or not 1 <= b.semester <= 20: raise HTTPException(400, f"Choose a {term_label(p).lower()}")
+                v["semester"] = b.semester
+    else: raise HTTPException(400, "Choose who the event is for")
+    return v
+@app.post("/api/calendar/events")
+def add_event(b: EventIn, u: User = Depends(me), s: Session = Depends(db)):
+    e = CalendarEvent(**clean_event(b, u, s), created_by=u.id); s.add(e); s.commit(); return event_item(e, u, s)
+def own_event(eid, u, s):
+    e = s.get(CalendarEvent, eid)
+    if not e: raise HTTPException(404, "Event not found")
+    if e.created_by != u.id and u.role != "admin": raise HTTPException(403, "Only whoever added an event (or an admin) can change it")
+    return e
+@app.put("/api/calendar/events/{eid}")
+def edit_event(eid: int, b: EventIn, u: User = Depends(me), s: Session = Depends(db)):
+    e = own_event(eid, u, s)
+    for k, v in clean_event(b, u, s).items(): setattr(e, k, v)
+    s.commit(); return event_item(e, u, s)
+@app.delete("/api/calendar/events/{eid}")
+def delete_event(eid: int, u: User = Depends(me), s: Session = Depends(db)):
+    s.delete(own_event(eid, u, s)); s.commit(); return {"ok": True}
+# the subscribe link: a random token in the address, only its hash kept; making a new one ends the old one
+def cal_hash(t): return hashlib.sha256(t.encode()).hexdigest()
+@app.get("/api/calendar/link")
+def cal_link_state(u: User = Depends(me)): return {"on": bool(u.cal_token)}
+@app.post("/api/calendar/link")
+def cal_link_new(u: User = Depends(me), s: Session = Depends(db)):
+    t = secrets.token_urlsafe(32); u.cal_token = cal_hash(t); s.commit()
+    return {"on": True, "path": f"/api/calendar/feed/{t}.ics"}  # the app puts the site's address in front
+@app.post("/api/calendar/link/off")
+def cal_link_off(u: User = Depends(me), s: Session = Depends(db)): u.cal_token = None; s.commit(); return {"on": False}
+def ics_text(v): return v.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\r", "").replace("\n", "\\n")
+def ics_fold(line):  # lines of at most 75 bytes, continued with a space (RFC 5545)
+    b, out = line.encode(), []
+    while len(b) > 75:
+        cut = 75 if not out else 74
+        while cut and (b[cut] & 0xC0) == 0x80: cut -= 1  # never inside a character
+        out.append(b[:cut]); b = b[cut:]
+    out.append(b); return "\r\n ".join(x.decode() for x in out)
+def ics_event(it, who, stamp):  # who: (id, name) of the child it is about, in a parent's calendar
+    d = dt.date.fromisoformat(it["date"]); title = (f"{who[1]}: " if who else "") + it["title"]; uid = f"{it['id'].replace(':', '-')}{f'-{who[0]}' if who else ''}@zigora"
+    lines = ["BEGIN:VEVENT", f"UID:{re.sub(r'[^A-Za-z0-9@._-]', '', uid)}", f"DTSTAMP:{stamp}", f"SUMMARY:{ics_text(title)}"]
+    if it.get("at") and not it.get("end"):
+        t0 = dt.datetime.combine(d, dt.time.fromisoformat(it["at"])) - dt.timedelta(minutes=DAY_OFFSET)  # the local clock to UTC
+        lines += [f"DTSTART:{t0:%Y%m%dT%H%M%SZ}", f"DTEND:{t0 + dt.timedelta(minutes=30):%Y%m%dT%H%M%SZ}"]
+    else:
+        end = dt.date.fromisoformat(it["end"]) if it.get("end") else d
+        lines += [f"DTSTART;VALUE=DATE:{d:%Y%m%d}", f"DTEND;VALUE=DATE:{end + dt.timedelta(days=1):%Y%m%d}"]
+    desc = " · ".join(x for x in (it.get("sub"), (it.get("event") or {}).get("notes")) if x)
+    if desc: lines.append(f"DESCRIPTION:{ics_text(desc)}")
+    return lines + ["END:VEVENT"]
+FEED_KINDS = ("exam", "test", "assignment", "holiday", "event", "reminder", "deadline", "session", "plan")  # what is worth a phone's calendar: not results or days studied
+@app.get("/api/calendar/feed/{token}")
+def cal_feed(token: str, s: Session = Depends(db)):
+    t = token[:-4] if token.endswith(".ics") else token
+    u = s.query(User).filter_by(cal_token=cal_hash(t)).first() if 20 <= len(t) <= 100 else None
+    if not u or not u.active: raise HTTPException(404, "This calendar link is no longer on. Make a new one in Zigora.")
+    now = dt.datetime.utcnow(); today = local_day(now); d0, d1 = today - dt.timedelta(days=FEED_BACK), today + dt.timedelta(days=FEED_AHEAD)
+    kids = linked_students(s, u)[:MAX_PARENT_KIDS] if u.role == "guardian" and u.relation == "parent" else []
+    groups = [(None, calendar_items(u, s, d0, d1)[1])] + [((x.id, x.name), calendar_items(u, s, d0, d1, x.id)[1]) for x in kids]; kid_ids = {x.id for x in kids}
+    stamp, seen, lines = f"{now:%Y%m%dT%H%M%SZ}", set(), ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Zigora//Calendar//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+                                                          f"X-WR-CALNAME:{ics_text(setting(s, 'app_name', APP_NAME))}", "X-PUBLISHED-TTL:PT1H", "REFRESH-INTERVAL;VALUE=DURATION:PT1H"]
+    for who, items in groups:
+        for it in items:
+            if it["kind"] not in FEED_KINDS or (it["kind"] == "session" and it["date"] < today.isoformat()) or (who, it["id"]) in seen: continue
+            if who is None and (it.get("event") or {}).get("user_id") in kid_ids: continue  # a parent's note about a child is listed under the child's name
+            seen.add((who, it["id"])); lines += ics_event(it, who, stamp)
+    body = "\r\n".join(ics_fold(x) for x in lines + ["END:VCALENDAR"]) + "\r\n"
+    return Response(body, media_type="text/calendar; charset=utf-8", headers={"Cache-Control": "private, max-age=900", "Content-Disposition": 'inline; filename="zigora.ics"'})
+def cal_notes(u, s, now=None):  # reminders: events today and tomorrow, in the bell, the daily email and the app's daily note
+    now = now or dt.datetime.utcnow(); today = local_day(now); tmw = today + dt.timedelta(days=1); out = []
+    def add(e, who):
+        d = max(e.day, today); when = "Today" if d == today else "Tomorrow"
+        out.append({"key": f"cal:{e.id}:{d.isoformat()}" + (f":{who.id}" if who else ""), "text": (f"{who.name}: " if who else "") + e.title,
+                    "sub": f"{when} · {e.at}" if e.at and d == e.day else when})
+    if u.role == "student":
+        for e in event_rows(s, today, tmw, who=u): add(e, None)
+    elif u.role == "guardian":
+        for e in event_rows(s, today, tmw, mine=u):
+            if e.scope == "user" and e.user_id == u.id: add(e, None)
+        if u.relation == "parent":
+            for x in linked_students(s, u)[:MAX_PARENT_KIDS]:
+                for e in event_rows(s, today, tmw, who=x): add(e, x)
+    return out
 def uploads_under_base(html):  # pictures saved as /api/uploads/... inside a page that is shown on its own (an interactive topic): under BASE_PATH too
     if not BASE_PATH: return html
     return re.sub(r"""((?:\b(?:src|href)\s*=\s*["']?|url\(\s*["']?))/api/uploads/""", lambda m: m.group(1) + BASE_PATH + "/api/uploads/", html, flags=re.I)
