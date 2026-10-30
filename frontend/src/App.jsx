@@ -112,23 +112,31 @@ function GoogleButton({clientId,onCredential,text='signin_with'}){
       g.renderButton(box.current,{theme:'outline',size:'large',shape:'pill',text,width:Math.min(box.current.offsetWidth||320,400),locale:getLang()})}).catch(()=>{})
     return()=>{gone=true}},[clientId,text])
   return <div className="gbtn" ref={box}/>}
-function Login({onIn,toast,msg,appName,logo,canReset,canReg,googleId}){
+function Login({onIn,toast,msg,appName,logo,canReset,canReg,googleId}){  // two tabs when sign-up is open: Sign in (password or Google) and Create an account (Google or email)
   const [f,setF]=useState({email:'',password:''}),[b,setB]=useState(false),[mode,setMode]=useState('in'),[sent,setSent]=useState(''),[gsign,setGsign]=useState(null)
   const withGoogle=async credential=>{setB(true);try{const r=await api('/login/google',{method:'POST',body:{credential}})
-    if(r.token){localStorage.t=r.token;onIn(r.user)}else if(r.new){setGsign(r);setMode('register')}}catch(e){toast(e.message)}setB(false)}
+    if(r.token){localStorage.t=r.token;onIn(r.user)}else if(r.new){setGsign(r);setMode('register')}}catch(e){toast(e.message)}setB(false)}  // an existing account just signs in, from either tab
   const go=async()=>{setB(true);try{const r=await api('/login',{method:'POST',body:f});localStorage.t=r.token;onIn(r.user)}catch(e){toast(e.message)}setB(false)}
   const forgot=async()=>{setB(true);try{setSent((await api('/forgot',{method:'POST',body:{email:f.email}})).message)}catch(e){toast(e.message)}setB(false)}
-  if(mode==='register')return <Register onIn={onIn} toast={toast} msg={msg} appName={appName} logo={logo} google={gsign} back={()=>{setMode('in');setGsign(null)}}/>
+  if(mode==='register')return <Register onIn={onIn} toast={toast} msg={msg} appName={appName} logo={logo} google={gsign} back={()=>{setMode('up');setGsign(null)}}/>
   if(mode==='forgot')return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Forgot your password?")}</h1>{sent?<p>{sent}</p>:<><p>{tl("Enter your account email and we will send a link to choose a new one.")}</p><p className="known">{tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>
     <label>{tl("Email")}</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
     <button className="btn" disabled={b||!f.email} onClick={forgot}>{tl("Send reset link")}</button></>}
     <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>{tl("Back to sign in")}</button><Toast msg={msg}/></div>
-  return <div className="login"><Lockup logo={logo} name={appName}/><h1>{tl("Sign in")}</h1><p>{tl("Use the account your institution created for you.")}</p>
-    <label>{tl("Email or username")}</label><input type="text" autoCapitalize="none" autoComplete="username" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
-    <label>{tl("Password")}</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
-    <button className="btn" disabled={b} onClick={go}>{tl("Sign in")}</button>
-    {googleId&&<><div className="orline"><span>{tl("or")}</span></div><GoogleButton clientId={googleId} onCredential={withGoogle}/></>}
-    {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>{tl("Forgot password?")}</button>:<p className="known">{tl("Forgot your password? Ask your admin to reset it.")} {tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>}{canReg&&<button className="btn ghost" onClick={()=>setMode('register')}>{tl("Create an account")}</button>}<Toast msg={msg}/></div>}
+  const up=canReg&&mode==='up'
+  return <div className="login"><Lockup logo={logo} name={appName}/>
+    {canReg&&<Tabs items={[['in',tl("Sign in")],['up',tl("Create an account")]]} value={up?'up':'in'} onChange={setMode} label={tl("Sign in or create an account")}/>}
+    {up?<><h1>{tl("Create an account")}</h1><p>{googleId?tl("Sign up with your Google account, or with your email."):tl("Sign up with your email. We will send you a code to confirm it.")}</p>
+      {googleId&&<><GoogleButton clientId={googleId} onCredential={withGoogle} text="signup_with"/><div className="orline"><span>{tl("or")}</span></div></>}
+      <button className={googleId?'btn ghost':'btn'} disabled={b} onClick={()=>{setGsign(null);setMode('register')}}>{tl("Sign up with email")}</button>
+      <p className="known">{tl("Students, parents and teachers can sign up here. Already have an account? Use Sign in.")}</p></>
+    :<><h1>{tl("Sign in")}</h1><p>{canReg?tl("Welcome back."):tl("Use the account your institution created for you.")}</p>
+      <label>{tl("Email or username")}</label><input type="text" autoCapitalize="none" autoComplete="username" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
+      <label>{tl("Password")}</label><input type="password" autoComplete="current-password" value={f.password} onChange={e=>setF({...f,password:e.target.value})} onKeyDown={e=>e.key==='Enter'&&go()}/>
+      <button className="btn" disabled={b} onClick={go}>{tl("Sign in")}</button>
+      {googleId&&<><div className="orline"><span>{tl("or")}</span></div><GoogleButton clientId={googleId} onCredential={withGoogle}/></>}
+      {canReset?<button className="btn ghost" onClick={()=>setMode('forgot')}>{tl("Forgot password?")}</button>:<p className="known">{tl("Forgot your password? Ask your admin to reset it.")} {tl("Sign in with a username? Ask your parent or teacher to set a new password for you.")}</p>}</>}
+    <Toast msg={msg}/></div>}
 
 const KID={name:'',username:'',password:'',program_id:'',semester:''}
 function Place({opts,level,v,set,id}){  // a program of the chosen level and one of its open terms; "not listed" leaves it for an admin
@@ -161,7 +169,7 @@ function Register({onIn,toast,msg,appName,logo,back,google}){  // school or coll
   if(stage==='level')return <div className="login">{head}<h1>{tl("Create an account")}</h1><p>{tl("Who is studying?")}</p>
     <button className="btn choice" onClick={()=>{setLevel('school');setStage('who')}}><b>{tl("A school student")}</b><small>{tl("Grade 1 to Grade 12")}</small></button>
     <button className="btn choice" onClick={()=>{setLevel('college');setStage('who')}}><b>{tl("A college student")}</b><small>{tl("College or university")}</small></button>
-    <button className="btn ghost" onClick={back}>{tl("Back to sign in")}</button>{foot}</div>
+    <button className="btn ghost" onClick={back}>{tl("Back")}</button>{foot}</div>
   if(stage==='who')return <div className="login">{head}<h1>{tl("Who is signing up?")}</h1><p>{level==='school'?tl("For a school student"):tl("For a college student")}</p>
     {[['student',tl("I'm the student"),tl("An account for me")],['parent',tl("A parent"),tl("Accounts for one or more of my children")],['teacher',tl("A teacher"),tl("I add or invite my students after signing up")]]
       .map(([k,l,d])=><button key={k} className="btn choice" onClick={()=>{setWho(k);setStage('form')}}><b>{l}</b><small>{d}</small></button>)}

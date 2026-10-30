@@ -68,6 +68,9 @@ class AccountTest {
         app.store.server = server; app.store.signOut()
         rule.setContent { ZigoraRoot(null) {} }
         see("Sign in with Google"); see("Create an account"); shot("account-04-sign-in-with-google")
+        rule.onAllNodesWithText("Create an account").onFirst().performClick()  // the other tab: sign up with Google or with an email
+        see("Sign up with Google"); see("Sign up with email"); assertTrue("no password box on the sign-up tab", rule.onAllNodesWithText("Password").fetchSemanticsNodes().isEmpty())
+        shot("account-05-create-an-account")
     }
 
     @Test fun anAdminGivesMoreAi() {

@@ -2090,5 +2090,12 @@
 "No account uses this Google email. Ask your admin for an account, or sign in with your password.": "لا يوجد حساب بهذا البريد من Google. اطلب حسابًا من المشرف، أو سجّل الدخول بكلمة المرور.",
 "Your Google sign-in has expired. Sign in with Google again.": "انتهت صلاحية تسجيل الدخول باستخدام Google. سجّل الدخول مجددًا.",
 "An account already uses this Google account or email. Sign in with Google.": "يوجد حساب يستخدم حساب Google هذا أو بريده. سجّل الدخول باستخدام Google.",
-"A Google client ID looks like 123456789-abc123.apps.googleusercontent.com": "يبدو معرّف عميل Google هكذا: 123456789-abc123.apps.googleusercontent.com"
+"A Google client ID looks like 123456789-abc123.apps.googleusercontent.com": "يبدو معرّف عميل Google هكذا: 123456789-abc123.apps.googleusercontent.com",
+"Sign in or create an account": "سجّل الدخول أو أنشئ حسابًا",
+"Sign up with your Google account, or with your email.": "سجّل بحساب Google أو ببريدك الإلكتروني.",
+"Sign up with your email. We will send you a code to confirm it.": "سجّل ببريدك الإلكتروني. سنرسل إليك رمزًا لتأكيده.",
+"Sign up with email": "التسجيل بالبريد الإلكتروني",
+"Students, parents and teachers can sign up here. Already have an account? Use Sign in.": "يمكن للطلاب وأولياء الأمور والمعلمين التسجيل هنا. لديك حساب؟ استخدم تسجيل الدخول.",
+"Welcome back.": "مرحبًا بعودتك.",
+"Sign up with Google": "التسجيل باستخدام Google"
 }
