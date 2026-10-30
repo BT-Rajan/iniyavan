@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -73,7 +74,7 @@ private fun kindColor(kind: String): Color = when (kind) {
     else -> MaterialTheme.colorScheme.primary
 }
 private fun covers(x: CalItem, d: String) = x.date == d || (x.end != null && x.date <= d && d <= x.end)
-private fun dayLabel(s: String) = runCatching { LocalDate.parse(s).let { "${it.dayOfMonth} ${it.month.getDisplayName(TextStyle.SHORT, Locale.getDefault())}" } }.getOrDefault(s)
+private fun dayLabel(s: String, loc: Locale) = runCatching { LocalDate.parse(s).let { "${it.dayOfMonth} ${it.month.getDisplayName(TextStyle.SHORT, loc)}" } }.getOrDefault(s)
 
 /** an event being added or changed */
 private data class EventForm(val id: Int? = null, val title: String = "", val kind: String = "reminder", val day: String, val end: String = "", val at: String = "",
@@ -81,9 +82,10 @@ private data class EventForm(val id: Int? = null, val title: String = "", val ki
 
 @Composable
 private fun CalRow(x: CalItem, edit: ((CalItem) -> Unit)?) {
+    val loc = LocalConfiguration.current.locales[0]  // the app's language, read so that a change shows at once
     val c = kindColor(x.kind)
     val title = if (x.event != null) x.title else tl(x.title)  // people's own words stay as they are
-    val meta = listOfNotNull(tl(TAG[x.kind] ?: ""), x.end?.let { tl("{a} to {b}", "a" to dayLabel(x.date), "b" to dayLabel(it)) }, x.at, x.sub.takeIf { it.isNotEmpty() }?.let { I18n.srv(it) })
+    val meta = listOfNotNull(tl(TAG[x.kind] ?: ""), x.end?.let { tl("{a} to {b}", "a" to dayLabel(x.date, loc), "b" to dayLabel(it, loc)) }, x.at, x.sub.takeIf { it.isNotEmpty() }?.let { I18n.srv(it) })
         .filter { it.isNotEmpty() }.joinToString(" · ")
     ListRow(title + (STATE[x.state]?.let { " · " + tl(it) } ?: ""), meta, onClick = if (x.event?.can_edit == true && edit != null) ({ edit(x) }) else null,
             leading = { Box(Modifier.size(12.dp).background(c, CircleShape)) },
@@ -92,6 +94,7 @@ private fun CalRow(x: CalItem, edit: ((CalItem) -> Unit)?) {
 
 @Composable
 fun CalendarScreen(back: (() -> Unit)?) {
+    val loc = LocalConfiguration.current.locales[0]  // the app's language, read so that a change shows at once
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast(); val ctx = LocalContext.current
     var month by remember { mutableStateOf(LocalDate.now().withDayOfMonth(1)) }
     var day by remember { mutableStateOf<String?>(null) }
@@ -118,7 +121,7 @@ fun CalendarScreen(back: (() -> Unit)?) {
             listOf<Pair<String, () -> Unit>>(tl("My own events") to { student = 0; day = null }) + d.students.map { s -> s.name to { student = s.id; day = null } })
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             IconButton(onClick = { month = month.minusMonths(1); day = null }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, tl("Previous month")) }
-            Text(month.month.getDisplayName(TextStyle.FULL_STANDALONE, Locale.getDefault()) + " ${month.year}", Modifier.weight(1f), textAlign = TextAlign.Center,
+            Text(month.month.getDisplayName(TextStyle.FULL_STANDALONE, loc) + " ${month.year}", Modifier.weight(1f), textAlign = TextAlign.Center,
                  style = MaterialTheme.typography.titleMedium)
             IconButton(onClick = { month = month.plusMonths(1); day = null }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, tl("Next month")) }
         }
@@ -127,7 +130,7 @@ fun CalendarScreen(back: (() -> Unit)?) {
             Button(onClick = { open(null) }) { Text(tl("Add event")) }
         }
         Row(Modifier.fillMaxWidth()) {
-            (0..6).forEach { i -> Text(start.plusDays(i.toLong()).dayOfWeek.getDisplayName(TextStyle.NARROW, Locale.getDefault()), Modifier.weight(1f),
+            (0..6).forEach { i -> Text(start.plusDays(i.toLong()).dayOfWeek.getDisplayName(TextStyle.NARROW, loc), Modifier.weight(1f),
                                        textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         (0 until 6).forEach { w ->
@@ -139,7 +142,7 @@ fun CalendarScreen(back: (() -> Unit)?) {
                     Column(Modifier.weight(1f).heightIn(min = 48.dp).background(if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
                         .border(if (k == today) 2.dp else 1.dp, if (k == today) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
                         .clickable { day = if (sel) null else k }.padding(vertical = 4.dp)
-                        .semantics { contentDescription = "${c.dayOfMonth} ${c.month.getDisplayName(TextStyle.FULL, Locale.getDefault())}" +
+                        .semantics { contentDescription = "${c.dayOfMonth} ${c.month.getDisplayName(TextStyle.FULL, loc)}" +
                                      (if (marks.isNotEmpty()) ", " + tl(if (marks.size == 1) "{n} item" else "{n} items", "n" to marks.size) else "") + (if (studied) ", " + tl("studied") else "") },
                         horizontalAlignment = Alignment.CenterHorizontally) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -154,7 +157,7 @@ fun CalendarScreen(back: (() -> Unit)?) {
         Loaded(data) { r ->
             val sel = day
             if (sel != null) {
-                SectionTitle(runCatching { LocalDate.parse(sel).let { "${it.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())}, ${dayLabel(sel)}" } }.getOrDefault(sel))
+                SectionTitle(runCatching { LocalDate.parse(sel).let { "${it.dayOfWeek.getDisplayName(TextStyle.FULL, loc)}, ${dayLabel(sel, loc)}" } }.getOrDefault(sel))
                 val xs = r.items.filter { covers(it, sel) }
                 if (xs.isEmpty()) Quiet(tl("Nothing on this day.")) else xs.forEach { CalRow(it) { x -> open(x) } }
             } else {
@@ -190,6 +193,7 @@ fun CalendarScreen(back: (() -> Unit)?) {
 
 @Composable
 private fun EventDialog(start: EventForm, students: List<Pair<Int, String>>, close: () -> Unit, saved: (String) -> Unit) {
+    val loc = LocalConfiguration.current.locales[0]  // the app's language, read so that a change shows at once
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast(); val ctx = LocalContext.current
     var f by remember { mutableStateOf(start) }
     var busy by remember { mutableStateOf(false) }
@@ -214,8 +218,8 @@ private fun EventDialog(start: EventForm, students: List<Pair<Int, String>>, clo
         Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(f.title, { f = f.copy(title = it.take(200)) }, Modifier.fillMaxWidth(), label = { Text(tl("Title")) }, singleLine = true)
             Choice(tl("Kind"), tl(KINDS.firstOrNull { it.first == f.kind }?.second ?: "Event"), KINDS.map { (k, l) -> tl(l) to { f = f.copy(kind = k) } })
-            Choice(tl("Date"), dayLabel(f.day), listOf(tl("Choose") to { pickDate(f.day) { f = f.copy(day = it) } }))
-            Choice(tl("Ends on (optional)"), if (f.end.isEmpty()) "—" else dayLabel(f.end),
+            Choice(tl("Date"), dayLabel(f.day, loc), listOf(tl("Choose") to { pickDate(f.day) { f = f.copy(day = it) } }))
+            Choice(tl("Ends on (optional)"), if (f.end.isEmpty()) "—" else dayLabel(f.end, loc),
                    listOf(tl("Choose") to { pickDate(f.end.ifEmpty { f.day }) { f = f.copy(end = it) } }) + (if (f.end.isNotEmpty()) listOf(tl("Clear") to { f = f.copy(end = "") }) else emptyList()))
             if (f.end.isEmpty()) Choice(tl("Time (optional)"), f.at.ifEmpty { "—" }, listOf(tl("Choose") to {
                 val (h, m) = f.at.split(":").let { (it.getOrNull(0)?.toIntOrNull() ?: 9) to (it.getOrNull(1)?.toIntOrNull() ?: 0) }
