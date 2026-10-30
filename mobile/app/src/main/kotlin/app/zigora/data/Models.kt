@@ -172,3 +172,11 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class PlanUser(val id: Int, val name: String, val email: String? = null, val username: String? = null, val role: String = "", val program: String? = null,
                                   val plan: String = "", val pro_until: String? = null, val asked: Boolean = false)
 @Serializable data class PlanUsers(val total: Int = 0, val items: List<PlanUser> = emptyList())
+
+// the calendar (GET /calendar): events people added, and what Zigora knows (deadlines, sessions, days studied, results)
+@Serializable data class CalEvent(val id: Int, val notes: String = "", val scope: String = "user", val user_id: Int? = null, val course_id: Int? = null, val can_edit: Boolean = false)
+@Serializable data class CalItem(val id: String, val kind: String, val date: String, val end: String? = null, val at: String? = null, val title: String = "", val sub: String = "",
+                                 val state: String? = null, val event: CalEvent? = null)
+@Serializable data class CalWho(val id: Int, val name: String)
+@Serializable data class CalResp(val items: List<CalItem> = emptyList(), val today: String = "", val student: CalWho? = null, val students: List<CalWho> = emptyList())
+@Serializable data class CalLink(val on: Boolean = false, val path: String? = null)

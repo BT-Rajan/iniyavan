@@ -56,7 +56,7 @@
     <string name="current_password">தற்போதைய கடவுச்சொல்</string>
     <string name="daily_email">புதியவற்றின் தினசரிச் சுருக்கத்தை எனக்கு மின்னஞ்சல் செய்</string>
     <string name="daily_note">அமைதியான தினசரி குறிப்பு</string>
-    <string name="daily_note_hint">நாளுக்கு ஒருமுறை, ஆசிரியர் தேதி நெருங்கும்போது அல்லது புதிய தேர்வு இருக்கும்போது மட்டும்</string>
+    <string name="daily_note_hint">நாளுக்கு ஒருமுறை, ஆசிரியர் தேதி அல்லது நாள்காட்டி நிகழ்வு நெருங்கும்போது, அல்லது புதிய தேர்வு இருக்கும்போது மட்டும்</string>
     <string name="deepseek_key">DeepSeek API விசை</string>
     <string name="done">முடிந்தது</string>
     <string name="done_answers_below">முடிந்தது. விடைகள் கீழே உள்ளன.</string>

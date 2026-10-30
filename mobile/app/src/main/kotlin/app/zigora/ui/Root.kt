@@ -60,6 +60,7 @@ import kotlinx.serialization.json.put
 @Serializable object SavedR
 @Serializable object ProgressR
 @Serializable object RoutineR
+@Serializable object CalendarR
 @Serializable data class ScoreCourseR(val cid: Int)
 @Serializable data class AttemptsR(val quiz: Int)
 @Serializable data class AttemptR(val id: Int)
@@ -127,7 +128,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
         NavHost(nav, startDestination = HomeR) {
             composable<HomeR> { HomeScreen(me, openTopic = open, openCourse = { nav.navigate(CourseR(it)) }, openQuiz = { nav.navigate(QuizR(it)) },
                                            openNotes = { nav.navigate(NotesR) }, openPhoto = { nav.navigate(PhotoR()) }, openSearch = search,
-                                           openRoutine = { nav.navigate(RoutineR) }, openSession = session, openStudy = { nav.navigate(StudyR) }, openMcq = { nav.navigate(McqR()) },
+                                           openRoutine = { nav.navigate(RoutineR) }, openSession = session, openStudy = { nav.navigate(StudyR) }, openMcq = { nav.navigate(McqR()) }, openCalendar = { nav.navigate(CalendarR) },
                                            openOwn = ownTopic, review = review) }
             composable<CoursesR> { CoursesScreen(me, search, openStudy = { nav.navigate(StudyR) }) { nav.navigate(CourseR(it)) } }
             composable<StudyR> { StudyHomeScreen(back = { nav.popBackStack() }, open = { id, wizard -> nav.navigate(if (wizard) StudyWizardR(id) else StudyCourseR(id)) },
@@ -143,6 +144,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
             composable<SavedR> { SavedScreen(open) }
             composable<ProgressR> { ProgressScreen(open, openRoutine = { nav.navigate(RoutineR) }, openScores = { nav.navigate(ScoreCourseR(it)) }) }
             composable<RoutineR> { RoutineScreen { nav.popBackStack() } }
+            composable<CalendarR> { CalendarScreen { nav.popBackStack() } }
             composable<ScoreCourseR> { ScoreCourseScreen(it.toRoute<ScoreCourseR>().cid, back = { nav.popBackStack() }) { q -> nav.navigate(AttemptsR(q)) } }
             composable<AttemptsR> { AttemptsScreen(it.toRoute<AttemptsR>().quiz, back = { nav.popBackStack() }) { id -> nav.navigate(AttemptR(id)) } }
             composable<AttemptR> { AttemptScreen(it.toRoute<AttemptR>().id, back = { nav.popBackStack() }, openTopic = open) }

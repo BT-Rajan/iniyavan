@@ -482,3 +482,16 @@ html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:in
 .optedit{display:flex;align-items:center;gap:8px;margin:6px 0}.optedit input:not([type=radio]){flex:1;min-width:0}.opts{border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:12px 0}.known.warn{color:var(--warn)}
 /* Sign in with Google: Google draws its own button in this box; a thin "or" line above it */
 .gbtn{display:flex;justify-content:center;min-height:44px;margin:4px 0 8px}.orline{display:flex;align-items:center;gap:10px;margin:12px 0 8px;color:var(--mut);font-size:13px}.orline:before,.orline:after{content:"";flex:1;border-top:1px solid var(--line)}
+/* the calendar: a month of days with a dot per item (coloured by kind), the chosen day's or the coming items under it */
+.calhead{display:flex;align-items:center;gap:6px;margin:6px 0 10px}.calhead b{flex:1;text-align:center;font-weight:700}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:8px}
+.calwd{text-align:center;font-size:12px;color:var(--mut);padding:2px 0}
+.calday{display:flex;flex-direction:column;align-items:center;gap:4px;min-height:52px;padding:6px 2px;border-radius:var(--r-ctl);background:var(--s1);border:1px solid var(--line);color:var(--tx)}
+.calday.out{opacity:.45}.calday.today{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}.calday.on{background:var(--accbg)}
+.caln{position:relative;font-size:14px;font-weight:600}.calstudied{position:absolute;inset-inline-end:-7px;top:-2px;width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.caldots{display:flex;gap:3px;flex-wrap:wrap;justify-content:center}.caldots i{width:7px;height:7px;border-radius:50%;background:var(--mut)}.caldots i.missed{opacity:.35}
+.k-exam{--k:var(--bad)}.k-test{--k:var(--warn)}.k-assignment{--k:var(--info)}.k-holiday{--k:var(--ok)}.k-event,.k-plan{--k:var(--acc)}.k-reminder{--k:var(--mut)}
+.k-deadline{--k:var(--coral)}.k-session{--k:var(--acct)}.k-result{--k:var(--ok)}.k-studied{--k:var(--ok)}
+.caldots i[class^=k-]{background:var(--k)}
+.calitem{position:relative;overflow:hidden}.calbar{position:absolute;inset-block:0;inset-inline-start:0;width:4px;background:var(--k)}
+.calnote{display:block;white-space:pre-wrap;margin-top:4px}

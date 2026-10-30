@@ -1,5 +1,6 @@
 package app.zigora.ui
 
+import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -117,6 +118,8 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
     var view by remember { mutableStateOf<Int?>(null) }
     var keyOpen by remember { mutableStateOf(false) }
     if (keyOpen) { MyKeyScreen(guardian = true) { keyOpen = false }; return }
+    var calOpen by remember { mutableStateOf(false) }
+    if (calOpen) { CalendarScreen { calOpen = false }; return }
     view?.let { sid -> StudentProgressScreen(sid, me.level ?: "school") { view = null }; return }  // coming back loads the list again, so a change shows
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast()
     val list = rememberLoad("guardian-students") { get("/guardian/students", GStudents.serializer()) }
@@ -141,6 +144,11 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
                         trailing = if (parent) null else ({ TextButton(onClick = stop) { Text(tl("Remove")) } }))
             }
             if (parent && d.students.isNotEmpty()) Quiet(tl("Each child signs in with their own username and password on the sign-in page."))
+            if (d.students.any { it.status == "active" }) {
+                ListRow(if (parent) tl("Your children's calendar") else tl("Your students' calendar"), tl("Exams, deadlines and study days in one place"), onClick = { calOpen = true },
+                        leading = { RowIcon(androidx.compose.material.icons.Icons.Outlined.CalendarMonth) })
+                GuardianReminders(parent)
+            }
         }
         if (!adding) OutlinedButton(onClick = { rows.clear(); rows.add(NewStudent()); adding = true }, modifier = Modifier.fillMaxWidth()) { Text(if (parent) tl("Add a child") else tl("Add students")) }
         else {
@@ -268,4 +276,20 @@ fun InvitationsCard() {
             }
         }
     }
+}
+
+/** the quiet daily note, for a parent or teacher: what is on their children's calendar today and tomorrow (the same note students can turn on) */
+@Composable
+private fun GuardianReminders(parent: Boolean) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current; val a = app()
+    var on by remember { mutableStateOf(a.store.reminders) }
+    val ask = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { ok ->
+        on = ok; a.store.reminders = ok; app.zigora.Reminders.schedule(ctx, ok)
+    }
+    ListRow(stringResource(R.string.daily_note), if (parent) tl("Once a day, when something on your children's calendar is today or tomorrow") else tl("Once a day, when one of your own calendar events is today or tomorrow"),
+            trailing = { androidx.compose.material3.Switch(on, { v ->
+                if (v && androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                else { on = v; a.store.reminders = v; app.zigora.Reminders.schedule(ctx, v) }
+            }) })
 }

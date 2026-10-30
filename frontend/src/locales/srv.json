@@ -154,5 +154,17 @@
 [
 "^You have used today's (?<n>\\d+) AI requests for your own courses\\. Try again tomorrow\\.$",
 "You have used today's {n} AI requests for your own courses. Try again tomorrow."
+],
+[
+"^Today · (?<at>\\d\\d:\\d\\d)$",
+"Today · {at}"
+],
+[
+"^Tomorrow · (?<at>\\d\\d:\\d\\d)$",
+"Tomorrow · {at}"
+],
+[
+"^(?<n>\\d+) min$",
+"{n} min"
 ]
 ]

@@ -2,7 +2,7 @@ import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,
 import {createPortal} from 'react-dom'
 import {Md,Body} from './content.jsx'
 import {ROOT,at} from './base.js'
-import {Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
+import {CalendarDays,Plus,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -72,24 +72,25 @@ export default function App(){
   if(user.must_change)return <AuthFrame logo={logo} name={name} lang={lang} pick={pickLang}><ChangePassword forced appName={name} logo={logo} toast={toast} msg={msg} done={()=>setUser({...user,must_change:false})} out={()=>{localStorage.removeItem('t');setUser(null)}}/></AuthFrame>
   const student=user.role==='student',guardian=user.role==='guardian',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
-  const links=student?[['learn',GraduationCap,tl("My courses")],['mcq',ListChecks,tl("MCQ practice")],['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
-    :guardian?[['aikey',Sparkles,tl("My AI key")],['about',Info,tl("About")]]  // a parent or teacher: their students on Home, and the AI key their school students use
-    :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],['users',UsersIcon,tl("Users")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
-    :[['learn',BookOpen,tl("Courses")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
+  const cal=['calendar',CalendarDays,tl("Calendar")]
+  const links=student?[['learn',GraduationCap,tl("My courses")],['mcq',ListChecks,tl("MCQ practice")],cal,['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
+    :guardian?[cal,['aikey',Sparkles,tl("My AI key")],['about',Info,tl("About")]]  // a parent or teacher: their students on Home, and the AI key their school students use
+    :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],cal,['users',UsersIcon,tl("Users")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
+    :[['learn',BookOpen,tl("Courses")],cal,['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role,aiOff:!!user.ai_off,level:user.level}}>  {/* aiOff: a school student with no parent's or teacher's key studies without AI */}
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={user.ai_off?null:()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')} onCalendar={()=>go('calendar')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
-    {page==='home'&&guardian&&<GuardianHome user={user} toast={toast} onKey={()=>go('aikey')}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}}/>}
+    {page==='home'&&guardian&&<GuardianHome user={user} toast={toast} onKey={()=>go('aikey')} onCalendar={()=>go('calendar')}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role} onRoutine={()=>go('routine')}/>}{page==='saved'&&student&&<Saved toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity toast={toast}/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('profile')}/>}{page==='profile'&&<Profile toast={toast} onPassword={()=>go('password')} onKey={()=>go('aikey')}/>}{page==='about'&&<About user={user}/>}
-    {page==='mcq'&&!guardian&&<McqHome toast={toast}/>}{page==='mcqbank'&&(admin||user.role==='faculty')&&<McqBank toast={toast}/>}
+    {page==='mcq'&&!guardian&&<McqHome toast={toast}/>}{page==='calendar'&&<CalendarPage toast={toast}/>}{page==='mcqbank'&&(admin||user.role==='faculty')&&<McqBank toast={toast}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label={tl("Main menu")}>
         <div className="dhead"><button className={'homebtn'+(page==='home'?' on':'')} aria-label={tl("{name}, home",{name:name})} aria-current={page==='home'?'page':undefined} onClick={()=>go('home')}><Logo src={logo} size={36}/><span><b>{name}</b><small>{user.name}, {tl(cap(user.role)).toLowerCase()}</small></span></button><button className="ic" aria-label={tl("Close menu")} onClick={()=>setOpen(false)}><X/></button></div>
@@ -194,7 +195,7 @@ function Register({onIn,toast,msg,appName,logo,back,google}){  // school or coll
         {kids.length>1&&<button className="tool" onClick={()=>setKids(kids.filter((_,j)=>j!==i))}>{tl("Remove this child")}</button>}</div>)}
       {kids.length<8&&<button className="btn ghost" onClick={()=>setKids([...kids,{...KID}])}>{tl("Add another child")}</button>}</>}
     <button className="btn" disabled={b||!ok} onClick={start}>{google?tl("Create my account"):tl("Send me a code")}</button><button className="btn ghost" onClick={()=>setStage('who')}>{tl("Back")}</button>{foot}</div>}
-function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher's students: add them, invite them (teachers), see their progress, and the AI key that covers them
+function GuardianHome({user,toast,onKey,onCalendar}){  // a parent's children, or a teacher's students: add them, invite them (teachers), see their progress, and the AI key that covers them
   const confirm=useConfirm()
   const [d,setD]=useState(null),[k,setK]=useState(null),[opts,setOpts]=useState({school:[],college:[]}),[add,setAdd]=useState(null),[inv,setInv]=useState(''),[sent,setSent]=useState(''),[see,setSee]=useState(null),[b,setB]=useState(false)
   const load=()=>api('/guardian/students').then(setD).catch(e=>toast(e.message))
@@ -213,6 +214,7 @@ function GuardianHome({user,toast,onKey}){  // a parent's children, or a teacher
     {d?.students.map(x=><div className="card" key={x.id}><button className="hit" disabled={x.status!=='active'} onClick={()=>setSee(x.id)} aria-label={x.status==='active'?tl("See {name}'s progress",{name:x.name}):x.name}>
       <div style={{flex:1}}><b>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}</b><span>{x.username?tl("Signs in as {username}",{username:x.username})+' · ':''}{x.place||tl("Waiting for an admin to place them")}</span></div>{x.status==='active'&&<ChevronRight size={18}/>}</button>
       {!parent&&<button className="ic sm" aria-label={tl("Stop following {name}?",{name:x.name})} onClick={()=>drop(x)}><X size={16}/></button>}</div>)}
+    {d?.students.some(x=>x.status==='active')&&<button className="btn ghost" onClick={onCalendar}><CalendarDays size={16}/>{" "}{parent?tl("Your children's calendar"):tl("Your students' calendar")}</button>}
     {parent&&d?.students.length>0&&<p className="known">{tl("Each child signs in with their own username and password on the sign-in page.")}</p>}
     <button className="btn ghost" onClick={()=>setAdd([{...KID}])}>{parent?tl("Add a child"):tl("Add students")}</button>
     {!parent&&<><h3 className="sec">{tl("Invite a student")}</h3><p className="known" style={{marginTop:0}}>{tl("For a student who already has an account. They see your invitation and choose whether to accept.")}</p>
@@ -270,6 +272,92 @@ function MyAiKey({toast}){
     <label htmlFor="k">{tl("DeepSeek API key")}</label><input id="k" type="password" autoComplete="off" value={key} onChange={e=>setKey(e.target.value)} placeholder={d?.key_set?tl("Paste a new key to replace the current one"):tl("sk-…")}/>
     <button className="btn" disabled={b||!key.trim()} onClick={save}>{b?tl("Checking the key…"):tl("Save key")}</button>
     {d?.key_set&&<button className="btn ghost" onClick={del}>{tl("Remove my key")}</button>}</div></>}
+
+// The calendar: events people add (exams, holidays, tests, due work, reminders) beside what Zigora knows (learn-by dates, study sessions, days
+// studied, results). A parent or teacher picks one of their students; a private link puts it all in a phone's calendar.
+const EV_KINDS=[['exam',"Exam"],['test',"Test"],['assignment',"Assignment"],['holiday',"Holiday"],['event',"Event"],['reminder',"Reminder"]]
+const KIND_TAG={exam:"Exam",test:"Test",assignment:"Assignment",holiday:"Holiday",event:"Event",reminder:"Reminder",deadline:"Learn by",session:"Study session",studied:"Studied",result:"Result",plan:"Plan"}
+const ymd=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const ofYmd=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)}
+const plusDays=(d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n)
+const gridStart=m=>plusDays(m,-((m.getDay()+6)%7))  // the Monday on or before the 1st
+const covers=(x,day)=>x.date===day||(x.end&&x.date<=day&&day<=x.end)
+const calTitle=x=>x.event?x.title:tl(x.title)  // people's own words stay as they are; Zigora's own lines are translated
+const calWhen=x=>[x.end?tl("{a} to {b}",{a:fmtDay(x.date),b:fmtDay(x.end)}):'',x.at||''].filter(Boolean).join(' · ')
+const fmtDay=s=>ofYmd(s).toLocaleDateString(getLang(),{day:'numeric',month:'short'})
+const STATE={done:"Done",missed:"Missed",overdue:"Overdue"}
+function CalItem({x,onEdit}){
+  return <div className={'card calitem k-'+x.kind}><span className={'calbar k-'+x.kind} aria-hidden="true"/>
+    <div className="hit" style={{cursor:'default'}}><div style={{flex:1}}><b>{calTitle(x)}{x.state&&STATE[x.state]&&<span className={'pill sm '+(x.state==='done'?'okp':'off')}>{tl(STATE[x.state])}</span>}</b>
+      <span>{[tl(KIND_TAG[x.kind]||''),calWhen(x),x.sub?srv(x.sub):''].filter(Boolean).join(' · ')}</span>{x.event?.notes&&<span className="calnote">{x.event.notes}</span>}</div></div>
+    {x.event?.can_edit&&<button className="tool" onClick={()=>onEdit(x)} aria-label={tl("Edit {title}",{title:x.title})}><Pencil size={16}/></button>}</div>}
+function CalendarPage({toast}){
+  const confirm=useConfirm(),role=useContext(Ctx).role
+  const [month,setMonth]=useState(()=>{const n=new Date();return new Date(n.getFullYear(),n.getMonth(),1)}),[d,setD]=useState(null),[day,setDay]=useState(null)
+  const [student,setStudent]=useState(0),[form,setForm]=useState(null),[opts,setOpts]=useState(null),[link,setLink]=useState(null),[tick,setTick]=useState(0)
+  useEffect(()=>{const s0=gridStart(month);setD(null)
+    api(`/calendar?start=${ymd(s0)}&end=${ymd(plusDays(s0,41))}${student?`&student=${student}`:''}`).then(setD).catch(e=>toast(e.message))},[month,student,tick,toast])
+  useEffect(()=>{api('/calendar/options').then(setOpts).catch(()=>{});api('/calendar/link').then(setLink).catch(()=>{})},[])
+  const today=d?.today||ymd(new Date()),shown=d?.items||[]
+  const cells=Array.from({length:42},(_,i)=>plusDays(gridStart(month),i)),onDay=k=>shown.filter(x=>covers(x,k))
+  const upcoming=shown.filter(x=>(x.end||x.date)>=today&&!['studied','result'].includes(x.kind)&&x.state!=='done').slice(0,8)
+  const open=x=>{const e=x?.event;setForm(e?{id:e.id,title:x.title,kind:x.kind,day:x.date,end_day:x.end||'',at:x.at||'',notes:e.notes,scope:e.scope,program_id:e.program_id||'',semester:e.semester||'',course_id:e.course_id||'',user_id:e.user_id||''}
+    :{title:'',kind:role==='student'?'reminder':'exam',day:day||today,end_day:'',at:'',notes:'',scope:opts?.scopes?.[0]||'user',program_id:'',semester:'',course_id:'',user_id:student||''})}
+  const save=async()=>{const f=form,num=v=>v===''||v==null?null:+v,body={...f,end_day:f.end_day||null,at:f.at||null,program_id:num(f.program_id),semester:num(f.semester),course_id:num(f.course_id),user_id:num(f.user_id)}
+    try{await api(f.id?`/calendar/events/${f.id}`:'/calendar/events',{method:f.id?'PUT':'POST',body});setForm(null);setTick(t=>t+1);toast(f.id?tl("Event saved"):tl("Event added"))}catch(e){toast(e.message)}}
+  const del=async()=>{if(!await confirm({title:tl("Delete this event?"),body:tl("It goes from everyone's calendar it was on."),ok:tl("Delete"),danger:true}))return
+    try{await api(`/calendar/events/${form.id}`,{method:'DELETE'});setForm(null);setTick(t=>t+1);toast(tl("Event deleted"))}catch(e){toast(e.message)}}
+  const makeLink=async()=>{if(link?.on&&!await confirm({title:tl("Make a new link?"),body:tl("The old link stops working: calendars that use it need the new one."),ok:tl("Make a new link")}))return
+    try{const r=await api('/calendar/link',{method:'POST'});setLink({...r,url:location.origin+ROOT+r.path})}catch(e){toast(e.message)}}
+  const stopLink=async()=>{try{setLink(await api('/calendar/link/off',{method:'POST'}));toast(tl("Calendar link turned off"))}catch(e){toast(e.message)}}
+  const copy=async()=>{try{await navigator.clipboard.writeText(link.url);toast(tl("Link copied"))}catch{toast(tl("Copy the link from the box"))}}
+  const set=k=>e=>setForm({...form,[k]:e.target.value}),title=month.toLocaleDateString(getLang(),{month:'long',year:'numeric'})
+  const wk=Array.from({length:7},(_,i)=>plusDays(new Date(2024,0,1),i).toLocaleDateString(getLang(),{weekday:'narrow'}))  // 1 Jan 2024 was a Monday
+  const f=form,sc=f?.scope,progs=opts?.programs||[],p=progs.find(x=>String(x.id)===String(f?.program_id))
+  return <><Bar title={tl("Calendar")} sub={d?.student?tl("{name}'s calendar",{name:d.student.name}):null}/><div className="main">
+    {role==='guardian'&&d?.students?.length>0&&<><label htmlFor="cst">{tl("Whose calendar")}</label><select id="cst" value={student} onChange={e=>{setStudent(+e.target.value);setDay(null)}}>
+      <option value={0}>{tl("My own events")}</option>{d.students.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></>}
+    <div className="calhead"><button className="ic" aria-label={tl("Previous month")} onClick={()=>{setMonth(new Date(month.getFullYear(),month.getMonth()-1,1));setDay(null)}}><ChevronLeft/></button>
+      <b aria-live="polite">{title}</b><button className="ic" aria-label={tl("Next month")} onClick={()=>{setMonth(new Date(month.getFullYear(),month.getMonth()+1,1));setDay(null)}}><ChevronRight/></button>
+      <button className="tool" onClick={()=>{const n=new Date();setMonth(new Date(n.getFullYear(),n.getMonth(),1));setDay(today)}}>{tl("Today")}</button>
+      {opts&&<button className="tool" onClick={()=>open(null)}><Plus size={16}/>{" "}{tl("Add event")}</button>}</div>
+    <div className="calgrid" role="grid" aria-label={title}>{wk.map((w,i)=><div key={'w'+i} className="calwd" aria-hidden="true">{w}</div>)}
+      {cells.map(c=>{const k=ymd(c),xs=onDay(k),out=c.getMonth()!==month.getMonth(),studied=xs.some(x=>x.kind==='studied'),marks=xs.filter(x=>x.kind!=='studied')
+        return <button key={k} role="gridcell" aria-selected={day===k} className={'calday'+(out?' out':'')+(k===today?' today':'')+(day===k?' on':'')} onClick={()=>setDay(day===k?null:k)}
+          aria-label={`${c.toLocaleDateString(getLang(),{day:'numeric',month:'long'})}${marks.length?', '+tl(marks.length===1?"{n} item":"{n} items",{n:marks.length}):''}${studied?', '+tl("studied"):''}`}>
+          <span className="caln">{c.getDate()}{studied&&<i className="calstudied" aria-hidden="true"/>}</span>
+          <span className="caldots" aria-hidden="true">{marks.slice(0,4).map(x=><i key={x.id} className={'k-'+x.kind+(x.state==='missed'?' missed':'')}/>)}</span></button>})}</div>
+    {!d?<Skeleton rows={2}/>:day?<><h3 className="sec">{ofYmd(day).toLocaleDateString(getLang(),{weekday:'long',day:'numeric',month:'long'})}</h3>
+      {onDay(day).length?onDay(day).map(x=><CalItem key={x.id} x={x} onEdit={open}/>):<p className="known">{tl("Nothing on this day.")}</p>}</>
+    :<><h3 className="sec">{tl("Coming up")}</h3>{upcoming.length?upcoming.map(x=><CalItem key={x.id} x={x} onEdit={open}/>):<p className="known">{tl("Nothing coming up this month.")}</p>}</>}
+    <h3 className="sec">{tl("On your phone's calendar")}</h3>
+    <p className="known">{tl("A private link your phone's calendar (Google, Apple or Outlook) can subscribe to. It keeps itself up to date. Anyone with the link can see these dates, so keep it to yourself.")}</p>
+    {link?.url?<><input readOnly value={link.url} onFocus={e=>e.target.select()} aria-label={tl("Calendar link")}/><button className="btn" onClick={copy}><Copy size={16}/>{" "}{tl("Copy link")}</button>
+      <p className="known">{tl("In Google Calendar: Other calendars, +, From URL. On an iPhone: Settings, Calendar, Accounts, Add Account, Other, Add Subscribed Calendar.")}</p></>
+    :link?.on?<p className="known">{tl("Your link is on. To see it again, make a new one (the old one then stops).")}</p>:null}
+    <button className={link?.on?'btn ghost':'btn'} onClick={makeLink}>{link?.on?tl("Make a new link"):tl("Get my calendar link")}</button>
+    {link?.on&&<button className="btn ghost" onClick={stopLink}>{tl("Turn the link off")}</button>}
+    {f&&<Sheet close={()=>setForm(null)}><h3>{f.id?tl("Edit event"):tl("Add an event")}</h3>
+      <label htmlFor="et">{tl("Title")}</label><input id="et" maxLength={200} value={f.title} onChange={set('title')}/>
+      <label htmlFor="ek">{tl("Kind")}</label><select id="ek" value={f.kind} onChange={set('kind')}>{EV_KINDS.map(([k,l])=><option key={k} value={k}>{tl(l)}</option>)}</select>
+      <label htmlFor="ed">{tl("Date")}</label><input id="ed" type="date" value={f.day} onChange={set('day')}/>
+      <label htmlFor="ee">{tl("Ends on (optional)")}</label><input id="ee" type="date" min={f.day} value={f.end_day} onChange={set('end_day')}/>
+      {!f.end_day&&<><label htmlFor="ea">{tl("Time (optional)")}</label><input id="ea" type="time" value={f.at} onChange={set('at')}/></>}
+      {opts?.scopes?.length>1&&<><label htmlFor="es">{tl("Who it is for")}</label><select id="es" value={sc} onChange={set('scope')}>{opts.scopes.map(k=><option key={k} value={k}>{tl({all:"Everyone",program:"A program",semester:"A program's semester or year",course:"A course",user:"Just me"}[k])}</option>)}</select></>}
+      {(sc==='program'||sc==='semester')&&<><label htmlFor="ep">{tl("Program")}</label><select id="ep" value={f.program_id} onChange={set('program_id')}><option value="">{tl("Choose")}</option>{progs.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></>}
+      {sc==='semester'&&<><label htmlFor="en">{p?tl(p.term):tl("Semester")}</label><input id="en" type="number" min={1} max={20} value={f.semester} onChange={set('semester')}/></>}
+      {sc==='course'&&<><label htmlFor="ec">{tl("Course")}</label><select id="ec" value={f.course_id} onChange={set('course_id')}><option value="">{tl("Choose")}</option>{(opts?.courses||[]).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></>}
+      {sc==='user'&&opts?.students?.length>0&&<><label htmlFor="eu">{tl("For")}</label><select id="eu" value={f.user_id} onChange={set('user_id')}><option value="">{tl("Me")}</option>{opts.students.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></>}
+      <label htmlFor="eo">{tl("Notes (optional)")}</label><textarea id="eo" rows={3} maxLength={1000} value={f.notes} onChange={set('notes')}/>
+      <button className="btn" disabled={!f.title.trim()||!f.day} onClick={save}>{f.id?tl("Save"):tl("Add event")}</button>
+      {f.id&&<button className="btn ghost danger" onClick={del}><Trash2 size={16}/>{" "}{tl("Delete event")}</button>}
+      <button className="btn ghost" onClick={()=>setForm(null)}>{tl("Cancel")}</button></Sheet>}
+  </div></>}
+function ComingUp({onAll}){  // Home: the next few things on the calendar
+  const [xs,setXs]=useState(null)
+  useEffect(()=>{const n=new Date();api(`/calendar?start=${ymd(n)}&end=${ymd(plusDays(n,14))}`).then(r=>setXs(r.items.filter(x=>!['studied','result'].includes(x.kind)&&x.state!=='done'&&x.kind!=='session'))).catch(()=>setXs([]))},[])
+  if(!xs?.length)return null
+  return <><h3 className="sec">{tl("Coming up")}</h3>{xs.slice(0,3).map(x=><CalItem key={x.id} x={x}/>)}<button className="btn ghost" onClick={onAll}>{tl("Open the calendar")}</button></>}
 
 function PromptEditor({toast}){
   const confirm=useConfirm()
@@ -552,7 +640,7 @@ function FlagsPage({toast,back}){
       {f.reasons.length>0&&<ul className="flagwhy">{f.reasons.map((r,i)=><li key={i}>“{r}”</li>)}</ul>}
       <div className="tools">{f.source==='topic'&&f.topic_id&&<button onClick={()=>setT(f.topic_id)}>{tl("Open the topic")}</button>}<button onClick={()=>act(f,'rewrite')}>{tl("Write it again")}</button><button onClick={()=>act(f,'keep')}>{tl("It's fine")}</button></div></div>)}
     <Pager page={page} total={total} onPage={setPage}/></div></>}
-function Dashboard({user,toast,onOpen,onStudy,onRoutine}){
+function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar}){
   const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
   const [tree,setTree]=useState(null),[today,setToday]=useState(null),[topic,setTopic]=useState(null),[sess,setSess]=useState(null)
   useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/today').then(setToday).catch(()=>{})},[topic,toast])
@@ -567,6 +655,7 @@ function Dashboard({user,toast,onOpen,onStudy,onRoutine}){
     <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic} onLoad={setSess}/>
     {!sess?.routine&&resume&&<div className="card"><button className="hit" onClick={()=>setTopic(resume.topic_id)}><span className="dot" style={{background:'var(--acc)'}}><Play size={18}/></span><div><b>{resume.title}</b><span>{resume.kind==='resume'?tl("Where you left off"):tl("Up next, if you like")} · {resume.course}</span></div><ChevronRight size={18}/></button></div>}
     <RecallCard open={setTopic}/>
+    <ComingUp onAll={onCalendar}/>
     {sme&&sme.courses>0&&<><h3 className="sec">{tl("Your own courses")}</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}
     {sme&&!sme.courses&&tree&&!courses.length&&<button className="row rowbtn" onClick={()=>onStudy(null)}><span className="dot" style={{background:'var(--acc)'}}><Upload size={18}/></span><div>{tl("Build a course from your own notes")}<small>{tl("Upload a PDF or Word file and study it with quick checks, quizzes and reviews")}</small></div><ChevronRight size={18}/></button>}
     {!tree&&<><div className="sk"/><div className="sk"/></>}
