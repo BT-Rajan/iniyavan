@@ -4,6 +4,9 @@ import app.zigora.data.json
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import androidx.compose.foundation.Image
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -145,10 +148,10 @@ fun SignIn(done: (Me) -> Unit) {
                 val back = @Composable { TextButton(onClick = { mode = if (toUp) "up" else "in"; msg = ""; info = ""; if (gTicket != null) { gTicket = null; email = "" } }, modifier = Modifier.fillMaxWidth()) {
                     Text(if (toUp) tl("Back") else stringResource(R.string.back_to_sign_in)) } }
                 if ((mode == "in" || mode == "up") && !editing && canRegister)  // two tabs when sign-up is open: Sign in, and Create an account
-                    androidx.compose.material3.SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         listOf("in" to stringResource(R.string.sign_in), "up" to stringResource(R.string.create_account)).forEachIndexed { i, (k, l) ->
-                            androidx.compose.material3.SegmentedButton(selected = mode == k, onClick = { mode = k; msg = "" },
-                                shape = androidx.compose.material3.SegmentedButtonDefaults.itemShape(i, 2)) { Text(l) }
+                            SegmentedButton(selected = mode == k, onClick = { mode = k; msg = "" },
+                                shape = SegmentedButtonDefaults.itemShape(i, 2)) { Text(l) }
                         }
                     }
                 when (mode) {
