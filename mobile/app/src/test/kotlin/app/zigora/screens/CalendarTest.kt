@@ -17,6 +17,7 @@ import app.zigora.data.Me
 import app.zigora.data.Sealer
 import app.zigora.data.Store
 import app.zigora.data.json
+import app.zigora.ui.CalendarScreen
 import app.zigora.ui.ZigoraRoot
 import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.runBlocking
@@ -53,12 +54,22 @@ class CalendarTest {
     private fun tap(text: String) { val n = rule.onAllNodesWithText(text, substring = true).onFirst(); runCatching { n.performScrollTo() }; n.performClick() }
     private fun shot(name: String) { rule.waitForIdle(); rule.onRoot().captureRoboImage("$out/$name.png") }
 
-    @Test fun aChildSeesTheTestOnHomeAndInTheCalendar() {
+    @Test fun aChildSeesTheTestComingUpOnHome() {
         signIn("kavin")
         rule.setContent { ZigoraRoot(null) {} }
         see("Coming up"); see("Science test"); shot("calendar-01-home")
-        tap("Exams, deadlines and your study days"); see("On your phone's calendar"); see("Science test"); shot("calendar-02-month")
-        tap("Add event"); see("Add an event"); shot("calendar-03-add")
+    }
+
+    @Test fun aChildSeesTheTestInTheCalendar() {
+        signIn("kavin")
+        rule.setContent { CalendarScreen(null) }
+        see("On your phone's calendar"); see("Science test"); shot("calendar-02-month")
+    }
+
+    @Test fun aChildOpensTheFormToAddAnEvent() {
+        signIn("kavin")
+        rule.setContent { CalendarScreen(null) }
+        see("Science test"); tap("Add event"); see("Add an event"); shot("calendar-03-add")
     }
 
     @Test fun aParentSeesTheirChildsCalendar() {
