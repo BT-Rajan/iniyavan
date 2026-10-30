@@ -107,6 +107,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("roborazzi.test.record", "true")
     providers.gradleProperty("robolectricRepo").orNull?.let { systemProperty("robolectric.dependency.repo.url", it) }
     outputs.upToDateWhen { !screens }
+    testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL; showStackTraces = true }  // a failing screen test's whole trace in CI's log
 }
 
 // The web app's dictionaries (locales/ar.json, ta.json) and the shapes of the server's sentences (srv.json) are packed into the app as they are,
