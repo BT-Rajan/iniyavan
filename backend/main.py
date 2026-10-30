@@ -3784,6 +3784,62 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
         egress(s, u, "vision", None, size, True, _t); lite_search_used(u, s); return {"text": out, "via": "claude"}
     out, _t = await ask_ai(u, s, key_or_fail(u, s), prompt, msg, max_tokens=900, kind="photo")
     lite_search_used(u, s); return {"text": out, "via": "deepseek"}
+# ---- what the AI costs: the tokens the providers billed on the college's keys (people's own keys cost the college nothing), priced at the rates an
+# ---- admin enters (per million tokens, any currency), by plan, by kind and by person: the figures a Pro or family price has to stand on.
+# ---- People are grouped by their plan now (someone who became Pro last week counts as Pro for the whole period).
+def cost_rates(s):
+    def num(k):
+        try: return max(0.0, float(setting(s, k) or 0))
+        except ValueError: return 0.0
+    return {"deepseek": num("cost_deepseek"), "claude": num("cost_claude"), "currency": setting(s, "cost_currency") or "₹"}
+def plan_now(u): return "staff" if is_staff(u) else ai_plan(u)
+def spread(xs):  # average, median, 90th percentile and highest of a list of numbers
+    if not xs: return {"avg": 0, "median": 0, "p90": 0, "max": 0}
+    v = sorted(xs); at = lambda q: v[min(len(v) - 1, int(q * (len(v) - 1) + 0.5))]
+    return {"avg": round(sum(v) / len(v), 4), "median": round(at(.5), 4), "p90": round(at(.9), 4), "max": round(v[-1], 4)}
+@app.get("/api/admin/costs")
+def ai_costs(days: int = 30, format: str = "json", _: User = Depends(admin), s: Session = Depends(db)):
+    days = min(max(days, 1), 400); since = dt.datetime.utcnow() - dt.timedelta(days=days); r = cost_rates(s); per30 = 30 / days
+    price = lambda prov, t: t * r[prov] / 1_000_000
+    rows = s.query(AIEgress.user_id, AIEgress.kind, AIEgress.own, func.count(AIEgress.id), func.coalesce(func.sum(AIEgress.tokens), 0)).filter(AIEgress.at >= since) \
+        .group_by(AIEgress.user_id, AIEgress.kind, AIEgress.own).all()
+    people = {u.id: u for u in s.query(User)}; mine = defaultdict(lambda: {"requests": 0, "deepseek": 0, "claude": 0, "cost": 0.0, "own_tokens": 0})
+    kinds = defaultdict(lambda: {"requests": 0, "tokens": 0, "cost": 0.0, "own_tokens": 0})
+    for uid, kind, own, n, t in rows:
+        t = int(t); prov = "claude" if kind == "vision" else "deepseek"; k = kinds[kind]; m = mine[uid]; k["requests"] += n; m["requests"] += n
+        if own: k["own_tokens"] += t; m["own_tokens"] += t; continue
+        k["tokens"] += t; k["cost"] += price(prov, t); m[prov] += t; m["cost"] += price(prov, t)
+    plans = defaultdict(lambda: {"people": 0, "active": 0, "requests": 0, "tokens": 0, "cost": 0.0, "costs": []})
+    for u in people.values():
+        if u.active: plans[plan_now(u)]["people"] += 1
+    for uid, m in mine.items():
+        u = people.get(uid); pl = plans[plan_now(u) if u else "deleted"]; pl["active"] += 1; pl["requests"] += m["requests"]
+        pl["tokens"] += m["deepseek"] + m["claude"]; pl["cost"] += m["cost"]; pl["costs"].append(m["cost"] * per30)
+    users = sorted(({"id": uid, "name": people[uid].name if uid in people else "(deleted)", "email": (people[uid].email or people[uid].username or "") if uid in people else "",
+                     "plan": plan_now(people[uid]) if uid in people else "deleted", **{k: m[k] for k in ("requests", "deepseek", "claude", "own_tokens")}, "cost": round(m["cost"], 4)}
+                    for uid, m in mine.items()), key=lambda x: (-x["cost"], -(x["deepseek"] + x["claude"])))
+    if format == "csv":
+        return csv_response(f"ai-costs-{days}-days.csv", ["Name", "Email or username", "Plan", "Requests", "DeepSeek tokens", "Claude tokens", "Own-key tokens", f"Cost ({r['currency']})"],
+                            [[x["name"], x["email"], x["plan"], x["requests"], x["deepseek"], x["claude"], x["own_tokens"], x["cost"]] for x in users])
+    total = sum(m["cost"] for m in mine.values()); toks = {p: sum(m[p] for m in mine.values()) for p in ("deepseek", "claude")}
+    return {"days": days, "rates": r, "priced": bool(r["deepseek"] or r["claude"]), "total": {"cost": round(total, 4), "per_30_days": round(total * per30, 4), **toks,
+            "own_tokens": sum(m["own_tokens"] for m in mine.values()), "requests": sum(m["requests"] for m in mine.values())},
+            "plans": [{"plan": k, "people": v["people"], "active": v["active"], "requests": v["requests"], "tokens": v["tokens"], "cost": round(v["cost"], 4), "per_active_30_days": spread(v["costs"])}
+                      for k, v in sorted(plans.items(), key=lambda x: -x[1]["cost"])],
+            "kinds": [{"kind": k, **{x: (round(v[x], 4) if x == "cost" else v[x]) for x in v}} for k, v in sorted(kinds.items(), key=lambda x: (-x[1]["cost"], -x[1]["tokens"]))],
+            "top": users[:20]}
+class RatesIn(BaseModel): deepseek: float | None = None; claude: float | None = None; currency: str | None = None
+@app.put("/api/admin/costs/rates")
+def set_cost_rates(b: RatesIn, _: User = Depends(admin), s: Session = Depends(db)):
+    for k, v in (("cost_deepseek", b.deepseek), ("cost_claude", b.claude)):
+        if v is None: continue
+        if not 0 <= v <= 1_000_000: raise HTTPException(400, "Enter the price for a million tokens, or 0")
+        s.merge(Setting(k=k, v=str(v)))
+    if b.currency is not None:
+        c = b.currency.strip()
+        if not 1 <= len(c) <= 4: raise HTTPException(400, "Use a short currency sign, such as ₹ or $")
+        s.merge(Setting(k="cost_currency", v=c))
+    s.commit(); return cost_rates(s)
 @app.get("/api/admin/budget")
 def budget_status(_: User = Depends(admin), s: Session = Depends(db)):
     out = {p: budget(s, p) for p in ("deepseek", "claude")}

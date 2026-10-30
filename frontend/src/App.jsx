@@ -2178,7 +2178,7 @@ function AiConfig({toast,onBrand}){
   const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({deepseek:'',claude:''})
   const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setModel(c.model);setVmodel(c.vision_model);setLim({deepseek:String(c.budget?.deepseek.limit||''),claude:String(c.budget?.claude.limit||'')})});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load)
-  return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")],['mail',tl("Email")]]} value={tab} onChange={setTab}/>
+  return <><Bar title={tl("Settings")} sub={cfg.key_set?tl("AI is on · key {key_hint}",{key_hint:cfg.key_hint}):tl("AI is off · no key yet")}/><div className="main"><Tabs label={tl("Settings sections")} scroll items={[['ai','AI'],['prompts',tl("AI prompts")],['school',tl("Institution")],['access',tl("Sign-in")],['mail',tl("Email")],['costs',tl("AI costs")]]} value={tab} onChange={setTab}/>
     {tab==='school'&&<Branding toast={toast} onSaved={onBrand}/>}{tab==='ai'&&<>
     <label>{tl("DeepSeek API key")}</label><input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder={cfg.key_set?tl("Leave blank to keep the current key"):tl("sk-…")}/>
     <label>{tl("Model")}</label><input value={model} onChange={e=>setModel(e.target.value)} placeholder="deepseek-chat"/>
@@ -2204,7 +2204,38 @@ function AiConfig({toast,onBrand}){
     {tab==='access'&&<><h3 className="sec first">{tl("Self-registration")}</h3><SelfReg cfg={cfg} run={run}/><GoogleSetting cfg={cfg} run={run}/>
     <h3 className="sec">{tl("Password reset email")}</h3><p className="known">{cfg.mail_on?tl("On. People can reset their own password from the sign-in page."):tl("Off. The sign-in page tells people to ask an admin. Set up a sender under Email to turn it on.")}</p>
     {!cfg.mail_on&&<button className="btn ghost" onClick={()=>setTab('mail')}>{tl("Set up email")}</button>}</>}
-    {tab==='mail'&&<MailSettings toast={toast} onSaved={load}/>}</div></>}
+    {tab==='mail'&&<MailSettings toast={toast} onSaved={load}/>}{tab==='costs'&&<AiCosts toast={toast}/>}</div></>}
+// Settings > AI costs: what the college's keys cost, from the tokens the providers billed, at the prices the admin enters (per million tokens).
+// By plan with the spread per person, by kind of request, and the people who used the most. Own keys cost the college nothing and are shown apart.
+const KIND_NAME={...FLAG_KIND,mcq:'MCQ sets',vision:'Photos of diagrams (Claude)',translate:'Translations',doubt:'Doubts',review:'Review',other:'Other'}
+function AiCosts({toast}){
+  const [days,setDays]=useState('30'),[r,setR]=useState(null),[rate,setRate]=useState({deepseek:'',claude:'',currency:''}),[busy,setBusy]=useState(false)
+  const load=()=>api('/admin/costs?days='+days).then(x=>{setR(x);setRate({deepseek:x.rates.deepseek?String(x.rates.deepseek):'',claude:x.rates.claude?String(x.rates.claude):'',currency:x.rates.currency})}).catch(e=>toast(e.message))
+  useEffect(()=>{load()},[days])
+  const save=async()=>{setBusy(true);try{await api('/admin/costs/rates',{method:'PUT',body:{deepseek:+rate.deepseek||0,claude:+rate.claude||0,currency:rate.currency}});toast(tl("Prices saved"));await load()}catch(e){toast(srv(e.message))}setBusy(false)}
+  if(!r)return <Skeleton rows={4}/>
+  const cur=r.rates.currency,money=v=>cur+(v<1&&v>0?v.toFixed(2):Math.round(v).toLocaleString()),num=v=>(v||0).toLocaleString(),t=r.total
+  return <><h3 className="sec first">{tl("Prices")}</h3>
+    <p className="known" style={{marginTop:0}}>{tl("What your providers charge for a million tokens, from their price pages or your bill. Tokens are counted as the providers bill them; questions sent with a person's own key cost the college nothing and are shown apart.")}</p>
+    <div className="two"><div><label htmlFor="cds">{tl("DeepSeek, per million tokens")}</label><input id="cds" inputMode="decimal" value={rate.deepseek} onChange={e=>setRate({...rate,deepseek:e.target.value.replace(/[^\d.]/g,'')})} placeholder="0"/></div>
+      <div><label htmlFor="ccl">{tl("Claude, per million tokens")}</label><input id="ccl" inputMode="decimal" value={rate.claude} onChange={e=>setRate({...rate,claude:e.target.value.replace(/[^\d.]/g,'')})} placeholder="0"/></div></div>
+    <label htmlFor="ccur">{tl("Currency sign")}</label><input id="ccur" value={rate.currency} maxLength={4} onChange={e=>setRate({...rate,currency:e.target.value})} placeholder="₹"/>
+    <button className="btn" disabled={busy} onClick={save}>{tl("Save prices")}</button>
+    <h3 className="sec">{tl("Usage")}</h3>
+    <div className="filters fit"><Opts label={tl("Period")} value={days} set={setDays} items={[['7',tl("Last 7 days")],['30',tl("Last 30 days")],['90',tl("Last 90 days")]]}/></div>
+    <div className="qbox" style={{marginTop:0}} role="status">{r.priced?<><b>{money(t.cost)}</b>{" "}{tl("in the last {n} days",{n:r.days})}{r.days!==30&&<> · {tl("about {v} a month",{v:money(t.per_30_days)})}</>}</>:<b>{tl("Enter the prices above to see costs.")}</b>}
+      <p className="known" style={{margin:'4px 0 0'}}>{tl("{n} requests · DeepSeek {d} tokens · Claude {c} tokens",{n:num(t.requests),d:num(t.deepseek),c:num(t.claude)})}{t.own_tokens?' · '+tl("own keys {o} tokens",{o:num(t.own_tokens)}):''}</p></div>
+    <h3 className="sec">{tl("By plan")}</h3>
+    <p className="known" style={{marginTop:0}}>{tl("Cost a month for each person who used AI: the average, the middle person, the top 10% and the highest. Use it to set prices that cover heavy users.")}</p>
+    {!r.plans.length?<p className="known">{tl("No AI use in this period.")}</p>:r.plans.map(p=><div key={p.plan} className="row"><div><b>{tl(PLAN_NAME[p.plan]||(p.plan==='staff'?'Staff':'Deleted accounts'))}</b>
+      <small>{tl("{a} of {n} people used AI · {q} requests · {k} tokens",{a:num(p.active),n:num(p.people),q:num(p.requests),k:num(p.tokens)})}</small>
+      {r.priced&&p.active>0&&<small>{tl("A month per person: average {avg} · middle {median} · top 10% {p90} · highest {max}",{avg:money(p.per_active_30_days.avg),median:money(p.per_active_30_days.median),p90:money(p.per_active_30_days.p90),max:money(p.per_active_30_days.max)})}</small>}</div>
+      {r.priced&&<span className="chip">{money(p.cost)}</span>}</div>)}
+    <h3 className="sec">{tl("By kind")}</h3>
+    {r.kinds.map(k=><div key={k.kind} className="row"><div>{tl(KIND_NAME[k.kind]||k.kind)}<small>{tl("{q} requests · {k} tokens",{q:num(k.requests),k:num(k.tokens)})}{k.own_tokens?' · '+tl("own keys {o} tokens",{o:num(k.own_tokens)}):''}</small></div>{r.priced&&<span className="chip">{money(k.cost)}</span>}</div>)}
+    <h3 className="sec">{tl("Who used the most")}</h3>
+    {r.top.map(u=><div key={u.id} className="row"><div><b>{u.name}</b><small>{u.email}{u.email?' · ':''}{tl(PLAN_NAME[u.plan]||(u.plan==='staff'?'Staff':'Deleted accounts'))} · {tl("{q} requests · {k} tokens",{q:num(u.requests),k:num(u.deepseek+u.claude)})}</small></div>{r.priced&&<span className="chip">{money(u.cost)}</span>}</div>)}
+    {r.top.length>0&&<button className="btn ghost" onClick={()=>fetchFile(`/admin/costs?days=${days}&format=csv`,`ai-costs-${days}-days.csv`,toast)}>{tl("Download everyone as CSV")}</button>}</>}
 // Settings > Email: the Gmail account that sends password resets, registration codes and daily summaries (its App Password is stored sealed
 // and never shown again), the site address used in links, how sending is going, and a log of what was sent (who and when, never the text)
 function MailSettings({toast,onSaved}){
