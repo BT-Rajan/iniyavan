@@ -1557,7 +1557,7 @@
 "number": "எண்",
 "of": "/",
 "of this attempt {v} changed or removed since, so {v2} not shown.": "இந்த முயற்சியின் {v} அதன் பின் மாற்றப்பட்டது அல்லது நீக்கப்பட்டது, எனவே {v2} காட்டப்படவில்லை.",
-"of {length} to go": "{length} இல் மீதம்",
+"of {length} to go": "/ {length} மீதம்",
 "of {length} topics completed": "{length} தலைப்புகளில் முடிந்தவை",
 "of {length} topics completed · {pc}%": "{length} தலைப்புகளில் முடிந்தவை · {pc}%",
 "of {n} ready": "{n} இல் தயார்",

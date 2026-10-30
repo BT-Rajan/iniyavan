@@ -13,6 +13,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Typography
@@ -39,8 +40,11 @@ private val Dark = darkColorScheme(
 /** the web's heading face (Instrument Sans) for headings and titles; body text and labels in the phone's own font, as the web does.
  *  One scale for every screen: screens pick a role from here and never set a size of their own. */
 private val Heading = FontFamily(Font(R.font.instrument_sans_600, FontWeight.SemiBold), Font(R.font.instrument_sans_700, FontWeight.Bold))
-private fun h(size: Int, line: Int, w: FontWeight = FontWeight.SemiBold) = TextStyle(fontFamily = Heading, fontWeight = w, fontSize = size.sp, lineHeight = line.sp, letterSpacing = (-0.01).em)
-private fun b(size: Int, line: Int, w: FontWeight = FontWeight.Normal, track: Double = 0.0) = TextStyle(fontWeight = w, fontSize = size.sp, lineHeight = line.sp, letterSpacing = track.em)
+// each paragraph takes its direction from its own words: an English topic inside the Arabic app keeps its full stops where they belong
+private fun h(size: Int, line: Int, w: FontWeight = FontWeight.SemiBold) = TextStyle(fontFamily = Heading, fontWeight = w, fontSize = size.sp, lineHeight = line.sp,
+    letterSpacing = (-0.01).em, textDirection = TextDirection.Content)
+private fun b(size: Int, line: Int, w: FontWeight = FontWeight.Normal, track: Double = 0.0) = TextStyle(fontWeight = w, fontSize = size.sp, lineHeight = line.sp,
+    letterSpacing = track.em, textDirection = TextDirection.Content)
 val ZigoraType = Typography(
     displaySmall = h(32, 40, FontWeight.Bold), headlineLarge = h(28, 36, FontWeight.Bold), headlineMedium = h(26, 32), headlineSmall = h(22, 28),
     titleLarge = h(20, 26), titleMedium = h(17, 23), titleSmall = h(15, 20),
