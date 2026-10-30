@@ -101,7 +101,7 @@ fun StudentRows(rows: SnapshotStateList<NewStudent>, opts: ProgOpts, level: Stri
                 OutlinedTextField(r.username, { v -> rows[i] = r.copy(username = v.lowercase().filterNot { it.isWhitespace() }) }, Modifier.fillMaxWidth(),
                     label = { Text(tl("Username")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
                 OutlinedTextField(r.password, { rows[i] = r.copy(password = it) }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.password)) },
-                    singleLine = true, visualTransformation = PasswordVisualTransformation())
+                    singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))  // no capitals or autocorrect slipped in unseen
                 PlacePicker(opts, level, r.program, r.sem) { p, s -> rows[i] = r.copy(program = p, sem = s) }
                 if (rows.size > 1) TextButton(onClick = { rows.removeAt(i) }) { Text(tl("Remove")) }
             }
@@ -211,7 +211,7 @@ fun StudentProgressScreen(id: Int, level: String, back: () -> Unit) {
             if (d.can_reset) {  // a username account has no email to reset from: the parent or teacher sets a new password
                 SectionTitle(tl("Forgot their password?"))
                 Quiet(tl("They sign in with a username, so there is no email to reset it from. Set a new one here and tell them."))
-                OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth(), label = { Text(tl("New password")) }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth(), label = { Text(tl("New password")) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
                 OutlinedButton(enabled = !busy && pw.length >= 8, onClick = { scope.launch {
                     busy = true
                     try { a.raw("PUT", "/guardian/students/$id/password", buildJsonObject { put("password", pw) }); pw = ""; toast(tl("Password changed. Tell them the new one.")) }

@@ -209,7 +209,8 @@ private fun PlanCard(ai: AiPlan, changed: () -> Unit) {
             Quiet(stringResource(if (dialog == "key") R.string.own_key_how else R.string.ask_more_how))
             androidx.compose.material3.OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = dialog == "key",
                 label = { Text(stringResource(if (dialog == "key") R.string.deepseek_key else R.string.note_optional)) },
-                visualTransformation = if (dialog == "key") androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None)
+                visualTransformation = if (dialog == "key") androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+                keyboardOptions = if (dialog == "key") androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password) else androidx.compose.foundation.text.KeyboardOptions.Default)
             if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
         } },
         confirmButton = { TextButton(enabled = !busy && (dialog != "key" || text.isNotBlank()), onClick = {
@@ -259,7 +260,7 @@ fun MyKeyScreen(guardian: Boolean = false, back: () -> Unit) {  // guardian: a p
                 Quiet(if (guardian) tl("Your DeepSeek key powers AI help for the school students linked to you. Usage is billed to your DeepSeek account. The key is stored encrypted and never shown to them.") else stringResource(R.string.key_explain))
                 androidx.compose.material3.OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.deepseek_key)) },
                     placeholder = { Text(stringResource(if (st.key_set) R.string.key_replace else R.string.key_placeholder)) },
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password))
                 if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
                 androidx.compose.material3.Button(enabled = !busy && key.isNotBlank(), onClick = { scope.launch {
                     busy = true; msg = ""

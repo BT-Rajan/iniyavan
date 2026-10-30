@@ -211,7 +211,7 @@ fun SignIn(done: (Me) -> Unit) {
                         OutlinedTextField(reg[3], { reg[3] = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.PhoneNumber }, label = { Text(stringResource(R.string.phone)) },
                             singleLine = true, placeholder = { Text("+91 98765 43210") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
                         if (gTicket == null) OutlinedTextField(pw, { pw = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.NewPassword }, label = { Text(stringResource(R.string.password)) },
-                            singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             supportingText = { Text(if (who == "student" && !school) stringResource(R.string.register_password_note) else tl("At least 8 characters.")) })
                         else Quiet(tl("You sign in with Google. You can set a password later with “Forgot password?”."))
                         if (who == "parent") {
@@ -316,9 +316,9 @@ fun ChangePassword(forced: Boolean, back: (() -> Unit)? = null, done: () -> Unit
             Gap(24)
             Text(stringResource(R.string.choose_password), style = MaterialTheme.typography.headlineSmall)
             if (forced) Quiet(stringResource(R.string.choose_password_lead))
-            OutlinedTextField(cur, { cur = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.current_password)) }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+            OutlinedTextField(cur, { cur = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.current_password)) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
             OutlinedTextField(new, { new = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.NewPassword }, label = { Text(stringResource(R.string.new_password)) },
-                supportingText = { Text(stringResource(R.string.password_rule)) }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+                supportingText = { Text(stringResource(R.string.password_rule)) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
             if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
             Button(enabled = !busy && cur.isNotEmpty() && new.length >= 8, onClick = {
                 scope.launch {
