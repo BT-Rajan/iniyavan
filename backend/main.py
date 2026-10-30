@@ -350,7 +350,7 @@ async def secure_headers(request: Request, call_next):
     return r
 
 @app.get("/api/config")
-def config(s: Session = Depends(db)): return {"self_registration": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on(s),
+def config(s: Session = Depends(db)): return {"self_registration": signup_open(s), "email_signup": reg_open(s), "name": setting(s, "app_name", APP_NAME), "logo": setting(s, "logo_url", "") or None, "version": VERSION, "email_reset": mail_on(s),
                                                "google_client_id": (google_ids(s) or [None])[0]}  # public by design: Google's button needs it
 class Branding(BaseModel): name: str | None = None; logo_url: str | None = None; remove_logo: bool = False
 LOGO_URL = re.compile(r"/api/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)")
@@ -538,7 +538,10 @@ def unseal(v):
     except (InvalidToken, ValueError, TypeError): return ""
 OTP_MINUTES, OTP_MAX_TRIES, OTP_MAX_SENDS, OTP_COOLDOWN = 10, 5, 8, 30
 def otp_hash(email, code): return hmac.new(SECRET.encode(), f"{email}|{code}".encode(), hashlib.sha256).hexdigest()
-def reg_open(s): return setting(s, "self_registration") == "1" and mail_on(s)
+def reg_on(s): return setting(s, "self_registration") == "1"  # the admin's switch
+def reg_open(s): return reg_on(s) and mail_on(s)  # sign-up with an email: the code has to be emailed
+def google_signup(s): return reg_on(s) and bool(google_ids(s))  # sign-up with Google: Google checked the email, so no email is sent
+def signup_open(s): return reg_open(s) or google_signup(s)
 def allowed_domains(s): return [d for d in re.split(r"[,\s]+", setting(s, "allowed_domains").lower()) if d]
 PHONE = re.compile(r"\+?[0-9][0-9 ()\-]{5,24}[0-9]")
 IDNUM = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ./_\-]{0,58}[A-Za-z0-9]|[A-Za-z0-9]")
@@ -600,10 +603,10 @@ def clean_children(b, s, most=None):  # a parent adds each child (or a teacher e
 def same_id(s, inst, idn):
     return s.query(User.id).filter(func.lower(User.institution) == inst.lower(), func.lower(User.id_number) == idn.lower()).first() is not None
 @app.get("/api/register/status")
-def register_status(s: Session = Depends(db)): return {"open": reg_open(s), "domains": allowed_domains(s)}
+def register_status(s: Session = Depends(db)): return {"open": signup_open(s), "email": reg_open(s), "domains": allowed_domains(s)}
 @app.get("/api/register/options")
 def register_options(s: Session = Depends(db)):  # the programs someone signing up can pick, by school or college, with the terms open in each
-    return program_options(s) if reg_open(s) else {"school": [], "college": []}
+    return program_options(s) if signup_open(s) else {"school": [], "college": []}
 def program_options(s):
     out = {"school": [], "college": []}
     for p in s.query(Program).filter(Program.archived_at.is_(None)).order_by(Program.name):
@@ -675,7 +678,7 @@ class GoogleSignupIn(RegisterIn): ticket: str; email: str = ""; password: str = 
 def register_google(b: GoogleSignupIn, bg: BackgroundTasks, s: Session = Depends(db)):
     """Sign-up after Sign in with Google found no account: the same details as the form, but the email is the one Google checked, so no code is
     sent. The account has no password anyone knows; "Forgot your password?" can give it one later."""
-    if not reg_open(s): raise HTTPException(403, "Self-registration is not open here. Ask your admin for an account.")
+    if not google_signup(s): raise HTTPException(403, "Self-registration is not open here. Ask your admin for an account.")
     expired = HTTPException(400, "Your Google sign-in has expired. Sign in with Google again.")
     try: t = jwt.decode(b.ticket, SECRET, algorithms=["HS256"])
     except jwt.InvalidTokenError: raise expired
@@ -942,7 +945,7 @@ def login_google(b: GoogleIn, request: Request, s: Session = Depends(db)):
         if not u.active: raise HTTPException(403, "Account disabled. Ask your admin.")
         if not u.google_sub: u.google_sub = sub  # linked: from now on this Google account signs in here, even if its email changes
         s.commit(); return {"token": make_token(u), "user": me_json(u)}
-    if not reg_open(s): raise HTTPException(404, "No account uses this Google email. Ask your admin for an account, or sign in with your password.")
+    if not google_signup(s): raise HTTPException(404, "No account uses this Google email. Ask your admin for an account, or sign in with your password.")
     ticket = jwt.encode({"use": "gsignup", "sub": sub, "email": email, "exp": dt.datetime.utcnow() + dt.timedelta(minutes=GSIGNUP_MINUTES)}, SECRET)  # never a sign-in: me() refuses any token with "use"
     return {"new": True, "ticket": ticket, "email": email, "name": str(c.get("name") or "")[:100]}
 AUDIT_ACTIONS = {"created": ["POST"], "changed": ["PUT", "PATCH"], "deleted": ["DELETE"]}

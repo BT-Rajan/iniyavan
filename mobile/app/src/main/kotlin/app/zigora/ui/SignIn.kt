@@ -66,6 +66,7 @@ fun SignIn(done: (Me) -> Unit) {
     var server by rememberSaveable { mutableStateOf(app.store.server) }
     var college by rememberSaveable { mutableStateOf<String?>(null) }
     var canRegister by rememberSaveable { mutableStateOf(false) }
+    var byEmail by rememberSaveable { mutableStateOf(true) }  // false: the server can't email codes, so sign-up is with Google only
     var canReset by rememberSaveable { mutableStateOf(false) }
     var googleId by rememberSaveable { mutableStateOf<String?>(null) }  // set when the server offers Sign in with Google
     var gTicket by rememberSaveable { mutableStateOf<String?>(null) }  // a Google email with no account yet: sign-up goes on without an email code
@@ -95,7 +96,7 @@ fun SignIn(done: (Me) -> Unit) {
         // "learn.college.edu", "169.58.13.213:5252" or a copied link to the web app: https is tried first, then plain http
         for (s in serverCandidates(typed)) {
             app.store.server = s
-            try { val c = app.api.get("/config", Config.serializer()); college = c.name; app.store.appName = c.name; canRegister = c.self_registration; canReset = c.email_reset; googleId = c.google_client_id; server = s; editing = false; msg = ""; return true }
+            try { val c = app.api.get("/config", Config.serializer()); college = c.name; app.store.appName = c.name; canRegister = c.self_registration; byEmail = c.email_signup; canReset = c.email_reset; googleId = c.google_client_id; server = s; editing = false; msg = ""; return true }
             catch (e: Exception) { msg = e.message.orEmpty() }
         }
         return false
@@ -166,15 +167,17 @@ fun SignIn(done: (Me) -> Unit) {
                     }
                     "up" -> {  // Create an account: with Google (no code to type: Google checked the email) or with an email and a code
                         Text(stringResource(R.string.create_account), style = MaterialTheme.typography.titleLarge)
-                        Quiet(if (googleId != null) tl("Sign up with your Google account, or with your email.") else tl("Sign up with your email. We will send you a code to confirm it."))
+                        Quiet(if (!byEmail) tl("Sign up with your Google account.") else if (googleId != null) tl("Sign up with your Google account, or with your email.") else tl("Sign up with your email. We will send you a code to confirm it."))
                         error()
                         if (googleId != null) {
                             Button(onClick = { google() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(tl("Sign up with Google")) }
-                            Text(tl("or"), Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            if (byEmail) Text(tl("or"), Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         }
                         val email1 = @Composable { Text(tl("Sign up with email")) }
-                        if (googleId != null) androidx.compose.material3.OutlinedButton(onClick = { gTicket = null; mode = "register"; msg = "" }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { email1() }
-                        else Button(onClick = { gTicket = null; mode = "register"; msg = "" }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { email1() }
+                        if (byEmail) {
+                            if (googleId != null) androidx.compose.material3.OutlinedButton(onClick = { gTicket = null; mode = "register"; msg = "" }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { email1() }
+                            else Button(onClick = { gTicket = null; mode = "register"; msg = "" }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { email1() }
+                        }
                         Quiet(tl("Students, parents and teachers can sign up here. Already have an account? Use Sign in."))
                     }
                     "register" -> {  // 1. who is studying: school or college

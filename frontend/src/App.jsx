@@ -61,7 +61,7 @@ export default function App(){
   useEffect(()=>{if(!user)return  // signed in: a language picked just now goes to the account; otherwise the account's language is used
     if(picked.current&&user.lang!==lang)api('/me/lang',{method:'PUT',body:{lang}}).catch(()=>{})
     else if(!picked.current&&user.lang&&user.lang!==lang)loadLang(user.lang).catch(()=>{}).then(()=>setLangS(applyLang(user.lang)))},[user])
-  useEffect(()=>{Promise.allSettled([loadLang(lang),api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(!!c.self_registration);setGoogleId(c.google_client_id||null);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
+  useEffect(()=>{Promise.allSettled([loadLang(lang),api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);setCanReset(!!c.email_reset);setCanReg(c.self_registration?(c.email_signup===false?'google':'email'):false);setGoogleId(c.google_client_id||null);document.title=c.name}),localStorage.t?api('/me').then(setUser).catch(()=>localStorage.removeItem('t')):null]).then(()=>setReady(true))},[])
   useEffect(()=>{applyTheme(theme);if(theme!=='system')return;const m=matchMedia('(prefers-color-scheme: dark)'),f=()=>applyTheme('system');m.addEventListener('change',f);return()=>m.removeEventListener('change',f)},[theme])
   const pickTheme=t=>{setTheme(t);try{t==='system'?localStorage.removeItem('theme'):localStorage.theme=t}catch{/* private mode: the choice lasts until the page closes */}}
   useEffect(()=>{const k=e=>e.key==='Escape'&&setOpen(false);addEventListener('keydown',k);return()=>removeEventListener('keydown',k)},[])
@@ -123,12 +123,13 @@ function Login({onIn,toast,msg,appName,logo,canReset,canReg,googleId}){  // two 
     <label>{tl("Email")}</label><input type="email" autoComplete="email" value={f.email} onChange={e=>setF({...f,email:e.target.value})} onKeyDown={e=>e.key==='Enter'&&forgot()}/>
     <button className="btn" disabled={b||!f.email} onClick={forgot}>{tl("Send reset link")}</button></>}
     <button className="btn ghost" onClick={()=>{setMode('in');setSent('')}}>{tl("Back to sign in")}</button><Toast msg={msg}/></div>
-  const up=canReg&&mode==='up'
+  const up=canReg&&mode==='up',byEmail=canReg==='email'  // without email on the server, sign-up is with Google only
   return <div className="login"><Lockup logo={logo} name={appName}/>
     {canReg&&<Tabs items={[['in',tl("Sign in")],['up',tl("Create an account")]]} value={up?'up':'in'} onChange={setMode} label={tl("Sign in or create an account")}/>}
-    {up?<><h1>{tl("Create an account")}</h1><p>{googleId?tl("Sign up with your Google account, or with your email."):tl("Sign up with your email. We will send you a code to confirm it.")}</p>
-      {googleId&&<><GoogleButton clientId={googleId} onCredential={withGoogle} text="signup_with"/><div className="orline"><span>{tl("or")}</span></div></>}
-      <button className={googleId?'btn ghost':'btn'} disabled={b} onClick={()=>{setGsign(null);setMode('register')}}>{tl("Sign up with email")}</button>
+    {up?<><h1>{tl("Create an account")}</h1><p>{!byEmail?tl("Sign up with your Google account."):googleId?tl("Sign up with your Google account, or with your email."):tl("Sign up with your email. We will send you a code to confirm it.")}</p>
+      {googleId&&<GoogleButton clientId={googleId} onCredential={withGoogle} text="signup_with"/>}
+      {byEmail&&<>{googleId&&<div className="orline"><span>{tl("or")}</span></div>}
+      <button className={googleId?'btn ghost':'btn'} disabled={b} onClick={()=>{setGsign(null);setMode('register')}}>{tl("Sign up with email")}</button></>}
       <p className="known">{tl("Students, parents and teachers can sign up here. Already have an account? Use Sign in.")}</p></>
     :<><h1>{tl("Sign in")}</h1><p>{canReg?tl("Welcome back."):tl("Use the account your institution created for you.")}</p>
       <label>{tl("Email or username")}</label><input type="text" autoCapitalize="none" autoComplete="username" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/>
@@ -290,7 +291,7 @@ function PromptEditor({toast}){
 
 function SelfReg({cfg,run}){
   const [dom,setDom]=useState(null);const on=!!cfg.self_registration,shown=dom??cfg.allowed_domains??''
-  return <><p className="known">{on?tl("On. The sign-in page shows “Create an account”. People confirm their email with a code, then you place them in a program and semester or year from Users (they show as Self-registered)."):tl("Off. Only admins can create accounts.")} {!cfg.mail_on&&tl("Emailing codes needs email set up first (the Email tab), so registration stays closed until it is.")} {cfg.self_registered_users>0&&tl("{self_registered_users} people have registered themselves so far.",{self_registered_users:cfg.self_registered_users})}</p>
+  return <><p className="known">{on?tl("On. The sign-in page shows “Create an account”. People confirm their email with a code, then you place them in a program and semester or year from Users (they show as Self-registered)."):tl("Off. Only admins can create accounts.")} {!cfg.mail_on&&tl("Without email set up (the Email tab), people can sign up only with Google, once Sign in with Google is set up below.")} {cfg.self_registered_users>0&&tl("{self_registered_users} people have registered themselves so far.",{self_registered_users:cfg.self_registered_users})}</p>
     <label className="chk"><input type="checkbox" checked={on} onChange={e=>run(()=>api('/admin/settings',{method:'PUT',body:{self_registration:e.target.checked}}),e.target.checked?'Self-registration is on':'Self-registration is off')}/>{" "}{tl("Allow people to register themselves")}</label>
     <label htmlFor="dom">{tl("Only these email domains (optional)")}</label><input id="dom" value={shown} onChange={e=>setDom(e.target.value)} placeholder={tl("college.edu, mail.college.edu")}/>
     <button className="btn ghost" onClick={()=>run(()=>api('/admin/settings',{method:'PUT',body:{allowed_domains:shown}}).then(()=>setDom(null)),'Domains saved')}>{tl("Save domains")}</button>

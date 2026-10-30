@@ -94,3 +94,18 @@ def test_the_migration_adds_the_google_column_once(env):
         s.add_all([User(name="A", email="a1@x.com", pw=hp("pw"), role="student"), User(name="B", email="b1@x.com", pw=hp("pw"), role="student")]); s.commit()  # many without Google
         s.add(User(name="C", email="c1@x.com", pw=hp("pw"), role="student", google_sub="dup")); s.add(User(name="D", email="d1@x.com", pw=hp("pw"), role="student", google_sub="dup"))
         with pytest.raises(main.IntegrityError): s.commit()  # but one account per Google account
+
+def test_without_email_on_the_server_sign_up_is_with_google_only(env, monkeypatch):
+    assert not main.mail_on(main.Session_())  # no email set up here
+    env.c.put("/api/admin/settings", headers=env.admin, json={"self_registration": True})
+    c = env.c.get("/api/config").json(); assert c["self_registration"] is False  # no email and no Google: nothing to sign up with
+    setup(env); c = env.c.get("/api/config").json(); assert c["self_registration"] is True and c["email_signup"] is False
+    assert env.c.get("/api/register/status").json() == {"open": True, "email": False, "domains": []}
+    assert env.c.post("/api/register/start", json={**GOOD, "who": "student", "level": "college"}).status_code == 403  # a code can't be emailed
+    sch, _ = places(); fake_google(monkeypatch, sub="g-solo", email="solo@gmail.com", name="Solo")
+    r = google(env).json(); assert r["new"]
+    body = {**GOOD, "ticket": r["ticket"], "who": "parent", "level": "school", "institution": "", "id_number": "", "email": "", "password": "", "children": [dict(KID, program_id=sch, semester=6)]}
+    out = env.c.post("/api/register/google", json=body); assert out.status_code == 200, out.text
+    assert out.json()["user"]["google"] is True and google(env).json()["user"]["name"] == "Asha Devi"
+    env.c.put("/api/admin/settings", headers=env.admin, json={"self_registration": False})
+    fake_google(monkeypatch, sub="g-late", email="late@gmail.com"); assert google(env).status_code == 404  # the admin's switch still closes it
