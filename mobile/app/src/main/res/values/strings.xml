@@ -57,7 +57,7 @@
     <string name="current_password">Current password</string>
     <string name="daily_email">Email me a daily summary of new ones</string>
     <string name="daily_note">A quiet daily note</string>
-    <string name="daily_note_hint">Once a day, only when a teacher\'s date is coming up or there is a new test</string>
+    <string name="daily_note_hint">Once a day, only when a teacher\'s date or a calendar event is coming up, or there is a new test</string>
     <string name="deepseek_key">DeepSeek API key</string>
     <string name="done">Done</string>
     <string name="done_answers_below">Done. The answers are below.</string>

@@ -56,7 +56,7 @@
     <string name="current_password">كلمة المرور الحالية</string>
     <string name="daily_email">أرسل لي ملخصًا يوميًا بالجديد</string>
     <string name="daily_note">ملاحظة يومية هادئة</string>
-    <string name="daily_note_hint">مرة في اليوم، فقط عند اقتراب موعد حدده المعلم أو عند وجود اختبار جديد</string>
+    <string name="daily_note_hint">مرة في اليوم، فقط عند اقتراب موعد حدده المعلم أو حدث في التقويم، أو عند وجود اختبار جديد</string>
     <string name="deepseek_key">مفتاح DeepSeek API</string>
     <string name="done">تم</string>
     <string name="done_answers_below">تم. الإجابات في الأسفل.</string>
