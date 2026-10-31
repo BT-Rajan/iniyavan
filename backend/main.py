@@ -1089,6 +1089,43 @@ def answer_invitation(lid: int, answer: str, bg: BackgroundTasks, u: User = Depe
 def my_students(u: User = Depends(guardian_only), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
     row = lambda x, st: {"id": x.id, "name": x.name, "username": x.username, "place": place_line(s, x), "status": st, "active": bool(x.active)}
     return {"students": [row(x, "active") for x in guardian_students(s, u.id)] + [row(x, "invited") for x in guardian_students(s, u.id, "invited")]}
+# ---- a parent's or teacher's dashboard: for each child or student, what needs them (most urgent first, each with one action), and a short summary
+# ---- card (streak, this week's study days, topics learned this week, when they last studied). Never their notes, answers or AI chats.
+QUIET_DAYS, EXAM_AHEAD, SCORE_DROP = 3, 7, 10
+def ward_card(s, x, now, today):
+    days = study_days(s, x.id, today - dt.timedelta(days=400)); r = s.get(Routine, x.id); last = max(days) if days else None
+    week = [(today - dt.timedelta(days=i)) in days for i in range(6, -1, -1)]
+    return {"id": x.id, "name": x.name, "place": place_line(s, x), "streak": streak_of(days, today, r.days if r else None), "week": week, "active_days_week": sum(week),
+            "completed_this_week": s.query(func.count(Progress.id)).filter(Progress.user_id == x.id, Progress.completed_at >= now - dt.timedelta(days=7)).scalar(),
+            "last_studied": last.isoformat() if last else None, "routine": bool(r)}, last, r
+def ward_items(s, x, card, last, routine, now, today):
+    out = []; who = {"name": x.name}
+    def add(level, key, text, vars_=None, action="progress"): out.append({"key": key, "student_id": x.id, "level": level, "text": text, "vars": {**who, **(vars_ or {})}, "action": action})
+    if last is None: add("soon", "not_started", "{name} hasn't started studying yet")
+    elif (today - last).days >= QUIET_DAYS: add("now", "quiet", "{name} hasn't studied for {days} days", {"days": (today - last).days})
+    exams = [e for e in event_rows(s, today, today + dt.timedelta(days=EXAM_AHEAD), who=x) if e.kind in ("exam", "test") and e.day >= today]
+    if exams:
+        e = exams[0]; weak = len(my_insights(x, s)["needs_study"])
+        add("now" if (e.day - today).days <= 3 else "soon", "exam", "{name} has {title} on {date}: {n} topics still need more study" if weak else "{name} has {title} on {date}",
+            {"title": e.title, "date": e.day.isoformat(), "n": weak})
+    overdue = sum(1 for p in tree(x, s) for sm in p["semesters"] for c in sm["courses"] for un in c["units"] for t in un["topics"] if t.get("overdue"))
+    if overdue: add("soon", "overdue", "{name} has {n} topics past their learn-by date", {"n": overdue})
+    pct = [p for (p,) in s.query(Attempt.percent).filter(Attempt.user_id == x.id, Attempt.percent.isnot(None)).order_by(Attempt.at.desc()).limit(6)]
+    if len(pct) >= 3:
+        usual = round(sum(pct[1:]) / len(pct[1:]))
+        if usual - pct[0] >= SCORE_DROP: add("soon", "score_drop", "{name} scored {p}% in the latest quiz, below their usual {usual}%", {"p": pct[0], "usual": usual})
+    if not routine: add("later", "no_routine", "{name} has no study routine yet: help them set one in their app")
+    return out
+@app.get("/api/guardian/dashboard")
+def guardian_dashboard(u: User = Depends(guardian_only), s: Session = Depends(db)):
+    now = dt.datetime.utcnow(); today = local_day(now); cards, items = [], []
+    for x in guardian_students(s, u.id):
+        if not x.active: continue
+        card, last, r = ward_card(s, x, now, today); cards.append(card); items += ward_items(s, x, card, last, r, now, today)
+    if not u.ai_key and any(x.active and school_learner(x) and not guardian_key(x, s) for x in guardian_students(s, u.id)):  # a school student with no AI at all
+        items.append({"key": "ai_off", "student_id": None, "level": "now", "text": "AI help is off for your school students: add your AI key to turn it on", "vars": {}, "action": "key"})
+    items.sort(key=lambda i: URGENCY[i["level"]])
+    return {"items": items, "students": cards, "invited": [{"id": x.id, "name": x.name} for x in guardian_students(s, u.id, "invited")]}
 LANGS = {"en": "English", "ar": "Arabic", "ta": "Tamil"}
 class LangIn(BaseModel): lang: str
 @app.put("/api/me/lang")

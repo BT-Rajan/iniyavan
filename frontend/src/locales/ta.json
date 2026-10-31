@@ -2308,5 +2308,20 @@
 "max {v}": "அதிகபட்சம் {v}",
 "quiz average {p}%": "வினாடி வினா சராசரி {p}%",
 "{n} people with a plan. Click a plan to see them.": "திட்டம் உள்ள {n} பேர். அவர்களைப் பார்க்க ஒரு திட்டத்தைச் சொடுக்கவும்.",
-"{v} tokens": "{v} டோக்கன்கள்"
+"{v} tokens": "{v} டோக்கன்கள்",
+"Needs you": "உங்கள் கவனம் தேவை",
+"See progress": "முன்னேற்றம் பார்",
+"All good. Nothing needs you right now.": "எல்லாம் நன்று. இப்போது உங்களுக்கு எதுவும் தேவையில்லை.",
+"All good. No student needs you right now.": "எல்லாம் நன்று. இப்போது எந்த மாணவருக்கும் உங்கள் உதவி தேவையில்லை.",
+"{n}-day streak": "{n} நாள் தொடர்",
+"Studied on {n} of the last 7 days": "கடந்த 7 நாட்களில் {n} நாட்கள் படித்தார்",
+"{name} hasn't started studying yet": "{name} இன்னும் படிக்கத் தொடங்கவில்லை",
+"{name} hasn't studied for {days} days": "{name} {days} நாட்களாகப் படிக்கவில்லை",
+"{name} has {title} on {date}: {n} topics still need more study": "{name} க்கு {date} அன்று {title} உள்ளது: {n} தலைப்புகளை இன்னும் படிக்க வேண்டும்",
+"{name} has {title} on {date}": "{name} க்கு {date} அன்று {title} உள்ளது",
+"{name} has {n} topics past their learn-by date": "{name} க்கு கற்க வேண்டிய தேதி கடந்த {n} தலைப்புகள் உள்ளன",
+"{name} scored {p}% in the latest quiz, below their usual {usual}%": "{name} சமீபத்திய வினாடி வினாவில் {p}% பெற்றார், வழக்கமான {usual}%-ஐ விடக் குறைவு",
+"{name} has no study routine yet: help them set one in their app": "{name} க்கு இன்னும் படிப்பு வழக்கம் இல்லை: அவர்களின் செயலியில் ஒன்றை அமைக்க உதவுங்கள்",
+"AI help is off for your school students: add your AI key to turn it on": "உங்கள் பள்ளி மாணவர்களுக்கு AI உதவி முடக்கத்தில் உள்ளது: இயக்க உங்கள் AI விசையைச் சேர்க்கவும்",
+"Topics learned this week: {n}": "இந்த வாரம் கற்ற தலைப்புகள்: {n}"
 }
