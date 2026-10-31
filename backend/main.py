@@ -208,6 +208,11 @@ class Progress(Base):  # one row per student and topic, made when they first ope
     reads = Column(Integer, default=1); last_read = Column(DateTime, default=dt.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)  # set when the student marks the topic completed (UTC); cleared only if they undo it
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class ProgressHistory(Base):  # a topic's progress set aside when the student chose to redo it (or its course): kept for their record and streak
+    __tablename__ = "progress_history"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); reads = Column(Integer, default=0)
+    last_read = Column(DateTime, nullable=True); completed_at = Column(DateTime, nullable=True); redone_at = Column(DateTime, default=dt.datetime.utcnow)
 class Highlight(Base):  # a passage someone marked in a topic's content; found again by its text and the words just before it
     __tablename__ = "highlights"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -853,7 +858,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__])),  # new tables only
               ("0030_users_google", lambda c: google_columns(c)),
               ("0031_calendar", lambda c: calendar_tables(c)),
-              ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)])]
+              ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)]),
+              ("0033_progress_history", lambda c: Base.metadata.create_all(c, tables=[ProgressHistory.__table__]))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -1089,6 +1095,43 @@ def answer_invitation(lid: int, answer: str, bg: BackgroundTasks, u: User = Depe
 def my_students(u: User = Depends(guardian_only), s: Session = Depends(db)):  # the children or students a parent or teacher looks after
     row = lambda x, st: {"id": x.id, "name": x.name, "username": x.username, "place": place_line(s, x), "status": st, "active": bool(x.active)}
     return {"students": [row(x, "active") for x in guardian_students(s, u.id)] + [row(x, "invited") for x in guardian_students(s, u.id, "invited")]}
+# ---- a parent's or teacher's dashboard: for each child or student, what needs them (most urgent first, each with one action), and a short summary
+# ---- card (streak, this week's study days, topics learned this week, when they last studied). Never their notes, answers or AI chats.
+QUIET_DAYS, EXAM_AHEAD, SCORE_DROP = 3, 7, 10
+def ward_card(s, x, now, today):
+    days = study_days(s, x.id, today - dt.timedelta(days=400)); r = s.get(Routine, x.id); last = max(days) if days else None
+    week = [(today - dt.timedelta(days=i)) in days for i in range(6, -1, -1)]
+    return {"id": x.id, "name": x.name, "place": place_line(s, x), "streak": streak_of(days, today, r.days if r else None), "week": week, "active_days_week": sum(week),
+            "completed_this_week": s.query(func.count(Progress.id)).filter(Progress.user_id == x.id, Progress.completed_at >= now - dt.timedelta(days=7)).scalar(),
+            "last_studied": last.isoformat() if last else None, "routine": bool(r)}, last, r
+def ward_items(s, x, card, last, routine, now, today):
+    out = []; who = {"name": x.name}
+    def add(level, key, text, vars_=None, action="progress"): out.append({"key": key, "student_id": x.id, "level": level, "text": text, "vars": {**who, **(vars_ or {})}, "action": action})
+    if last is None: add("soon", "not_started", "{name} hasn't started studying yet")
+    elif (today - last).days >= QUIET_DAYS: add("now", "quiet", "{name} hasn't studied for {days} days", {"days": (today - last).days})
+    exams = [e for e in event_rows(s, today, today + dt.timedelta(days=EXAM_AHEAD), who=x) if e.kind in ("exam", "test") and e.day >= today]
+    if exams:
+        e = exams[0]; weak = len(my_insights(x, s)["needs_study"])
+        add("now" if (e.day - today).days <= 3 else "soon", "exam", "{name} has {title} on {date}: {n} topics still need more study" if weak else "{name} has {title} on {date}",
+            {"title": e.title, "date": e.day.isoformat(), "n": weak})
+    overdue = sum(1 for p in tree(x, s) for sm in p["semesters"] for c in sm["courses"] for un in c["units"] for t in un["topics"] if t.get("overdue"))
+    if overdue: add("soon", "overdue", "{name} has {n} topics past their learn-by date", {"n": overdue})
+    pct = [p for (p,) in s.query(Attempt.percent).filter(Attempt.user_id == x.id, Attempt.percent.isnot(None)).order_by(Attempt.at.desc()).limit(6)]
+    if len(pct) >= 3:
+        usual = round(sum(pct[1:]) / len(pct[1:]))
+        if usual - pct[0] >= SCORE_DROP: add("soon", "score_drop", "{name} scored {p}% in the latest quiz, below their usual {usual}%", {"p": pct[0], "usual": usual})
+    if not routine: add("later", "no_routine", "{name} has no study routine yet: help them set one in their app")
+    return out
+@app.get("/api/guardian/dashboard")
+def guardian_dashboard(u: User = Depends(guardian_only), s: Session = Depends(db)):
+    now = dt.datetime.utcnow(); today = local_day(now); cards, items = [], []
+    for x in guardian_students(s, u.id):
+        if not x.active: continue
+        card, last, r = ward_card(s, x, now, today); cards.append(card); items += ward_items(s, x, card, last, r, now, today)
+    if not u.ai_key and any(x.active and school_learner(x) and not guardian_key(x, s) for x in guardian_students(s, u.id)):  # a school student with no AI at all
+        items.append({"key": "ai_off", "student_id": None, "level": "now", "text": "AI help is off for your school students: add your AI key to turn it on", "vars": {}, "action": "key"})
+    items.sort(key=lambda i: URGENCY[i["level"]])
+    return {"items": items, "students": cards, "invited": [{"id": x.id, "name": x.name} for x in guardian_students(s, u.id, "invited")]}
 LANGS = {"en": "English", "ar": "Arabic", "ta": "Tamil"}
 class LangIn(BaseModel): lang: str
 @app.put("/api/me/lang")
@@ -3365,6 +3408,9 @@ def study_days(s, uid, since):  # {local day: activity count}: topics opened, to
     for (t,) in s.query(Progress.completed_at).filter(Progress.user_id == uid, Progress.completed_at.isnot(None)): days[local_day(t)] += 1
     for (t,) in s.query(Progress.last_read).filter(Progress.user_id == uid, Progress.last_read.isnot(None)): days[local_day(t)] += 1  # opens made before day tracking began
     for (t,) in s.query(Attempt.at).filter(Attempt.user_id == uid): days[local_day(t)] += 1
+    for a, b in s.query(ProgressHistory.completed_at, ProgressHistory.last_read).filter(ProgressHistory.user_id == uid):  # topics they chose to redo: those days still count
+        for t in (a, b):
+            if t: days[local_day(t)] += 1
     for (t,) in s.query(StudyAttempt.at).filter(StudyAttempt.user_id == uid): days[local_day(t)] += 1  # courses students build count toward the streak too
     for (t,) in s.query(McqAttempt.submitted_at).filter(McqAttempt.user_id == uid, McqAttempt.status == "submitted"): days[local_day(t)] += 1  # each MCQ set once, when submitted
     for (t,) in s.query(StudyProgress.opened_at).filter(StudyProgress.user_id == uid, StudyProgress.opened_at.isnot(None)): days[local_day(t)] += 1
@@ -3382,6 +3428,40 @@ def due_phrase(due, now):  # in the student's own calendar days, so "tomorrow" m
     n = (local_day(due) - local_day(now)).days
     if due < now: return f"Overdue by {-n} day{'s' if n != -1 else ''}" if n < 0 else "Overdue since earlier today"
     return "Due today" if n == 0 else "Due tomorrow" if n == 1 else f"Due in {n} days"
+# ---- a student's dashboard: what to do next, most useful first, each with one action, and this week at a glance. The ranked next steps come from
+# ---- /me/today (overdue, due soon, weak, a quiz to retake, where they left off); added to them: a streak at risk, an exam coming with topics to
+# ---- revise, MCQ topics to practise again, and their AI allowance running low or Pro ending.
+STREAK_EVENING = 18  # without a set study time, a routine day with no study yet is flagged from this hour (the students' local time)
+@app.get("/api/me/dashboard")
+def student_dashboard(u: User = Depends(me), s: Session = Depends(db)):
+    if u.role != "student": raise HTTPException(403, "For students")
+    now = dt.datetime.utcnow(); today = local_day(now); t = my_today(u, s); items = []
+    def add(level, key, text, vars_=None, action="topic", **target): items.append({"key": key, "level": level, "text": text, "vars": vars_ or {}, "action": action, "target": target})
+    r = s.get(Routine, u.id); local_now = now + dt.timedelta(minutes=DAY_OFFSET)
+    if r and t["streak"] and not t["active_today"] and r.days[today.weekday()] == "1":
+        due = r.at or f"{STREAK_EVENING}:00"
+        if local_now.strftime("%H:%M") >= due.zfill(5):
+            first = next((f for f in t["focus"] if f.get("topic_id")), None)
+            add("now", "streak", "Keep your {n}-day streak: study a little today", {"n": t["streak"]}, "topic" if first else "courses", **({"topic_id": first["topic_id"]} if first else {}))
+    exams = [e for e in event_rows(s, today, today + dt.timedelta(days=EXAM_AHEAD), who=u) if e.kind in ("exam", "test") and e.day >= today]
+    if exams:
+        e = exams[0]; weak = len(my_insights(u, s)["needs_study"]); v = {"title": e.title, "date": e.day.isoformat(), "n": weak}
+        if weak: add("now" if (e.day - today).days <= 3 else "soon", "exam", "{title} on {date}: revise {n} weak topics first", v, "progress")
+        else: add("soon", "exam", "{title} on {date}", v, "calendar")
+    for f in t["focus"][:3]:  # the ranked next steps, written by the server in words each language translates (srv shapes)
+        lvl = "now" if f["kind"] == "overdue" else "soon" if f["kind"] in ("due_soon", "weak", "quiz_retake") else "later"
+        items.append({"key": "focus_" + f["kind"], "level": lvl, "text": f["reason"], "title": f["title"], "course": f["course"], "vars": {},
+                      "action": "quiz" if f.get("quiz_id") else "topic", "target": {k: f[k] for k in ("topic_id", "quiz_id", "nav") if f.get(k) is not None}})
+    revisit = mcq_summary(s, u.id)["revisit"]
+    if revisit: add("later", "mcq", "Practise MCQs on {topics}", {"topics": ", ".join(revisit[:3])}, "mcq")
+    p = plan_json(u, s)
+    if p["plan"] == "lite" and p["searches_limit"] and p["searches_used"] >= 0.8 * p["searches_limit"]:
+        add("soon", "lite", "You have used {used} of today's {limit} free AI searches", {"used": p["searches_used"], "limit": p["searches_limit"]}, "plan")
+    if p["plan"] == "pro" and u.pro_until and u.pro_until - now <= dt.timedelta(days=3):
+        add("soon", "pro_ending", "Your Pro ends on {date}: ask for more if you need it", {"date": local_day(u.pro_until - dt.timedelta(seconds=1)).isoformat()}, "plan")
+    items.sort(key=lambda i: URGENCY[i["level"]])  # stable: within a level, the server's own ranking stands
+    return {"items": items[:5], "more": max(0, len(items) - 5), "streak": t["streak"], "active_today": t["active_today"], "week": [w["active"] for w in t["week"]],
+            "completed_this_week": t["completed_this_week"], "percent": t["percent"], "routine": bool(r)}
 @app.get("/api/me/today")
 def my_today(u: User = Depends(me), s: Session = Depends(db)):
     now = dt.datetime.utcnow(); today = local_day(now); since = today - dt.timedelta(days=400)
@@ -3430,6 +3510,23 @@ def my_today(u: User = Depends(me), s: Session = Depends(db)):
     return {"streak": streak, "active_today": today in days, "week": week, "active_days_week": len(in7), "completed_this_week": done7,
             "topics_total": topics_total, "topics_completed": topics_done, "percent": round(100 * topics_done / topics_total) if topics_total else 0,
             "quiz_average": round(sum(bests) / len(bests)) if bests else None, "focus": focus}
+# ---- redo: a student starts a topic, or a whole course, over. Its progress is set aside (ProgressHistory), so it reads "not started" again
+# ---- everywhere; quiz attempts and scores stay as they are, and the days they studied still count toward their streak.
+def set_aside(s, uid, tids):
+    rows = s.query(Progress).filter(Progress.user_id == uid, Progress.topic_id.in_(list(tids) or [0])).all()
+    for p in rows: s.add(ProgressHistory(user_id=uid, topic_id=p.topic_id, reads=p.reads, last_read=p.last_read, completed_at=p.completed_at)); s.delete(p)
+    return len(rows)
+@app.post("/api/topics/{tid}/redo")
+def redo_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s); n = set_aside(s, u.id, [tid]); s.commit(); return {"ok": True, "topics": n}
+@app.post("/api/courses/{cid}/redo")
+def redo_course(cid: int, u: User = Depends(me), s: Session = Depends(db)):
+    if not s.get(Course, cid): raise HTTPException(404, "Course not found")
+    check_course_access(u, cid, s)
+    tids = [i for (i,) in s.query(Topic.id).join(Unit, Unit.id == Topic.unit_id).filter(Unit.course_id == cid)]
+    n = set_aside(s, u.id, tids); s.commit(); return {"ok": True, "topics": n}
 @app.post("/api/topics/{tid}/read")
 def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)

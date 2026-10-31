@@ -35,7 +35,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.zigora.R
 import app.zigora.data.AiStatus
+import app.zigora.data.GDash
+import app.zigora.data.GDashItem
 import app.zigora.data.GProgress
+import app.zigora.data.GWard
 import app.zigora.data.GStudents
 import app.zigora.data.I18n
 import app.zigora.data.Invitations
@@ -132,6 +135,7 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
     view?.let { sid -> StudentProgressScreen(sid, me.level ?: "school") { view = null }; return }  // coming back loads the list again, so a change shows
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast()
     val list = rememberLoad("guardian-students") { get("/guardian/students", GStudents.serializer()) }
+    val dash = rememberLoad("guardian-dashboard") { get("/guardian/dashboard", GDash.serializer()) }
     val opts = rememberLoad("guardian-options") { runCatching { get("/guardian/options", ProgOpts.serializer()) }.getOrDefault(ProgOpts()) }
     val key = rememberLoad("guardian-key") { get("/me/ai-key", KeyState.serializer()) }
     val parent = me.relation == "parent"; val level = me.level ?: "school"
@@ -142,13 +146,19 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var ask by remember { mutableStateOf<Ask?>(null) }
     Page(tl("Hello, {name}", "name" to firstName(me.name)), actions = { TextButton(onClick = signOut) { Text(stringResource(R.string.sign_out)) } }) {
+        val dd = (dash.state as? Load.Ok)?.value
+        if (dd != null && dd.items.isNotEmpty()) {
+            SectionTitle(tl("Needs you"))
+            dd.items.forEach { x -> NeedsYouRow(x) { if (x.action == "key") keyOpen = true else view = x.student_id } }
+        } else if (dd != null && dd.students.isNotEmpty()) Panel { Text(if (parent) tl("All good. Nothing needs you right now.") else tl("All good. No student needs you right now."), style = MaterialTheme.typography.titleMedium) }
         SectionTitle(if (parent) tl("Your children") else tl("Your students"))
+        dd?.students?.forEach { c -> WardSummary(c) { view = c.id } }
         Loaded(list) { d ->
             if (d.students.isEmpty()) Quiet(if (parent) tl("No children are linked to your account yet.") else tl("No students yet. Add your class, or invite students who already have an account."))
-            d.students.forEach { x ->
+            d.students.filter { it.status != "active" || dd == null }.forEach { x ->
                 val sub = listOfNotNull(x.username?.let { tl("Signs in as {username}", "username" to it) }, x.place.ifEmpty { tl("Waiting for an admin to place them") }).joinToString(" · ")
                 val stop = { ask = Ask(tl("Stop following {name}?", "name" to x.name), tl("Their account and progress stay. You no longer see their progress, and your AI key no longer covers them."),
-                                       tl("Stop following"), danger = true) { scope.launch { try { a.raw("DELETE", "/guardian/students/${x.id}"); list.reload() } catch (e: Exception) { toast(e.message.orEmpty()) } } } }
+                                       tl("Stop following"), danger = true) { scope.launch { try { a.raw("DELETE", "/guardian/students/${x.id}"); list.reload(); dash.reload() } catch (e: Exception) { toast(e.message.orEmpty()) } } } }
                 ListRow(if (x.status == "invited") x.name + " · " + tl("Invited") else x.name, sub, onClick = if (x.status == "active") ({ view = x.id }) else null,
                         trailing = if (parent) null else ({ TextButton(onClick = stop) { Text(tl("Remove")) } }))
             }
@@ -167,7 +177,7 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(enabled = !busy && rows.all { it.ok }, onClick = { scope.launch {
                     busy = true
-                    try { a.raw("POST", "/guardian/students", buildJsonObject { put("students", studentsJson(rows)) }); adding = false; list.reload()
+                    try { a.raw("POST", "/guardian/students", buildJsonObject { put("students", studentsJson(rows)) }); adding = false; list.reload(); dash.reload()
                           toast(if (parent) tl("Added. They can sign in now.") else tl("Students added. They can sign in now.")) }
                     catch (e: Exception) { toast(e.message.orEmpty()) }
                     busy = false
@@ -348,5 +358,37 @@ private fun WardScoresCard(sc: WardScores, mcq: WardMcq?) {
         Quiet(if (mcq.sets > 0) tl("{sets} sets done, {average}% correct on average. Last practised {when}.", "sets" to mcq.sets, "average" to (mcq.average ?: 0), "when" to (mcq.last_at?.let { day(it) } ?: ""))
               else tl("No MCQ practice yet."))
         if (mcq.revisit.isNotEmpty()) Quiet(tl("Topics to revisit: {topics}", "topics" to mcq.revisit.joinToString(", ")))
+    }
+}
+
+/** one thing a child needs from their parent or teacher, with the one action that deals with it; the dot says how soon */
+@Composable
+private fun NeedsYouRow(x: GDashItem, act: () -> Unit) {
+    val v = x.vars.mapValues { (k, e) -> val raw = (e as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(); if (k == "date") day(raw) else raw }
+    val dot = when (x.level) { "now" -> MaterialTheme.colorScheme.error; "soon" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.outline }
+    ListRow(tl(x.text, *v.map { it.key to it.value }.toTypedArray()), "", onClick = act,
+        leading = { Box(Modifier.padding(4.dp).background(dot, RoundedCornerShape(50)).padding(5.dp)) },
+        trailing = { TextButton(onClick = act) { Text(if (x.action == "key") tl("Add an AI key") else tl("See progress")) } })
+}
+
+/** a child at a glance: streak, this week's study days, topics learned this week and when they last studied. Tapping opens their progress */
+@Composable
+private fun WardSummary(c: GWard, open: () -> Unit) {
+    val loc = LocalConfiguration.current.locales[0]; val today = java.time.LocalDate.now()
+    Panel(onClick = open) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(c.name, style = MaterialTheme.typography.titleMedium)
+            Text(tl("{n}-day streak", "n" to c.streak), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        if (c.place.isNotEmpty()) Quiet(c.place)
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            c.week.forEachIndexed { i, on ->
+                val wd = today.minusDays((6 - i).toLong()).dayOfWeek.getDisplayName(java.time.format.TextStyle.NARROW, loc)
+                Text(wd, Modifier.weight(1f).background(if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50)).padding(vertical = 6.dp),
+                    textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium,
+                    color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Quiet(tl("Topics learned this week: {n}", "n" to c.completed_this_week) + " · " + (c.last_studied?.let { tl("last studied {when}", "when" to day(it)) } ?: tl("not started yet")))
     }
 }

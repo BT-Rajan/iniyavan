@@ -81,7 +81,7 @@ export default function App(){
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={user.ai_off?null:()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')} onCalendar={()=>go('calendar')}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')} onCalendar={()=>go('calendar')} onGo={go}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
     {page==='home'&&guardian&&<GuardianHome user={user} toast={toast} onKey={()=>go('aikey')} onCalendar={()=>go('calendar')}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}} goSettings={t=>{settingsTab=t;go('ai')}}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
@@ -195,23 +195,37 @@ function Register({onIn,toast,msg,appName,logo,back,google}){  // school or coll
         {kids.length>1&&<button className="tool" onClick={()=>setKids(kids.filter((_,j)=>j!==i))}>{tl("Remove this child")}</button>}</div>)}
       {kids.length<8&&<button className="btn ghost" onClick={()=>setKids([...kids,{...KID}])}>{tl("Add another child")}</button>}</>}
     <button className="btn" disabled={b||!ok} onClick={start}>{google?tl("Create my account"):tl("Send me a code")}</button><button className="btn ghost" onClick={()=>setStage('who')}>{tl("Back")}</button>{foot}</div>}
+// one child or student at a glance, as their parent or teacher sees it on Home: streak, this week's study days, topics learned this week, last studied
+function WardCard({c,open}){
+  const days=[...Array(7)].map((_,i)=>{const d=new Date();d.setDate(d.getDate()-6+i);return d.toLocaleDateString(getLang(),{weekday:'narrow'})})
+  return <button className="card ward" onClick={open} aria-label={tl("See {name}'s progress",{name:c.name})}>
+    <span className="wtop"><b>{c.name}</b><span className="chip">{tl("{n}-day streak",{n:c.streak})}</span></span>
+    {c.place&&<small className="known">{c.place}</small>}
+    <span className="wweek" aria-label={tl("Studied on {n} of the last 7 days",{n:c.active_days_week})}>{c.week.map((on,i)=><span key={i} className={on?'on':''} aria-hidden="true">{days[i]}</span>)}</span>
+    <small className="known">{tl("Topics learned this week: {n}",{n:c.completed_this_week})} · {c.last_studied?tl("last studied {when}",{when:day(c.last_studied)}):tl("not started yet")}</small></button>}
 function GuardianHome({user,toast,onKey,onCalendar}){  // a parent's children, or a teacher's students: add them, invite them (teachers), see their progress, and the AI key that covers them
   const confirm=useConfirm()
   const [d,setD]=useState(null),[k,setK]=useState(null),[opts,setOpts]=useState({school:[],college:[]}),[add,setAdd]=useState(null),[inv,setInv]=useState(''),[sent,setSent]=useState(''),[see,setSee]=useState(null),[b,setB]=useState(false)
-  const load=()=>api('/guardian/students').then(setD).catch(e=>toast(e.message))
+  const [dash,setDash]=useState(null)
+  const load=()=>{api('/guardian/students').then(setD).catch(e=>toast(e.message));api('/guardian/dashboard').then(setDash).catch(()=>{})}
   useEffect(()=>{load();api('/me/ai-key').then(setK).catch(()=>{});api('/guardian/options').then(setOpts).catch(()=>{})},[])
   if(see)return <StudentProgress id={see} back={()=>{setSee(null);load()}} toast={toast}/>  // a name, grade or removal may have changed
   const parent=user.relation==='parent',level=user.level||'school',num=v=>v===''?null:+v,setRow=(i,o)=>setAdd(add.map((x,j)=>j===i?{...x,...o}:x))
   const ok=add&&add.every(x=>x.name.trim()&&x.username.trim()&&x.password&&(!x.program_id||x.semester))
-  const save=async()=>{setB(true);try{setD(await api('/guardian/students',{method:'POST',body:{students:add.map(x=>({...x,program_id:num(x.program_id),semester:num(x.semester)}))}}));setAdd(null);toast(parent?tl("Added. They can sign in now."):tl("Students added. They can sign in now."))}catch(e){toast(e.message)}setB(false)}
+  const save=async()=>{setB(true);try{setD(await api('/guardian/students',{method:'POST',body:{students:add.map(x=>({...x,program_id:num(x.program_id),semester:num(x.semester)}))}}));setAdd(null);load();toast(parent?tl("Added. They can sign in now."):tl("Students added. They can sign in now."))}catch(e){toast(e.message)}setB(false)}
   const invite=async()=>{setB(true);try{setSent(srv((await api('/guardian/invite',{method:'POST',body:{login:inv}})).message));setInv('');load()}catch(e){toast(e.message)}setB(false)}
   const drop=async x=>{if(!await confirm({title:tl("Stop following {name}?",{name:x.name}),body:tl("Their account and progress stay. You no longer see their progress, and your AI key no longer covers them."),ok:tl("Stop following"),danger:true}))return
     try{await api('/guardian/students/'+x.id,{method:'DELETE'});load()}catch(e){toast(e.message)}}
   return <><Bar title={tl("Hello, {name}",{name:firstName(user.name)})}/><div className="main">
-    <h3 className="sec first">{parent?tl("Your children"):tl("Your students")}</h3>
+    {dash?.items.length>0&&<><h3 className="sec first">{tl("Needs you")}</h3>
+      {dash.items.map((x,i)=><div key={x.key+i} className={'card dash '+x.level}><span className="dot" aria-hidden="true"/><div style={{flex:1}}><b>{tl(x.text,{...x.vars,...(x.vars.date?{date:day(x.vars.date)}:{})})}</b></div>
+        <button className="btn ghost" onClick={()=>x.action==='key'?onKey():setSee(x.student_id)}>{x.action==='key'?tl("Add an AI key"):tl("See progress")}</button></div>)}</>}
+    {dash&&!dash.items.length&&dash.students.length>0&&<div className="qbox" role="status" style={{marginTop:0}}><b>{parent?tl("All good. Nothing needs you right now."):tl("All good. No student needs you right now.")}</b></div>}
+    <h3 className={'sec'+(dash?.items.length?'':' first')}>{parent?tl("Your children"):tl("Your students")}</h3>
     {!d&&<Skeleton rows={2}/>}
+    {dash?.students.map(c=><WardCard key={c.id} c={c} open={()=>setSee(c.id)}/>)}
     {d&&!d.students.length&&<p className="known">{parent?tl("No children are linked to your account yet."):tl("No students yet. Add your class, or invite students who already have an account.")}</p>}
-    {d?.students.map(x=><div className="card" key={x.id}><button className="hit" disabled={x.status!=='active'} onClick={()=>setSee(x.id)} aria-label={x.status==='active'?tl("See {name}'s progress",{name:x.name}):x.name}>
+    {d?.students.filter(x=>x.status!=='active'||!dash).map(x=><div className="card" key={x.id}><button className="hit" disabled={x.status!=='active'} onClick={()=>setSee(x.id)} aria-label={x.status==='active'?tl("See {name}'s progress",{name:x.name}):x.name}>
       <div style={{flex:1}}><b>{x.name}{x.status==='invited'&&<span className="pill sm">{tl("Invited")}</span>}</b><span>{x.username?tl("Signs in as {username}",{username:x.username})+' · ':''}{x.place||tl("Waiting for an admin to place them")}</span></div>{x.status==='active'&&<ChevronRight size={18}/>}</button>
       {!parent&&<button className="ic sm" aria-label={tl("Stop following {name}?",{name:x.name})} onClick={()=>drop(x)}><X size={16}/></button>}</div>)}
     {d?.students.some(x=>x.status==='active')&&<button className="btn ghost" onClick={onCalendar}><CalendarDays size={16}/>{" "}{parent?tl("Your children's calendar"):tl("Your students' calendar")}</button>}
@@ -490,6 +504,7 @@ function ArchiveSheet({a,close,done,toast}){  // archive or restore one item; ar
     <button className={'btn'+(a.on?' danger':'')} disabled={busy} onClick={go}>{busy?tl("Working…"):a.on?tl("Archive"):tl("Restore")}</button><button className="btn ghost" onClick={close}>{tl("Cancel")}</button></Sheet>}
 const ArchPill=({x})=>x.archived?<span className="pill off sm">{x.archived_self?tl("Archived"):tl("Archived with its parent")}</span>:null
 function Learn({user,toast,appName,start}){
+  const confirm=useConfirm()
   const isAdmin=user.role==='admin',staff=user.role!=='student'
   const [mat,setMat]=useState(false),[rev,setRev]=useState(null)
   const [bulk,setBulk]=useState(null),[copy,setCopy]=useState(null),[tree,setTree]=useState([]),[nav,setNav]=useState(start||[]),[sheet,setSheet]=useState(null),[cp,setCp]=useState(null),[t,setT]=useState(null),[ed,setEd]=useState(null),[del,setDel]=useState(null),[sh,setSh]=useState(null),[qz,setQz]=useState(null),[qe,setQe]=useState(null),[arch,setArch]=useState(null),[showArch,setShowArch]=useState(false),[qr,setQr]=useState(null),[gb,setGb]=useState(null)
@@ -528,6 +543,8 @@ function Learn({user,toast,appName,start}){
      {staff&&(anyArch||showArch)&&<label className="chk" style={{marginBottom:12}}><input type="checkbox" checked={showArch} onChange={e=>setShowArch(e.target.checked)}/>{" "}{tl("Show archived")}{!showArch&&hidden>0?tl(" ({hidden} here)",{hidden:hidden}):''}</label>}
      {isAdmin&&!sem&&<button className="btn ghost lead" onClick={()=>setSheet(prog?{type:'semester',sem:{},pid:prog.id}:{type:'program',p:{}})}>{prog?tl("Add {term} to {name}",{term:prog.term.toLowerCase(),name:prog.name}):tl("New program")}</button>}
      {isAdmin&&sem&&!co&&<button className="btn ghost lead" onClick={()=>setSheet({type:'course',c:{},pid:prog.id,sid:sem.id})}>{tl("Add course to")}{" "}{sem.name}</button>}
+     {co&&!unit&&!staff&&co.units.some(n=>n.topics.some(x=>x.status!=='not_started'))&&<button className="btn ghost" onClick={async()=>{if(!await confirm({title:tl("Start {name} over?",{name:co.name}),body:tl("Every topic goes back to not started, so you can study the course again. Your quiz scores and your streak stay."),ok:tl("Start over")}))return
+       try{const r=await api(`/courses/${co.id}/redo`,{method:'POST'});toast(tl("{n} topics are ready to study again",{n:r.topics}));load()}catch(e){toast(e.message)}}}><RotateCcw size={16}/>{" "}{tl("Start this course over")}</button>}
      {co&&!unit&&!staff&&(()=>{const ts=co.units.flatMap(n=>n.topics),k=ts.filter(x=>x.has_notes).length;return <div className="card"><button className="hit" onClick={()=>setMat(true)}><span className="dot" style={{background:COL[3]}}><FileText size={20}/></span>
        <div><b>{k?tl("Your notes in {k} of {length} topics",{k:k,length:ts.length}):tl("Bring your own notes")}</b><span>{k?tl("Add or update your material"):tl("Upload your PDF or Word notes. They are filed under this course's topics, for you only.")}</span></div></button></div>})()}
      {co&&!unit&&staff&&<div className="qbox" style={{marginTop:0}}><p className="known" style={{margin:0}}>{tl("Owner:")}{" "}<b>{co.mine?tl("You"):srv(co.owner_problem)||co.owner||tl("Not assigned")}</b>{sem.number?tl(" · {term} no. {number}",{term:prog.term,number:sem.number}):''}</p>
@@ -724,10 +741,27 @@ function FlagsPage({toast,back}){
       {f.reasons.length>0&&<ul className="flagwhy">{f.reasons.map((r,i)=><li key={i}>“{r}”</li>)}</ul>}
       <div className="tools">{f.source==='topic'&&f.topic_id&&<button onClick={()=>setT(f.topic_id)}>{tl("Open the topic")}</button>}<button onClick={()=>act(f,'rewrite')}>{tl("Write it again")}</button><button onClick={()=>act(f,'keep')}>{tl("It's fine")}</button></div></div>)}
     <Pager page={page} total={total} onPage={setPage}/></div></>}
-function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar}){
+// a student's Home, made for a phone: what to do next (most useful first, one button each), then this week at a glance
+const DO_LABEL={topic:'Open',quiz:'Take the quiz',progress:'See weak topics',calendar:'Open calendar',mcq:'Practise',plan:'See my plan',courses:'My courses'}
+function DoNext({d:d0,openTopic,onOpen,onGo,onCalendar,session}){  // with a routine, today's session already lists the topics: then only the other signals
+  const d={...d0,items:session?d0.items.filter(x=>!x.key.startsWith('focus_')):d0.items}
+  const run=x=>{const t=x.target||{};if(x.action==='topic'&&t.topic_id)return openTopic(t.topic_id);if(x.action==='quiz'&&t.nav)return onOpen(t.nav)
+    if(x.action==='calendar')return onCalendar();onGo({progress:'progress',mcq:'mcq',plan:'profile',courses:'learn'}[x.action]||'learn')}
+  if(!d.items.length)return null
+  return <><h3 className="sec first">{tl("Do next")}</h3>{d.items.map((x,i)=><div key={x.key+i} className={'card dash '+x.level}><span className="dot" aria-hidden="true"/>
+    <div style={{flex:1}}><b>{x.title||tl(x.text,{...x.vars,...(x.vars.date?{date:day(x.vars.date)}:{})})}</b>{x.title&&<small className="known">{srv(x.text)}{x.course?' · '+x.course:''}</small>}</div>
+    <button className="btn ghost" onClick={()=>run(x)}>{tl(DO_LABEL[x.action]||'Open')}</button></div>)}</>}
+function ThisWeek({d,onGo}){
+  const days=[...Array(7)].map((_,i)=>{const t=new Date();t.setDate(t.getDate()-6+i);return t.toLocaleDateString(getLang(),{weekday:'narrow'})})
+  return <button className="card ward" onClick={()=>onGo('progress')} aria-label={tl("My progress")}>
+    <span className="wtop"><b>{tl("This week")}</b><span className="chip">{tl("{n}-day streak",{n:d.streak})}</span></span>
+    <span className="wweek" aria-label={tl("Studied on {n} of the last 7 days",{n:d.week.filter(Boolean).length})}>{d.week.map((on,i)=><span key={i} className={on?'on':''} aria-hidden="true">{days[i]}</span>)}</span>
+    <small className="known">{tl("Topics learned this week: {n}",{n:d.completed_this_week})} · {tl("{p}% of your topics learned",{p:d.percent})}</small></button>}
+function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar,onGo}){
   const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
   const [tree,setTree]=useState(null),[today,setToday]=useState(null),[topic,setTopic]=useState(null),[sess,setSess]=useState(null)
-  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/today').then(setToday).catch(()=>{})},[topic,toast])
+  const [dd,setDd]=useState(null)
+  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/today').then(setToday).catch(()=>{});api('/me/dashboard').then(setDd).catch(()=>{})},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const hour=new Date().getHours(),hi=hour<12?'Good morning, {name}':hour<17?'Good afternoon, {name}':'Good evening, {name}'
   const seen=new Map(),courses=[]
@@ -737,7 +771,9 @@ function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar}){
   return <><Bar title={tl(hi,{name:firstName(user.name)})}/><div className="main">
     <Invitations/>
     <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic} onLoad={setSess}/>
-    {!sess?.routine&&resume&&<div className="card"><button className="hit" onClick={()=>setTopic(resume.topic_id)}><span className="dot" style={{background:'var(--acc)'}}><Play size={18}/></span><div><b>{resume.title}</b><span>{resume.kind==='resume'?tl("Where you left off"):tl("Up next, if you like")} · {resume.course}</span></div><ChevronRight size={18}/></button></div>}
+    {dd&&<DoNext d={dd} openTopic={setTopic} onOpen={onOpen} onGo={onGo} onCalendar={onCalendar} session={!!sess?.routine}/>}
+    {dd&&<ThisWeek d={dd} onGo={onGo}/>}
+    {!dd&&!sess?.routine&&resume&&<div className="card"><button className="hit" onClick={()=>setTopic(resume.topic_id)}><span className="dot" style={{background:'var(--acc)'}}><Play size={18}/></span><div><b>{resume.title}</b><span>{resume.kind==='resume'?tl("Where you left off"):tl("Up next, if you like")} · {resume.course}</span></div><ChevronRight size={18}/></button></div>}
     <RecallCard open={setTopic}/>
     <ComingUp onAll={onCalendar}/>
     {sme&&sme.courses>0&&<><h3 className="sec">{tl("Your own courses")}</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}
@@ -1430,6 +1466,7 @@ function HistorySheet({tid,close,done,toast}){
       :<Paged rows={list} render={x=><button key={x.id} className="row" style={{width:'100%',textAlign:'start',background:'none'}} onClick={()=>open(x)}><div>{x.saved_at&&!(x.by===null&&x.note.startsWith('Before'))?when(x.saved_at):tl("Before history began")}<small>{x.note}{x.by?' · '+x.by:''}</small></div>{x.current&&<span className="pill">{tl("Current")}</span>}<ChevronRight size={16}/></button>}/>}
     <button className="btn ghost" onClick={close}>{tl("Close")}</button></Sheet>}
 function Topic({id:first,back,toast,role}){
+  const confirm=useConfirm()
   const {aiOff}=useContext(Ctx)
   useLearnClock()  // a lite person's learning minutes
   const [mcq,setMcq]=useState(false),[practice,setPractice]=useState(null),[checking,setChecking]=useState(''),[reading,setReading]=useState(false),[hls,setHls]=useState([]),[tr,setTr]=useState(null)
@@ -1438,6 +1475,8 @@ function Topic({id:first,back,toast,role}){
   const [mat,setMat]=useState(false),[upNext,setUpNext]=useState(null),opened=useRef(false),jump=nid=>{opened.current=false;setUpNext(null);setGone('');setT(null);setTab('notes');setAi({});setAiMsg('');setKnown([]);setEditing(false);setId(nid);window.scrollTo(0,0)},learn=r=>setT(p=>({...p,status:r.status,overdue:r.overdue,late:r.late,completed_at:r.completed_at}))
   useEffect(()=>{api('/topics/'+id).then(x=>{setT(x);setBm(!!x.bookmarked)
     if(!opened.current){opened.current=true;api(`/topics/${id}/read`,{method:'POST'}).then(r=>{setKnown(r.known);learn(r)}).catch(()=>{})}}).catch(e=>{toast(e.message);if(/unavailable right now/.test(e.message))setGone(e.message)})},[id,v])  // opening starts it, after the page has loaded
+  const redo=async()=>{if(!await confirm({title:tl("Start this topic over?"),body:tl("It goes back to not started, so you can study it again. Your quiz scores and your streak stay."),ok:tl("Start over")}))return
+    try{await api(`/topics/${id}/redo`,{method:'POST'});setT(p=>({...p,status:'not_started',completed_at:null}));toast(tl("Started over"))}catch(e){toast(e.message)}}
   const setDone=async on=>{try{learn(await api(`/topics/${id}/complete`,{method:on?'PUT':'DELETE'}));toast(on?tl("Marked as completed"):tl("Marked as not completed"))}catch(e){toast(e.message);return}
     setUpNext(null);if(!on||role!=='student')return
     try{const items=(await api('/me/session')).session?.items||[];if(items.some(x=>x.id===id&&x.kind!=='review'&&x.src!=='study'))setUpNext({items,next:items.find(x=>!x.done)})}catch{/* no session today: nothing to lead on to */}}
@@ -1483,7 +1522,8 @@ function Topic({id:first,back,toast,role}){
     {role==='student'&&aiOk!==false&&<><h3 className="sec">{tl("Want to test yourself?")}</h3><div className="two"><button className="btn ghost" disabled={!!checking} onClick={()=>practise('mcq')}><ClipboardList size={16}/> {checking==='mcq'?tl("Writing questions…"):tl("5 quick questions")}</button><button className="btn ghost" disabled={!!checking} onClick={()=>practise('quiz')}><Target size={16}/> {checking==='quiz'?tl("Writing the quiz…"):tl("Full quiz · 10")}</button></div>
       <p className="known" style={{marginTop:4}}>{tl("New questions from this topic's notes each time. 5 quick questions: the answer right after each one. Full quiz: scored at the end.")}</p></>}
     {role==='student'&&<div className="mine"><span>{t.learning_due_at&&<>{tl("Your teacher's date")}: {day(t.learning_due_at)} · </>}{t.status==='completed'?tl("You marked this as learned"):tl("Not marked as learned yet")}</span>
-      {t.status==='completed'?<button className="link" onClick={()=>setDone(false)}>{tl("Undo")}</button>:<button className="link" onClick={()=>setDone(true)}>{tl("I've learned this")}</button>}</div>}
+      {t.status==='completed'?<button className="link" onClick={()=>setDone(false)}>{tl("Undo")}</button>:<button className="link" onClick={()=>setDone(true)}>{tl("I've learned this")}</button>}
+      {t.status!=='not_started'&&<button className="link" onClick={redo}>{tl("Start over")}</button>}</div>}
     {t.nav&&t.nav.total>1&&<nav className="pager" aria-label={tl("Topics in this unit")}><button className="btn ghost" disabled={!t.nav.prev} onClick={()=>jump(t.nav.prev.id)} aria-label={t.nav.prev?tl("Previous topic: {title}",{title:t.nav.prev.title}):tl("No previous topic")}><ChevronLeft size={18}/><span>{t.nav.prev?t.nav.prev.title:tl("Previous")}</span></button>
       <small>{t.nav.position}{" "}{tl("of")}{" "}{t.nav.total}</small>
       <button className={'btn'+(t.nav.next?'':' ghost')} disabled={!t.nav.next} onClick={()=>jump(t.nav.next.id)} aria-label={t.nav.next?tl("Next topic: {title}",{title:t.nav.next.title}):tl("No next topic")}><span>{t.nav.next?t.nav.next.title:tl("Next")}</span><ChevronRight size={18}/></button></nav>}</div></>}

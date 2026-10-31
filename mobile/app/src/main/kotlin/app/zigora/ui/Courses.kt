@@ -29,6 +29,11 @@ import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
@@ -65,6 +70,8 @@ fun CourseScreen(id: Int, back: () -> Unit, openTopic: (Int) -> Unit, openQuiz: 
     val tree = rememberLoad("tree", id) { get("/tree", ListSerializer(ProgramNode.serializer())) }
     val c = (tree.state as? Load.Ok)?.value?.let { coursesOf(it).firstOrNull { x -> x.id == id } }
     val scroll = TopAppBarDefaults.pinnedScrollBehavior()
+    val a = api(); val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var redoAsk by remember { mutableStateOf(false) }  // asking before the whole course starts over
     Scaffold(Modifier.nestedScroll(scroll.nestedScrollConnection), topBar = {
         TopAppBar(title = { Text(c?.name ?: "") }, scrollBehavior = scroll,
                   navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } })
@@ -76,6 +83,11 @@ fun CourseScreen(id: Int, back: () -> Unit, openTopic: (Int) -> Unit, openQuiz: 
                 ListRow(if (k > 0) tl("Your notes in {k} of {length} topics", "k" to k, "length" to ts.size) else tl("Bring your own notes"),
                         if (k > 0) tl("Add or update your material") else tl("Upload your PDF or Word notes. They are filed under this course's topics, for you only."),
                         onClick = { openMaterial(c.id, c.name) }, leading = { RowIcon(Icons.Outlined.UploadFile) })
+                if (ts.any { it.status != "not_started" }) TextButton(onClick = { redoAsk = true }) { Text(tl("Start this course over")) }
+                if (redoAsk) androidx.compose.material3.AlertDialog(onDismissRequest = { redoAsk = false }, title = { Text(tl("Start {name} over?", "name" to c.name)) },
+                    text = { Text(tl("Every topic goes back to not started, so you can study the course again. Your quiz scores and your streak stay.")) },
+                    confirmButton = { TextButton(onClick = { redoAsk = false; scope.launch { runCatching { a.raw("POST", "/courses/${c.id}/redo") }; tree.reload() } }) { Text(tl("Start over")) } },
+                    dismissButton = { TextButton(onClick = { redoAsk = false }) { Text(stringResource(R.string.cancel)) } })
                 if (c.tests.any { it.published && it.questions > 0 }) SectionTitle(tl("MCQ tests"))
                 Tests(c.tests, openQuiz)
                 c.units.forEach { un ->

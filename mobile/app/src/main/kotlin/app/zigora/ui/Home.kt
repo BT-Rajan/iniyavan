@@ -3,6 +3,7 @@ package app.zigora.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
@@ -85,10 +86,12 @@ fun firstName(n: String): String {  // as on the web: a title stays with the sur
 @Composable
 fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, openQuiz: (Int) -> Unit, openNotes: () -> Unit, openPhoto: () -> Unit,
                openSearch: () -> Unit, openRoutine: () -> Unit, openSession: (app.zigora.data.SessionItem) -> Unit, openStudy: () -> Unit,
-               openOwn: (Int, Int) -> Unit, review: (Int) -> Unit, openMcq: () -> Unit = {}, openCalendar: () -> Unit = {}) {
+               openOwn: (Int, Int) -> Unit, review: (Int) -> Unit, openMcq: () -> Unit = {}, openCalendar: () -> Unit = {}, openProgress: () -> Unit = {}, openPlan: () -> Unit = {}) {
     val tree = rememberLoad("tree") { get("/tree", ListSerializer(ProgramNode.serializer())) }
     val zapp = app(); androidx.compose.runtime.LaunchedEffect(tree.state) { if (tree.state !is Load.Loading) zapp.firstScreenReady.value = true }
     val today = rememberLoad("today") { get("/me/today", Today.serializer()) }
+    val dash = rememberLoad("student-dashboard") { get("/me/dashboard", app.zigora.data.SDash.serializer()) }
+    val dd = (dash.state as? Load.Ok)?.value
     val notes = rememberLoad("notes") { get("/me/notifications", Notes.serializer()) }
     val sme = (rememberLoad("study-me") { get("/study/me", app.zigora.data.StudyMe.serializer()) }.state as? Load.Ok)?.value
     val session = rememberLoad("session") { get("/me/session", app.zigora.data.SessionOut.serializer()) }
@@ -108,12 +111,24 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
             }
         })
     }) { pad ->
-        PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload(); session.reload() }, modifier = Modifier.padding(pad)) {
+        PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload(); session.reload(); dash.reload() }, modifier = Modifier.padding(pad)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 UpdateCard()
                 InvitationsCard()
                 sess?.let { SessionCard(it, openRoutine, openSession) { n -> sess = n } }
-                (today.state as? Load.Ok)?.value?.takeIf { sess?.routine == null }?.let { t ->  // with a routine, its session says what is next
+                if (dd != null) {  // what to do next, then this week; with a routine, today's session already lists the topics
+                    val items = if (sess?.routine != null) dd.items.filter { !it.key.startsWith("focus_") } else dd.items
+                    if (items.isNotEmpty()) SectionTitle(tl("Do next"))
+                    items.forEach { x -> DoNextRow(x) {
+                        when (x.action) {
+                            "topic" -> x.target.topic_id?.let(openTopic) ?: openProgress()
+                            "quiz" -> x.target.quiz_id?.let(openQuiz) ?: openProgress()
+                            "calendar" -> openCalendar(); "mcq" -> openMcq(); "plan" -> openPlan()
+                            else -> openProgress()
+                        } } }
+                    ThisWeekCard(dd, openProgress)
+                }
+                (today.state as? Load.Ok)?.value?.takeIf { sess?.routine == null && dd == null }?.let { t ->  // with a routine, its session says what is next
                     val f = t.focus.filter { it.kind == "resume" }.maxByOrNull { it.last_read.orEmpty() } ?: t.focus.firstOrNull { it.kind == "next" }
                     if (f?.topic_id != null) ListRow(f.title, stringResource(if (f.kind == "resume") R.string.where_left_off else R.string.up_next) + " · " + f.course,
                                                      onClick = { openTopic(f.topic_id) }, leading = { RowIcon(Icons.Filled.PlayArrow) })
@@ -187,4 +202,37 @@ fun UpdateCard() {
     val ctx = LocalContext.current
     ListRow(stringResource(R.string.update_ready, rel.version.orEmpty()), stringResource(R.string.update_tap),
             onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, rel.url.toUri())) }, leading = { RowIcon(Icons.Outlined.SystemUpdate) })
+}
+
+/** one thing to do next on a student's Home: the sentence (or a topic and why), and the one action; the dot says how soon */
+@Composable
+private fun DoNextRow(x: app.zigora.data.SDashItem, act: () -> Unit) {
+    val v = x.vars.mapValues { (k, e) -> val raw = (e as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(); if (k == "date") day(raw) else raw }
+    val dot = when (x.level) { "now" -> MaterialTheme.colorScheme.error; "soon" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.outline }
+    val label = when (x.action) { "quiz" -> tl("Take the quiz"); "progress" -> tl("See weak topics"); "calendar" -> tl("Open calendar"); "mcq" -> tl("Practise"); "plan" -> tl("See my plan"); else -> tl("Open") }
+    ListRow(x.title ?: tl(x.text, *v.map { it.key to it.value }.toTypedArray()),
+        if (x.title != null) listOfNotNull(app.zigora.data.I18n.srv(x.text), x.course).joinToString(" · ") else "", onClick = act,
+        leading = { androidx.compose.foundation.layout.Box(Modifier.padding(4.dp).background(dot, androidx.compose.foundation.shape.RoundedCornerShape(50)).padding(5.dp)) },
+        trailing = { TextButton(onClick = act) { Text(label) } })
+}
+
+/** this week at a glance: the streak, the last seven days, topics learned; tapping opens My progress */
+@Composable
+private fun ThisWeekCard(d: app.zigora.data.SDash, open: () -> Unit) {
+    val loc = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]; val today = java.time.LocalDate.now()
+    Panel(onClick = open) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(tl("This week"), style = MaterialTheme.typography.titleMedium)
+            Text(tl("{n}-day streak", "n" to d.streak), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            d.week.forEachIndexed { i, on ->
+                Text(today.minusDays((6 - i).toLong()).dayOfWeek.getDisplayName(java.time.format.TextStyle.NARROW, loc),
+                    Modifier.weight(1f).background(if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, androidx.compose.foundation.shape.RoundedCornerShape(50)).padding(vertical = 6.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.labelMedium,
+                    color = if (on) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Quiet(tl("Topics learned this week: {n}", "n" to d.completed_this_week) + " · " + tl("{p}% of your topics learned", "p" to d.percent))
+    }
 }
