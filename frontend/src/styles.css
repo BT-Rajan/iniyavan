@@ -495,3 +495,9 @@ html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:in
 .caldots i[class^=k-]{background:var(--k)}
 .calitem{position:relative;overflow:hidden}.calbar{position:absolute;inset-block:0;inset-inline-start:0;width:4px;background:var(--k)}
 .calnote{display:block;white-space:pre-wrap;margin-top:4px}
+
+/* the admin's dashboard: one row per thing to do, a dot for how soon */
+.card.dash{display:flex;align-items:center;gap:12px;text-align:start}.card.dash .btn{width:auto;margin:0;flex:none;padding:8px 14px}
+.card.dash .dot{width:10px;height:10px;min-width:10px;border-radius:50%;background:var(--mut)}.card.dash.now .dot{background:var(--bad)}.card.dash.soon .dot{background:var(--warn)}
+.card.dash small{display:block;margin-top:2px}
+@media (max-width:480px){.card.dash{flex-wrap:wrap}.card.dash .btn{margin-inline-start:22px}}

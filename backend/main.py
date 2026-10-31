@@ -1239,6 +1239,7 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
     now = dt.datetime.utcnow(); asking = s.query(MoreRequest.user_id).filter(MoreRequest.done_at.is_(None))
     if plan == "asked": qs = qs.filter(User.id.in_(asking))  # self-registered people asking for more AI
     elif plan == "pro": qs = qs.filter(User.pro_until > now)  # only self-registered people and school students the admin added can be made pro
+    elif plan == "pro_ending": qs = qs.filter(User.pro_until > now, User.pro_until <= now + dt.timedelta(days=PRO_ENDING_DAYS))
     elif plan == "lite":  # exactly ai_plan()'s Lite: students only; a school student who signed up is on a family key or none, and one the college added is Lite
         school = or_(func.coalesce(Program.pattern, "") == "grade", and_(User.program_id.is_(None), func.coalesce(User.level, "") == "school"))
         qs = qs.filter(User.role == "student", or_(User.pro_until.is_(None), User.pro_until <= now),
@@ -1940,6 +1941,65 @@ def overview(u: User = Depends(staff), s: Session = Depends(db)):  # what needs 
         quiet = stu.filter(User.id.notin_(s.query(Progress.user_id))).count()
         add("never_opened", quiet, f"{quiet} active student{'s have' if quiet != 1 else ' has'} never opened a topic")
     return out
+# ---- the admin's dashboard: only what needs doing, most urgent first, each with the one action that deals with it. Counts and charts
+# ---- live on the report pages. Where the data allows, it warns ahead: an allowance that will run out before the month ends, Pro that ends this week.
+PRO_ENDING_DAYS, FLAG_OLD_DAYS, AI_FAIL_RUN = 7, 3, 3
+URGENCY = {"now": 0, "soon": 1, "later": 2}
+def item(cat, level, key, text, vars_, action, **target):  # text: the English sentence with {names}, filled from vars_ (each language translates it whole)
+    return {"key": key, "category": cat, "level": level, "text": text, "vars": vars_, "action": action, "target": target}
+def allowance_items(s, now):
+    out, start = [], month_start(); nxt = (start + dt.timedelta(days=32)).replace(day=1); elapsed = max((now - start).total_seconds() / 86400, 0.5)
+    for p, v in PROVIDERS.items():
+        b = budget(s, p)
+        if not b["limit"]: continue
+        if b["used"] >= b["limit"]:
+            out.append(item("ai", "now", "allowance_out", "This month's {name} allowance is used up: new AI answers have stopped until the 1st", {"name": v.name}, "settings", tab="ai")); continue
+        rate = b["used"] / elapsed
+        if rate <= 0: continue
+        runs_out = start + dt.timedelta(days=b["limit"] / rate)
+        if runs_out < nxt: out.append(item("ai", "soon" if (runs_out - now).days > 3 else "now", "allowance_soon", "At this month's pace, the {name} allowance runs out around {date}",
+                                           {"name": v.name, "date": local_day(runs_out).isoformat()}, "settings", tab="ai"))
+    return out
+def ai_failing(s, now):  # the college's last few AI requests all went unanswered: most likely the key, the balance or the model name
+    p = ai_provider(s)
+    last = s.query(AIEgress.ok).filter(AIEgress.own == False, egress_provider() == p, AIEgress.at >= now - dt.timedelta(hours=24)).order_by(AIEgress.id.desc()).limit(AI_FAIL_RUN).all()  # noqa: E712
+    if len(last) == AI_FAIL_RUN and not any(ok for (ok,) in last):
+        return [item("ai", "now", "ai_failing", "The last {n} AI requests to {name} got no answer: check the key and the balance", {"n": AI_FAIL_RUN, "name": PROVIDERS[p].name}, "test_ai")]
+    if not ai_key(s): return [item("ai", "now", "ai_off", "AI is off: no {name} key is saved", {"name": PROVIDERS[p].name}, "settings", tab="ai")]
+    return []
+@app.get("/api/admin/dashboard")
+def admin_dashboard(u: User = Depends(admin), s: Session = Depends(db)):
+    now = dt.datetime.utcnow(); today = local_day(now); out = allowance_items(s, now) + ai_failing(s, now)
+    def add(n, cat, level, key, text, action, extra=None, **target):
+        if n: out.append(item(cat, level, key, text, {"n": n, **(extra or {})}, action, **target))
+    stu = s.query(User).filter_by(role="student", active=True)
+    # people and plans
+    add(s.query(func.count(func.distinct(MoreRequest.user_id))).filter(MoreRequest.done_at.is_(None)).scalar(), "people", "now", "more_ai",
+        "Asking for more AI: {n}", "users", plan="asked")
+    add(s.query(func.count(User.id)).filter(User.active == True, User.pro_until > now, User.pro_until <= now + dt.timedelta(days=PRO_ENDING_DAYS)).scalar(), "people", "soon", "pro_ending",  # noqa: E712
+        "Pro ending within 7 days: {n}", "users", plan="pro_ending")
+    add(stu.filter(or_(User.program_id.is_(None), User.semester.is_(None))).count(), "people", "soon", "unenrolled", "Students not placed in a program and term, so they see nothing: {n}", "list", kind="unenrolled")
+    add(stu.filter(User.id.notin_(s.query(Progress.user_id))).count(), "people", "later", "never_opened", "Students who have never opened a topic: {n}", "list", kind="never_opened")
+    # content
+    flags = flags_for(u, s); nf = flags.count()
+    if nf:
+        oldest = flags.order_by(AIFlag.at).first().at; days = (now - oldest).days
+        add(nf, "content", "now" if days >= FLAG_OLD_DAYS else "soon", "flags", "Flagged AI answers to check: {n}, the oldest from {days} days ago" if days else "Flagged AI answers to check: {n}",
+            "flags", {"days": days})
+    cids = [c.id for c in live_courses(u, s)]; units = live_units(s, cids)
+    draft = s.query(Topic).filter(Topic.unit_id.in_(units), Topic.archived_at.is_(None), Topic.published == False)  # noqa: E712
+    add(draft.filter(Topic.learning_due_at.isnot(None), Topic.learning_due_at <= now + dt.timedelta(days=7)).count(), "content", "now", "drafts_due",
+        "Drafts due to be learned within 7 days that students can't see yet: {n}", "list", kind="drafts")
+    add(s.query(Course).filter(Course.id.in_(cids or [0]), Course.faculty_owner_id.is_(None)).count(), "content", "soon", "unowned", "Courses with no owner, so only admins can edit them: {n}", "list", kind="unowned")
+    add(sum(1 for c in cids if not live_units(s, [c]).first()), "content", "later", "empty_courses", "Courses with no units yet: {n}", "list", kind="empty_courses")
+    add(s.query(Semester).filter(Semester.semester_no.is_(None)).count(), "content", "later", "semester_numbers", "Terms with no number, so students can't be placed in them: {n}", "list", kind="semester_numbers")
+    # system
+    fails = int(setting(s, "mail_fails", "0") or 0)
+    if fails: out.append(item("system", "now", "mail_failing", "Emails failing, in a row: {n}", {"n": fails}, "settings", tab="mail"))
+    elif not mail_on(s): out.append(item("system", "later", "mail_off", "Email is not set up, so people can't reset their own password", {}, "settings", tab="mail"))
+    out.sort(key=lambda x: URGENCY[x["level"]])
+    nxt = s.query(CalendarEvent).filter(CalendarEvent.scope == "all", CalendarEvent.day >= today).order_by(CalendarEvent.day).first()
+    return {"items": out, "next": {"title": nxt.title, "date": nxt.day.isoformat()} if nxt else None}
 class RolloverIn(BaseModel): dry_run: bool = True; finishing: str = "keep"  # keep: leave the last semester's students where they are; deactivate: switch their accounts off
 @app.post("/api/admin/programs/{pid}/rollover")
 def rollover(pid: int, b: RolloverIn, bg: BackgroundTasks, _: User = Depends(admin), s: Session = Depends(db)):
