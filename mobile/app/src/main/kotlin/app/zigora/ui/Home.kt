@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.AssignmentTurnedIn
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.core.net.toUri
 import androidx.compose.material3.Badge
@@ -86,13 +87,14 @@ fun firstName(n: String): String {  // as on the web: a title stays with the sur
 @Composable
 fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, openQuiz: (Int) -> Unit, openNotes: () -> Unit, openPhoto: () -> Unit,
                openSearch: () -> Unit, openRoutine: () -> Unit, openSession: (app.zigora.data.SessionItem) -> Unit, openStudy: () -> Unit,
-               openOwn: (Int, Int) -> Unit, review: (Int) -> Unit, openMcq: () -> Unit = {}, openCalendar: () -> Unit = {}, openProgress: () -> Unit = {}, openPlan: () -> Unit = {}) {
+               openOwn: (Int, Int) -> Unit, review: (Int) -> Unit, openMcq: () -> Unit = {}, openCalendar: () -> Unit = {}, openAssigned: () -> Unit = {}, openProgress: () -> Unit = {}, openPlan: () -> Unit = {}) {
     val tree = rememberLoad("tree") { get("/tree", ListSerializer(ProgramNode.serializer())) }
     val zapp = app(); androidx.compose.runtime.LaunchedEffect(tree.state) { if (tree.state !is Load.Loading) zapp.firstScreenReady.value = true }
     val today = rememberLoad("today") { get("/me/today", Today.serializer()) }
     val dash = rememberLoad("student-dashboard") { get("/me/dashboard", app.zigora.data.SDash.serializer()) }
     val dd = (dash.state as? Load.Ok)?.value
     val notes = rememberLoad("notes") { get("/me/notifications", Notes.serializer()) }
+    val asg = rememberLoad("me-assignments") { get("/me/assignments", app.zigora.data.MyAssignments.serializer()) }
     val sme = (rememberLoad("study-me") { get("/study/me", app.zigora.data.StudyMe.serializer()) }.state as? Load.Ok)?.value
     val session = rememberLoad("session") { get("/me/session", app.zigora.data.SessionOut.serializer()) }
     var sess by remember { mutableStateOf<app.zigora.data.SessionOut?>(null) }
@@ -111,7 +113,7 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
             }
         })
     }) { pad ->
-        PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload(); session.reload(); dash.reload() }, modifier = Modifier.padding(pad)) {
+        PullToRefreshBox(isRefreshing = tree.state is Load.Loading, onRefresh = { tree.reload(); today.reload(); notes.reload(); session.reload(); dash.reload(); asg.reload() }, modifier = Modifier.padding(pad)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 UpdateCard()
                 InvitationsCard()
@@ -123,7 +125,7 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
                         when (x.action) {
                             "topic" -> x.target.topic_id?.let(openTopic) ?: openProgress()
                             "quiz" -> x.target.quiz_id?.let(openQuiz) ?: openProgress()
-                            "calendar" -> openCalendar(); "mcq" -> openMcq(); "plan" -> openPlan()
+                            "calendar" -> openCalendar(); "mcq" -> openMcq(); "plan" -> openPlan(); "assignment" -> openAssigned()
                             else -> openProgress()
                         } } }
                     ThisWeekCard(dd, openProgress)
@@ -135,6 +137,11 @@ fun HomeScreen(me: Me, openTopic: (Int) -> Unit, openCourse: (Int) -> Unit, open
                 }
                 RecallCard(openTopic)
                 ListRow(tl("MCQ practice"), tl("Questions from your courses, with answers explained"), onClick = openMcq, leading = { RowIcon(Icons.Outlined.Checklist) })
+                (asg.state as? Load.Ok)?.value?.items?.takeIf { it.isNotEmpty() }?.let { xs ->  // only once a teacher has given them something
+                    val todo = xs.count { it.status == "to_do" }
+                    ListRow(tl("Assigned to me"), if (todo > 0) tl("To do") + ": $todo" else pl(xs.size, "assignment"), onClick = openAssigned,
+                            leading = { RowIcon(Icons.Outlined.AssignmentTurnedIn) })
+                }
                 ComingUp(openCalendar)
                 if (sme != null && sme.courses > 0) { SectionTitle(tl("Your own courses")); LearnCard(sme, openOwn, review) }
                 Loaded(tree) { list ->
@@ -207,7 +214,7 @@ fun UpdateCard() {
 /** one thing to do next on a student's Home: the sentence (or a topic and why), and the one action; the dot says how soon */
 @Composable
 private fun DoNextRow(x: app.zigora.data.SDashItem, act: () -> Unit) {
-    val v = x.vars.mapValues { (k, e) -> val raw = (e as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(); if (k == "date") day(raw) else raw }
+    val v = x.vars.mapValues { (k, e) -> val raw = (e as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty(); if (k == "date") day(raw) else if (k == "due") dueText(raw) else raw }
     val dot = when (x.level) { "now" -> MaterialTheme.colorScheme.error; "soon" -> MaterialTheme.colorScheme.tertiary; else -> MaterialTheme.colorScheme.outline }
     val label = when (x.action) { "quiz" -> tl("Take the quiz"); "progress" -> tl("See weak topics"); "calendar" -> tl("Open calendar"); "mcq" -> tl("Practise"); "plan" -> tl("See my plan"); else -> tl("Open") }
     ListRow(x.title ?: tl(x.text, *v.map { it.key to it.value }.toTypedArray()),

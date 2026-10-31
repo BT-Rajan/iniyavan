@@ -1,5 +1,5 @@
 name: Android screens
-# Runs the app's onboarding, MCQ, account and calendar screens (mobile/app/src/test/.../screens/OnboardingTest.kt, McqTest.kt, AccountTest.kt, CalendarTest.kt) on a simulated phone (Robolectric) against a Zigora
+# Runs the app's onboarding, MCQ, account, calendar and assigned-test screens (mobile/app/src/test/.../screens/OnboardingTest.kt, McqTest.kt, AccountTest.kt, CalendarTest.kt, AssignTest.kt) on a simulated phone (Robolectric) against a Zigora
 # server seeded by mobile/screens_seed.py, and keeps a screenshot of each screen as the "onboarding-screens" artifact.
 on:
   pull_request:
@@ -33,7 +33,7 @@ jobs:
 
       - name: Screens
         working-directory: mobile
-        run: ./gradlew --no-daemon testDebugUnitTest -Pscreens --tests 'app.zigora.screens.OnboardingTest' --tests 'app.zigora.screens.McqTest' --tests 'app.zigora.screens.AccountTest' --tests 'app.zigora.screens.CalendarTest'
+        run: ./gradlew --no-daemon testDebugUnitTest -Pscreens --tests 'app.zigora.screens.OnboardingTest' --tests 'app.zigora.screens.McqTest' --tests 'app.zigora.screens.AccountTest' --tests 'app.zigora.screens.CalendarTest' --tests 'app.zigora.screens.AssignTest'
 
       - uses: actions/upload-artifact@v4
         if: always()

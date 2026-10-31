@@ -2402,5 +2402,7 @@
 "1 assignment": "1 ஒதுக்கீடு",
 "{n} assignments": "{n} ஒதுக்கீடுகள்",
 "{title}: due {due}": "{title}: கடைசி {due}",
-"You have used all {n} attempts for this assignment.": "இந்த ஒதுக்கீட்டுக்கான {n} முயற்சிகளையும் பயன்படுத்திவிட்டீர்கள்."
+"You have used all {n} attempts for this assignment.": "இந்த ஒதுக்கீட்டுக்கான {n} முயற்சிகளையும் பயன்படுத்திவிட்டீர்கள்.",
+"See how each student is doing on the tests you gave": "நீங்கள் கொடுத்த தேர்வுகளில் ஒவ்வொரு மாணவரும் எப்படிச் செய்கிறார் என்று பாருங்கள்",
+"{n} assignment": "{n} ஒதுக்கீடு"
 }

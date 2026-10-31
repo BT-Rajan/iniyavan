@@ -1,5 +1,6 @@
 package app.zigora.ui
 
+import androidx.compose.material.icons.outlined.AssignmentTurnedIn
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -132,6 +133,8 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
     if (keyOpen) { MyKeyScreen(guardian = true) { keyOpen = false }; return }
     var calOpen by remember { mutableStateOf(false) }
     if (calOpen) { CalendarScreen { calOpen = false }; return }
+    var asgOpen by remember { mutableStateOf(false) }
+    if (asgOpen) { TeacherAssignmentsScreen { asgOpen = false }; return }
     view?.let { sid -> StudentProgressScreen(sid, me.level ?: "school") { view = null }; return }  // coming back loads the list again, so a change shows
     val a = api(); val scope = rememberCoroutineScope(); val toast = rememberToast()
     val list = rememberLoad("guardian-students") { get("/guardian/students", GStudents.serializer()) }
@@ -163,6 +166,8 @@ fun GuardianHome(me: Me, signOut: () -> Unit) {
                         trailing = if (parent) null else ({ TextButton(onClick = stop) { Text(tl("Remove")) } }))
             }
             if (parent && d.students.isNotEmpty()) Quiet(tl("Each child signs in with their own username and password on the sign-in page."))
+            if (!parent) ListRow(tl("Assigned tests"), tl("See how each student is doing on the tests you gave"), onClick = { asgOpen = true },
+                                 leading = { RowIcon(androidx.compose.material.icons.Icons.Outlined.AssignmentTurnedIn) })
             if (d.students.any { it.status == "active" }) {
                 ListRow(if (parent) tl("Your children's calendar") else tl("Your students' calendar"), tl("Exams, deadlines and study days in one place"), onClick = { calOpen = true },
                         leading = { RowIcon(androidx.compose.material.icons.Icons.Outlined.CalendarMonth) })

@@ -67,6 +67,7 @@ import kotlinx.serialization.json.put
 @Serializable data class RevisionR(val uid: Int)
 @Serializable data class McqR(val topic: Int = 0)  // MCQ practice; a topic for the Per topic way in
 @Serializable data class McqSetR(val id: Int)
+@Serializable object AssignedR
 
 @Composable
 fun ZigoraRoot(incoming: Incoming?, handled: () -> Unit) {
@@ -128,7 +129,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
         NavHost(nav, startDestination = HomeR) {
             composable<HomeR> { HomeScreen(me, openTopic = open, openCourse = { nav.navigate(CourseR(it)) }, openQuiz = { nav.navigate(QuizR(it)) },
                                            openNotes = { nav.navigate(NotesR) }, openPhoto = { nav.navigate(PhotoR()) }, openSearch = search,
-                                           openRoutine = { nav.navigate(RoutineR) }, openSession = session, openStudy = { nav.navigate(StudyR) }, openMcq = { nav.navigate(McqR()) }, openCalendar = { nav.navigate(CalendarR) }, openProgress = { nav.navigate(ProgressR) }, openPlan = { nav.navigate(MeR) },
+                                           openRoutine = { nav.navigate(RoutineR) }, openSession = session, openStudy = { nav.navigate(StudyR) }, openMcq = { nav.navigate(McqR()) }, openCalendar = { nav.navigate(CalendarR) }, openAssigned = { nav.navigate(AssignedR) }, openProgress = { nav.navigate(ProgressR) }, openPlan = { nav.navigate(MeR) },
                                            openOwn = ownTopic, review = review) }
             composable<CoursesR> { CoursesScreen(me, search, openStudy = { nav.navigate(StudyR) }) { nav.navigate(CourseR(it)) } }
             composable<StudyR> { StudyHomeScreen(back = { nav.popBackStack() }, open = { id, wizard -> nav.navigate(if (wizard) StudyWizardR(id) else StudyCourseR(id)) },
@@ -174,6 +175,7 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
                                            openAttempt = { id -> nav.navigate(AttemptR(id)) }, openAttempts = { q -> nav.navigate(AttemptsR(q)) }) }
             composable<McqR> { McqHomeScreen(it.toRoute<McqR>().topic, back = { nav.popBackStack() }) { id -> nav.navigate(McqSetR(id)) } }
             composable<McqSetR> { McqSetScreen(it.toRoute<McqSetR>().id, back = { nav.popBackStack() }, openTopic = open) }
+            composable<AssignedR> { AssignedScreen(back = { nav.popBackStack() }, openQuiz = { nav.navigate(QuizR(it)) }) { id -> nav.navigate(McqSetR(id)) } }
             composable<PhotoR> { PhotoScreen(it.toRoute<PhotoR>().uri) { nav.popBackStack() } }
             composable<NotesR> { NotificationsScreen(back = { nav.popBackStack() }, openTopic = open) }
         }

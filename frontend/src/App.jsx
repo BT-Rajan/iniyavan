@@ -810,7 +810,7 @@ function AssignedToMe({toast}){
   const open=async x=>{if(x.kind==='quiz')return setQuiz(x.quiz_id);setBusy(x.id);try{setSet((await api(`/assignments/${x.id}/start`,{method:'POST',body:{request_id:'a'+x.id+'-'+Date.now()}})).id)}catch(e){toast(e.message)}setBusy(null)}
   return <><Bar title={tl("Assigned to me")}/><div className="main">
     {!d&&<Skeleton rows={2}/>}{d&&!d.items.length&&<p className="known">{tl("Nothing assigned to you right now.")}</p>}
-    {d?.items.map(x=>{const can=x.left!==0||x.status!=='to_do'
+    {d?.items.map(x=>{const can=x.left!==0||new Date(x.due_at)<new Date()  // with no attempts left, only late tries, after the due time
       return <div key={x.id} className="card ward"><span className="wtop"><b>{x.title}</b><StateChip x={x}/></span>
         <small className="known">{x.course}{x.by?' · '+tl("from {name}",{name:x.by}):''}</small>
         <small className="known">{tl("due {when}",{when:dueText(x.due)})} · {x.left==null?tl("Unlimited attempts"):tl("Attempts left: {n}",{n:x.left})}</small>

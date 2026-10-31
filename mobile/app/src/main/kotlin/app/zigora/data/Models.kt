@@ -201,3 +201,15 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class CalWho(val id: Int, val name: String)
 @Serializable data class CalResp(val items: List<CalItem> = emptyList(), val today: String = "", val student: CalWho? = null, val students: List<CalWho> = emptyList())
 @Serializable data class CalLink(val on: Boolean = false, val path: String? = null)
+// assigned tests: a student's own (with how far they have got), and what a teacher assigned (with each student's state)
+@Serializable data class MyAssignment(val id: Int, val kind: String = "quiz", val title: String = "", val quiz_id: Int? = null, val due_at: String = "", val attempts: Int = 0,
+                                      val status: String = "to_do", val used: Int = 0, val left: Int? = null, val best: Int? = null, val late_best: Int? = null,
+                                      val by: String = "", val course: String = "")
+@Serializable data class MyAssignments(val items: List<MyAssignment> = emptyList())
+@Serializable data class TAssignment(val id: Int, val kind: String = "quiz", val title: String = "", val due_at: String = "", val attempts: Int = 0, val size: Int? = null,
+                                     val students: Int = 0, val done: Int = 0, val late: Int = 0, val missed: Int = 0, val to_do: Int = 0)
+@Serializable data class TAssignments(val items: List<TAssignment> = emptyList())
+@Serializable data class TAssignStudent(val id: Int, val name: String = "", val status: String = "to_do", val used: Int = 0, val left: Int? = null,
+                                        val best: Int? = null, val late_best: Int? = null)
+@Serializable data class TAssignDetail(val id: Int, val kind: String = "quiz", val title: String = "", val due_at: String = "", val attempts: Int = 0, val size: Int? = null,
+                                       val rows: List<TAssignStudent> = emptyList())
