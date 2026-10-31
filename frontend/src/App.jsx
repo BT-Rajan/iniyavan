@@ -1,8 +1,8 @@
-import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,Fragment,isValidElement,memo} from 'react'
+import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,Fragment,isValidElement,cloneElement,memo} from 'react'
 import {createPortal} from 'react-dom'
 import {Md,Body} from './content.jsx'
 import {ROOT,at} from './base.js'
-import {CalendarDays,Plus,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
+import {ClipboardCheck,CalendarDays,Plus,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -73,10 +73,11 @@ export default function App(){
   const student=user.role==='student',guardian=user.role==='guardian',page=pageSel||'home',admin=user.role==='admin',go=k=>{if(k==='build')setStudyStart(null);setPage(k);setOpen(false)},openIn=nav=>{setStart(nav);go('learn')},openStudy=t=>{setPage('build');setOpen(false);setStudyStart(t)},find=q=>{setFindQ(f=>({q,n:f.n+1}));go('search')},signOut=()=>{localStorage.removeItem('t');setOpen(false);setPage(null);setUser(null)}
   // the side menu (the logo goes Home; search, change password, theme and sign out are in the header)
   const cal=['calendar',CalendarDays,tl("Calendar")]
-  const links=student?[['learn',GraduationCap,tl("My courses")],['mcq',ListChecks,tl("MCQ practice")],cal,['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
-    :guardian?[cal,['aikey',Sparkles,tl("My AI key")],['about',Info,tl("About")]]  // a parent or teacher: their students on Home, and the AI key their school students use
-    :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],cal,['users',UsersIcon,tl("Users")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
-    :[['learn',BookOpen,tl("Courses")],cal,['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
+  const asg=['assign',ClipboardCheck,tl("Assigned tests")],teacher=guardian&&user.relation==='teacher'
+  const links=student?[['learn',GraduationCap,tl("My courses")],['assigned',ClipboardCheck,tl("Assigned to me")],['mcq',ListChecks,tl("MCQ practice")],cal,['saved',Bookmark,tl("Saved")],['progress',TrendingUp,tl("My progress")],['build',Upload,tl("Build a course")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[])]  // a short menu: routine lives in My progress, About in the footer
+    :guardian?[cal,...(teacher?[asg]:[]),['aikey',Sparkles,tl("My AI key")],['about',Info,tl("About")]]  // a parent or teacher: their students on Home, and the AI key their school students use
+    :admin?[['programs',GraduationCap,tl("Programs")],['courses',BookOpen,tl("Courses")],cal,asg,['users',UsersIcon,tl("Users")],['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['reports',BarChart3,tl("Reports")],['activity',History,tl("Activity log")],['ai',Sparkles,tl("Settings")],['about',Info,tl("About")]]
+    :[['learn',BookOpen,tl("Courses")],cal,asg,['mcqbank',ListChecks,tl("MCQ bank")],['mcq',ClipboardList,tl("MCQ practice")],['bookmarks',Bookmark,tl("Bookmarks")],['highlights',Highlighter,tl("My highlights")],['reports',BarChart3,tl("Reports")],...(user.self_registered?[['aikey',Sparkles,tl("My AI key")]]:[]),['about',Info,tl("About")]]
   return <Ctx.Provider value={{menu:()=>setOpen(true),appName:name,confirm,role:user.role,aiOff:!!user.ai_off,level:user.level}}>  {/* aiOff: a school student with no parent's or teacher's key studies without AI */}
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={user.ai_off?null:()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
@@ -90,7 +91,8 @@ export default function App(){
     {page==='bookmarks'&&!admin&&<Bookmarks toast={toast} role={user.role}/>}{page==='highlights'&&!admin&&<MyHighlights toast={toast} role={user.role}/>}
     {page==='users'&&admin&&<Users toast={toast} me={user}/>}{page==='courses'&&admin&&<AdminCourses toast={toast} onOpen={openIn}/>}{page==='programs'&&admin&&<Programs toast={toast} onOpen={openIn}/>}
     {page==='ai'&&admin&&<AiConfig toast={toast} onBrand={()=>api('/config').then(c=>{setName(c.name);setLogo(c.logo||null);document.title=c.name})}/>}{page==='reports'&&(admin||user.role==='faculty')&&<Reports role={user.role} toast={toast}/>}{page==='activity'&&admin&&<Activity toast={toast}/>}{page==='aikey'&&user.self_registered&&<MyAiKey toast={toast}/>}{page==='password'&&<ChangePassword toast={toast} done={()=>go('profile')}/>}{page==='profile'&&<Profile toast={toast} onPassword={()=>go('password')} onKey={()=>go('aikey')}/>}{page==='about'&&<About user={user}/>}
-    {page==='mcq'&&!guardian&&<McqHome toast={toast}/>}{page==='calendar'&&<CalendarPage toast={toast}/>}{page==='mcqbank'&&(admin||user.role==='faculty')&&<McqBank toast={toast}/>}
+    {page==='mcq'&&!guardian&&<McqHome toast={toast}/>}{page==='calendar'&&<CalendarPage toast={toast}/>}
+    {page==='assign'&&(admin||user.role==='faculty'||teacher)&&<AssignPage toast={toast}/>}{page==='assigned'&&student&&<AssignedToMe toast={toast}/>}{page==='mcqbank'&&(admin||user.role==='faculty')&&<McqBank toast={toast}/>}
     <div className={'drawer'+(open?' open':'')}><div className="dscrim" onClick={()=>setOpen(false)}/>
       <nav className="panel" aria-label={tl("Main menu")}>
         <div className="dhead"><button className={'homebtn'+(page==='home'?' on':'')} aria-label={tl("{name}, home",{name:name})} aria-current={page==='home'?'page':undefined} onClick={()=>go('home')}><Logo src={logo} size={36}/><span><b>{name}</b><small>{user.name}, {tl(cap(user.role)).toLowerCase()}</small></span></button><button className="ic" aria-label={tl("Close menu")} onClick={()=>setOpen(false)}><X/></button></div>
@@ -741,15 +743,87 @@ function FlagsPage({toast,back}){
       {f.reasons.length>0&&<ul className="flagwhy">{f.reasons.map((r,i)=><li key={i}>“{r}”</li>)}</ul>}
       <div className="tools">{f.source==='topic'&&f.topic_id&&<button onClick={()=>setT(f.topic_id)}>{tl("Open the topic")}</button>}<button onClick={()=>act(f,'rewrite')}>{tl("Write it again")}</button><button onClick={()=>act(f,'keep')}>{tl("It's fine")}</button></div></div>)}
     <Pager page={page} total={total} onPage={setPage}/></div></>}
+// ---- assigned tests: a teacher gives one student or a group a course quiz or an MCQ set, due by a date and time, with 1, 2, 3 or unlimited
+// ---- attempts; the best attempt before the due time counts. Due times are the students' clock, written "2026-11-05T17:00".
+const dueText=v=>v?day(v.slice(0,10))+' '+v.slice(11,16):''
+const ATT_LABEL=n=>n?tl(n===1?"1 attempt":"{n} attempts",{n}):tl("Unlimited attempts")
+const ASG_STATE={done:['Done','var(--ok)'],late:['Late','var(--warn)'],missed:['Missed','var(--bad)'],to_do:['To do','var(--mut)']}
+const StateChip=({x})=>{const [l,c]=ASG_STATE[x.status]||ASG_STATE.to_do;return <span className="chip" style={{color:c}}>{tl(l)}{x.status==='done'&&x.best!=null?' · '+x.best+'%':x.status==='late'&&x.late_best!=null?' · '+x.late_best+'%':''}</span>}
+function AssignPage({toast}){
+  const [d,setD]=useState(null),[view,setView]=useState(null),[make,setMake]=useState(false)
+  const load=()=>api('/assignments').then(setD).catch(e=>toast(e.message));useEffect(()=>{if(!view&&!make)load()},[view,make])
+  if(view)return <AssignDetail id={view} back={()=>setView(null)} toast={toast}/>
+  if(make)return <AssignForm toast={toast} close={()=>setMake(false)}/>
+  return <><Bar title={tl("Assigned tests")} sub={d?pl(d.items.length,'assignment'):''}/><div className="main">
+    <button className="btn" onClick={()=>setMake(true)}><Plus size={16}/>{" "}{tl("Assign a test")}</button>
+    {!d&&<Skeleton rows={2}/>}{d&&!d.items.length&&<p className="known">{tl("Nothing assigned yet. Give a quiz, a test or an MCQ set to one student or a group, with a due date and time.")}</p>}
+    {d?.items.map(x=><button key={x.id} className="card ward" onClick={()=>setView(x.id)}><span className="wtop"><b>{x.title}</b><span className="chip">{tl("due {when}",{when:dueText(x.due)})}</span></span>
+      <small className="known">{tl("{done} of {n} done",{done:x.done,n:x.students})}{x.late?' · '+tl("{n} late",{n:x.late}):''}{x.missed?' · '+tl("{n} missed",{n:x.missed}):''} · {ATT_LABEL(x.attempts)}</small></button>)}</div></>}
+function AssignDetail({id,back,toast}){
+  const confirm=useConfirm(),[d,setD]=useState(null),[due,setDue]=useState(''),[att,setAtt]=useState('1'),[busy,setBusy]=useState(false)
+  const load=()=>api('/assignments/'+id).then(r=>{setD(r);setDue(r.due);setAtt(String(r.attempts))}).catch(e=>{toast(e.message);back()});useEffect(()=>{load()},[id])
+  const save=async()=>{setBusy(true);try{await api('/assignments/'+id,{method:'PATCH',body:{due,attempts:+att}});toast(tl("Changes saved"));load()}catch(e){toast(e.message)}setBusy(false)}
+  const del=async()=>{if(!await confirm({title:tl("Delete this assignment?"),body:tl("Students no longer see it. Their attempts and scores stay."),ok:tl("Delete"),danger:true}))return;try{await api('/assignments/'+id,{method:'DELETE'});back()}catch(e){toast(e.message)}}
+  return <><Bar title={d?.title||tl("Loading")} sub={d?tl("due {when}",{when:dueText(d.due)})+' · '+ATT_LABEL(d.attempts):''} back={back}/><div className="main">
+    {!d&&<Skeleton rows={3}/>}{d?.rows.map(r=><div key={r.id} className="row"><div>{r.name}<small>{r.attempts?tl("{used} of {n} attempts used",{used:r.used,n:d.attempts}):tl("{used} attempts",{used:r.used})}</small></div><StateChip x={r}/></div>)}
+    {d&&<><h3 className="sec">{tl("Change")}</h3><label htmlFor="adue">{tl("Due")}</label><input id="adue" type="datetime-local" value={due} onChange={e=>setDue(e.target.value)}/>
+      <label htmlFor="aatt">{tl("Attempts")}</label><select id="aatt" value={att} onChange={e=>setAtt(e.target.value)}>{[1,2,3,0].map(n=><option key={n} value={n}>{ATT_LABEL(n)}</option>)}</select>
+      <button className="btn" disabled={busy} onClick={save}>{tl("Save changes")}</button><button className="btn ghost" style={{color:'var(--bad)'}} onClick={del}>{tl("Delete this assignment")}</button></>}</div></>}
+function AssignForm({toast,close}){
+  const tomorrow=()=>{const t=new Date();t.setDate(t.getDate()+1);return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}T17:00`}  // tomorrow 5 pm, on this device's calendar
+  const [cs,setCs]=useState(null),[cid,setCid]=useState(''),[o,setO]=useState(null),[kind,setKind]=useState('quiz'),[quiz,setQuiz]=useState(''),[tops,setTops]=useState([]),[size,setSize]=useState('10')
+  const [who,setWho]=useState([]),[due,setDue]=useState(tomorrow),[att,setAtt]=useState('1'),[title,setTitle]=useState(''),[busy,setBusy]=useState(false)
+  useEffect(()=>{api('/assign/options').then(r=>{setCs(r.courses);if(r.courses.length===1)setCid(String(r.courses[0].id))}).catch(e=>toast(e.message))},[])
+  useEffect(()=>{setO(null);setQuiz('');setTops([]);setWho([]);if(cid)api('/assign/options?course_id='+cid).then(r=>{setO(r);if(!r.quizzes.length&&r.topics.length)setKind('mcq')}).catch(e=>toast(e.message))},[cid])
+  const groups=o?[...new Set(o.students.map(x=>x.group))]:[],flip=(L,set,v)=>set(L.includes(v)?L.filter(x=>x!==v):[...L,v]),inGroup=g=>o.students.filter(x=>x.group===g).map(x=>x.id)
+  const ok=o&&who.length&&due&&(kind==='quiz'?quiz:tops.length)
+  const send=async()=>{setBusy(true);try{const r=await api('/assignments',{method:'POST',body:{course_id:+cid,kind,quiz_id:kind==='quiz'?+quiz:null,topic_ids:tops,size:+size,students:who,due,attempts:+att,title}})
+    toast(tl("Assigned to {n} students",{n:r.students}));close()}catch(e){toast(e.message)}setBusy(false)}
+  return <Sheet page close={close}><h3>{tl("Assign a test")}</h3>
+    {!cs?<Skeleton rows={2}/>:!cs.length?<p className="known">{tl("No course to assign from yet.")}</p>:<div>{/* a div, not a fragment: a page sheet flattens fragments */}
+    <label htmlFor="acs">{tl("Course")}</label><select id="acs" value={cid} onChange={e=>setCid(e.target.value)}><option value="">{tl("Choose a course")}</option>{cs.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+    {cid&&!o&&<Skeleton rows={2}/>}
+    {o&&<div>
+      <label id="akind">{tl("What")}</label><div className="seg" role="group" aria-labelledby="akind" style={{gridTemplateColumns:'1fr 1fr',marginTop:0}}>
+        <button className={kind==='quiz'?'on':''} aria-pressed={kind==='quiz'} disabled={!o.quizzes.length} onClick={()=>setKind('quiz')}>{tl("A quiz or test")}</button>
+        <button className={kind==='mcq'?'on':''} aria-pressed={kind==='mcq'} disabled={!o.topics.length} onClick={()=>setKind('mcq')}>{tl("An MCQ set")}</button></div>
+      {kind==='quiz'?<><label htmlFor="aq">{tl("Quiz or test")}</label><select id="aq" value={quiz} onChange={e=>setQuiz(e.target.value)}><option value="">{tl("Choose one")}</option>{o.quizzes.map(q=><option key={q.id} value={q.id}>{q.title} · {tl("{n} questions",{n:q.questions})}</option>)}</select>
+        {!o.quizzes.length&&<p className="known">{tl("This course has no published quiz or test yet.")}</p>}</>
+      :<><label>{tl("Topics")}</label>{o.topics.map(t=><label key={t.id} className="chk"><input type="checkbox" checked={tops.includes(t.id)} onChange={()=>flip(tops,setTops,t.id)}/>{" "}{t.title} <small className="known">({tl("{n} MCQs",{n:t.mcqs})})</small></label>)}
+        <label htmlFor="asz">{tl("Questions in the set")}</label><select id="asz" value={size} onChange={e=>setSize(e.target.value)}>{[5,10,15,20].map(n=><option key={n} value={n}>{n}</option>)}</select></>}
+      <label>{tl("Students")}</label>
+      {!o.students.length?<p className="known">{tl("No student takes this course yet.")}</p>:<>
+        <label className="chk"><b><input type="checkbox" checked={who.length===o.students.length} onChange={()=>setWho(who.length===o.students.length?[]:o.students.map(x=>x.id))}/>{" "}{tl("Everyone ({n})",{n:o.students.length})}</b></label>
+        {groups.length>1&&groups.map(g=>{const ids=inGroup(g),all=ids.every(i=>who.includes(i));return <label key={g} className="chk"><input type="checkbox" checked={all} onChange={()=>setWho(all?who.filter(i=>!ids.includes(i)):[...new Set([...who,...ids])])}/>{" "}{tl("All in {group}",{group:g||tl("No program")})} ({ids.length})</label>})}
+        <details><summary className="known">{tl("Choose students one by one ({n} chosen)",{n:who.length})}</summary>{o.students.map(x=><label key={x.id} className="chk"><input type="checkbox" checked={who.includes(x.id)} onChange={()=>flip(who,setWho,x.id)}/>{" "}{x.name} <small className="known">{x.group}</small></label>)}</details></>}
+      <label htmlFor="adue2">{tl("Due")}</label><input id="adue2" type="datetime-local" value={due} onChange={e=>setDue(e.target.value)}/>
+      <label htmlFor="aatt2">{tl("Attempts")}</label><select id="aatt2" value={att} onChange={e=>setAtt(e.target.value)}>{[1,2,3,0].map(n=><option key={n} value={n}>{ATT_LABEL(n)}</option>)}</select>
+      <label htmlFor="atitle">{tl("Name (optional)")}</label><input id="atitle" value={title} maxLength={200} onChange={e=>setTitle(e.target.value)} placeholder={kind==='quiz'?(o.quizzes.find(q=>String(q.id)===quiz)?.title||''):tl("MCQ set")}/>
+      <button className="btn" disabled={busy||!ok} onClick={send}>{who.length?tl("Assign to {n} students",{n:who.length}):tl("Assign")}</button></div>}</div>}
+    <button className="btn ghost" onClick={close}>{tl("Cancel")}</button></Sheet>}
+// a student's assigned tests: still to do first (soonest due), then the rest; quizzes open here, MCQ sets start from the assignment
+function AssignedToMe({toast}){
+  const [d,setD]=useState(null),[quiz,setQuiz]=useState(null),[set,setSet]=useState(null),[busy,setBusy]=useState(null)
+  const load=()=>api('/me/assignments').then(setD).catch(e=>toast(e.message));useEffect(()=>{if(!quiz&&!set)load()},[quiz,set])
+  if(quiz)return <QuizPlay id={quiz} back={()=>setQuiz(null)} toast={toast} role="student"/>
+  if(set)return <McqPlay id={set} back={()=>setSet(null)} toast={toast}/>
+  const open=async x=>{if(x.kind==='quiz')return setQuiz(x.quiz_id);setBusy(x.id);try{setSet((await api(`/assignments/${x.id}/start`,{method:'POST',body:{request_id:'a'+x.id+'-'+Date.now()}})).id)}catch(e){toast(e.message)}setBusy(null)}
+  return <><Bar title={tl("Assigned to me")}/><div className="main">
+    {!d&&<Skeleton rows={2}/>}{d&&!d.items.length&&<p className="known">{tl("Nothing assigned to you right now.")}</p>}
+    {d?.items.map(x=>{const can=x.left!==0||x.status!=='to_do'
+      return <div key={x.id} className="card ward"><span className="wtop"><b>{x.title}</b><StateChip x={x}/></span>
+        <small className="known">{x.course}{x.by?' · '+tl("from {name}",{name:x.by}):''}</small>
+        <small className="known">{tl("due {when}",{when:dueText(x.due)})} · {x.left==null?tl("Unlimited attempts"):tl("Attempts left: {n}",{n:x.left})}</small>
+        {can&&<button className="btn ghost" disabled={busy===x.id} onClick={()=>open(x)}>{x.status==='to_do'?tl("Start"):tl("Try again")}</button>}</div>})}</div></>}
 // a student's Home, made for a phone: what to do next (most useful first, one button each), then this week at a glance
-const DO_LABEL={topic:'Open',quiz:'Take the quiz',progress:'See weak topics',calendar:'Open calendar',mcq:'Practise',plan:'See my plan',courses:'My courses'}
+const DO_LABEL={assignment:'Open',topic:'Open',quiz:'Take the quiz',progress:'See weak topics',calendar:'Open calendar',mcq:'Practise',plan:'See my plan',courses:'My courses'}
 function DoNext({d:d0,openTopic,onOpen,onGo,onCalendar,session}){  // with a routine, today's session already lists the topics: then only the other signals
   const d={...d0,items:session?d0.items.filter(x=>!x.key.startsWith('focus_')):d0.items}
   const run=x=>{const t=x.target||{};if(x.action==='topic'&&t.topic_id)return openTopic(t.topic_id);if(x.action==='quiz'&&t.nav)return onOpen(t.nav)
-    if(x.action==='calendar')return onCalendar();onGo({progress:'progress',mcq:'mcq',plan:'profile',courses:'learn'}[x.action]||'learn')}
+    if(x.action==='calendar')return onCalendar();onGo({progress:'progress',mcq:'mcq',plan:'profile',courses:'learn',assignment:'assigned'}[x.action]||'learn')}
   if(!d.items.length)return null
   return <><h3 className="sec first">{tl("Do next")}</h3>{d.items.map((x,i)=><div key={x.key+i} className={'card dash '+x.level}><span className="dot" aria-hidden="true"/>
-    <div style={{flex:1}}><b>{x.title||tl(x.text,{...x.vars,...(x.vars.date?{date:day(x.vars.date)}:{})})}</b>{x.title&&<small className="known">{srv(x.text)}{x.course?' · '+x.course:''}</small>}</div>
+    <div style={{flex:1}}><b>{x.title||tl(x.text,{...x.vars,...(x.vars.date?{date:day(x.vars.date)}:{}),...(x.vars.due?{due:dueText(x.vars.due)}:{})})}</b>{x.title&&<small className="known">{srv(x.text)}{x.course?' · '+x.course:''}</small>}</div>
     <button className="btn ghost" onClick={()=>run(x)}>{tl(DO_LABEL[x.action]||'Open')}</button></div>)}</>}
 function ThisWeek({d,onGo}){
   const days=[...Array(7)].map((_,i)=>{const t=new Date();t.setDate(t.getDate()-6+i);return t.toLocaleDateString(getLang(),{weekday:'narrow'})})
@@ -1949,7 +2023,7 @@ function Bookmarks({toast,role,head}){
 const sheets=[]  // open sheets, topmost last, so Escape closes only the one on top
 // a pop-up for short questions; with page set, a form that takes over the content area like a page of its own, with a way back
 let pages=0  // forms open as pages right now; while any is open the page under it is hidden
-const flat=ch=>Children.toArray(ch).flatMap(c=>isValidElement(c)&&c.type===Fragment?flat(c.props.children):[c])
+const flat=(ch,at='')=>Children.toArray(ch).flatMap(c=>isValidElement(c)&&c.type===Fragment?flat(c.props.children,at+c.key):[isValidElement(c)?cloneElement(c,{key:at+c.key}):c])  // keys carry their fragment's, so two fragments' children never share one
 function Sheet({close,children,page}){
   const box=useRef(null),cb=useRef(close);cb.current=close
   useEffect(()=>{const me={},was=document.activeElement;sheets.push(me)
