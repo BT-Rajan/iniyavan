@@ -52,7 +52,7 @@ class OnboardingTest {
         app.store.token = r.token; app.store.userJson = json.encodeToString(Me.serializer(), r.user)
     }
     private fun see(text: String, ms: Long = 20_000) = rule.waitUntilAtLeastOneExists(hasText(text, substring = true), ms)
-    private fun tap(text: String) = rule.onAllNodesWithText(text, substring = true).onFirst().performClick()
+    private fun tap(text: String) { val n = rule.onAllNodesWithText(text, substring = true).onFirst(); runCatching { n.performScrollTo() }; n.performClick() }  // Home has cards above the buttons now: bring it on screen first, like the other screen tests
     private fun none(text: String) = rule.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isEmpty()
     private fun shot(name: String) { rule.waitForIdle(); rule.onRoot().captureRoboImage("$out/$name.png") }
 
