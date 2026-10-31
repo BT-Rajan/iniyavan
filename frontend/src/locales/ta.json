@@ -2293,5 +2293,20 @@
 "Terms with no number, so students can't be placed in them: {n}": "எண் இல்லாத பருவங்கள், எனவே மாணவர்களை அவற்றில் சேர்க்க முடியாது: {n}",
 "The last {n} AI requests to {name} got no answer: check the key and the balance": "{name} க்கான கடைசி {n} AI கோரிக்கைகளுக்குப் பதில் இல்லை: விசையையும் இருப்பையும் சரிபார்க்கவும்",
 "This month's {name} allowance is used up: new AI answers have stopped until the 1st": "இந்த மாத {name} அளவு தீர்ந்துவிட்டது: 1-ஆம் தேதி வரை புதிய AI விடைகள் நிறுத்தப்பட்டுள்ளன",
-"What needs doing across the college": "கல்லூரி முழுவதும் செய்ய வேண்டியவை"
+"What needs doing across the college": "கல்லூரி முழுவதும் செய்ய வேண்டியவை",
+"AI use per day": "நாள்தோறும் AI பயன்பாடு",
+"At a glance": "ஒரு பார்வையில்",
+"Average share of topics learned, lowest first. Click a course for its students.": "கற்ற தலைப்புகளின் சராசரிப் பங்கு, குறைந்தது முதலில். மாணவர்களைப் பார்க்க ஒரு பாடத்தைச் சொடுக்கவும்.",
+"Course completion": "பாட நிறைவு",
+"No AI use on the college's keys in this period.": "இந்தக் காலத்தில் கல்லூரியின் விசைகளில் AI பயன்பாடு இல்லை.",
+"No course has students and topics yet.": "இன்னும் எந்தப் பாடத்திலும் மாணவர்களும் தலைப்புகளும் இல்லை.",
+"People by AI plan": "AI திட்டம் வாரியாக மக்கள்",
+"Students studying each day": "நாள்தோறும் படிக்கும் மாணவர்கள்",
+"Studied that day": "அன்று படித்தவர்கள்",
+"Tokens on the college's keys, by provider. Click for costs.": "கல்லூரியின் விசைகளில் டோக்கன்கள், வழங்குநர் வாரியாக. செலவுகளுக்குச் சொடுக்கவும்.",
+"Up to {peak} a day; someone studied on {n} of {d} days. Click a day to see who.": "நாளுக்கு {peak} வரை; {d} நாட்களில் {n} நாட்கள் யாரோ படித்தனர். யார் என்று பார்க்க ஒரு நாளைச் சொடுக்கவும்.",
+"max {v}": "அதிகபட்சம் {v}",
+"quiz average {p}%": "வினாடி வினா சராசரி {p}%",
+"{n} people with a plan. Click a plan to see them.": "திட்டம் உள்ள {n} பேர். அவர்களைப் பார்க்க ஒரு திட்டத்தைச் சொடுக்கவும்.",
+"{v} tokens": "{v} டோக்கன்கள்"
 }

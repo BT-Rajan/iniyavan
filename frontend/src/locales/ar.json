@@ -2293,5 +2293,20 @@
 "Terms with no number, so students can't be placed in them: {n}": "فصول بلا رقم، فلا يمكن تسجيل الطلاب فيها: {n}",
 "The last {n} AI requests to {name} got no answer: check the key and the balance": "آخر {n} طلبات ذكاء اصطناعي إلى {name} لم تتلقَّ ردًا: تحقّق من المفتاح والرصيد",
 "This month's {name} allowance is used up: new AI answers have stopped until the 1st": "نفدت حصة {name} لهذا الشهر: توقفت إجابات الذكاء الاصطناعي الجديدة حتى اليوم الأول",
-"What needs doing across the college": "ما يجب فعله في الكلية كلها"
+"What needs doing across the college": "ما يجب فعله في الكلية كلها",
+"AI use per day": "استخدام الذكاء الاصطناعي يوميًا",
+"At a glance": "لمحة سريعة",
+"Average share of topics learned, lowest first. Click a course for its students.": "متوسط نسبة المواضيع المتعلَّمة، الأقل أولًا. انقر مقررًا لترى طلابه.",
+"Course completion": "إكمال المقررات",
+"No AI use on the college's keys in this period.": "لا استخدام للذكاء الاصطناعي على مفاتيح الكلية في هذه الفترة.",
+"No course has students and topics yet.": "لا يوجد مقرر فيه طلاب ومواضيع بعد.",
+"People by AI plan": "الأشخاص حسب خطة الذكاء الاصطناعي",
+"Students studying each day": "الطلاب الذين يدرسون كل يوم",
+"Studied that day": "درسوا في ذلك اليوم",
+"Tokens on the college's keys, by provider. Click for costs.": "الرموز على مفاتيح الكلية حسب المزوّد. انقر لرؤية التكاليف.",
+"Up to {peak} a day; someone studied on {n} of {d} days. Click a day to see who.": "حتى {peak} يوميًا؛ درس أحدهم في {n} من {d} أيام. انقر يومًا لترى من.",
+"max {v}": "الأقصى {v}",
+"quiz average {p}%": "متوسط الاختبار {p}%",
+"{n} people with a plan. Click a plan to see them.": "{n} أشخاص لديهم خطة. انقر خطة لتراهم.",
+"{v} tokens": "{v} رمز"
 }

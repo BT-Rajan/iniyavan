@@ -1240,6 +1240,8 @@ def users(q: str = "", program_id: int | None = None, semester: int | None = Non
     if plan == "asked": qs = qs.filter(User.id.in_(asking))  # self-registered people asking for more AI
     elif plan == "pro": qs = qs.filter(User.pro_until > now)  # only self-registered people and school students the admin added can be made pro
     elif plan == "pro_ending": qs = qs.filter(User.pro_until > now, User.pro_until <= now + dt.timedelta(days=PRO_ENDING_DAYS))
+    elif plan in ("own", "college", "family", "off"):  # the dashboard's plan graph opens these: ai_plan decides, as everywhere else
+        qs = qs.filter(User.id.in_([x.id for x in s.query(User).filter(User.active == True, User.role.in_(("student", "guardian"))) if ai_plan(x) == plan] or [0]))  # noqa: E712
     elif plan == "lite":  # exactly ai_plan()'s Lite: students only; a school student who signed up is on a family key or none, and one the college added is Lite
         school = or_(func.coalesce(Program.pattern, "") == "grade", and_(User.program_id.is_(None), func.coalesce(User.level, "") == "school"))
         qs = qs.filter(User.role == "student", or_(User.pro_until.is_(None), User.pro_until <= now),
@@ -1863,12 +1865,12 @@ def report_students(cid: int, format: str = "json", u: User = Depends(staff), s:
     return {"course": c.name, "students": rows}
 
 # ---- dashboard cards: the list behind each number ----
-LIST_TITLES = {"students": "Active students", "active_week": "Studied this week", "faculty": "Faculty", "courses": "Courses", "topics": "Topics", "drafts": "Draft topics",
+LIST_TITLES = {"active_day": "Studied that day", "students": "Active students", "active_week": "Studied this week", "faculty": "Faculty", "courses": "Courses", "topics": "Topics", "drafts": "Draft topics",
                "empty_courses": "Courses with no units", "unowned": "Courses with no owner", "unenrolled": "Students not placed", "semester_numbers": "Terms with no number",
                "never_opened": "Students who never opened a topic"}
-ADMIN_LISTS = {"students", "active_week", "faculty", "unowned", "unenrolled", "semester_numbers", "never_opened"}
+ADMIN_LISTS = {"active_day", "students", "active_week", "faculty", "unowned", "unenrolled", "semester_numbers", "never_opened"}
 @app.get("/api/overview/list")
-def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, offset: int = 0, u: User = Depends(staff), s: Session = Depends(db)):
+def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, offset: int = 0, date: str = "", u: User = Depends(staff), s: Session = Depends(db)):
     """The rows behind one dashboard card, with search, sorting and paging. Each item says where its details page is (target). Faculty see only their own courses."""
     if kind not in LIST_TITLES: raise HTTPException(404, "Unknown list")
     if kind in ADMIN_LISTS and u.role != "admin": raise HTTPException(403, "Admins only")
@@ -1883,6 +1885,9 @@ def overview_list(kind: str, q: str = "", order: str = "name", limit: int = 5, o
                 "target": {"type": "course", "program_id": c.program_id, "semester_id": c.semester_id, "id": c.id}}
     stu = s.query(User).filter_by(role="student", active=True)
     if kind == "students": items = [person(x) for x in stu]
+    elif kind == "active_day":  # the students behind one bar of the dashboard's "studying each day" graph
+        d = day_of(date); ids = studied_on(s, d, d)[d]
+        items = [person(x) for x in stu.filter(User.id.in_(list(ids) or [0]))]
     elif kind == "faculty": items = [{**person(x), "detail": "Active", "sub": x.email} for x in s.query(User).filter_by(role="faculty", active=True)]
     elif kind == "active_week":
         last = dict(s.query(Progress.user_id, func.max(Progress.last_read)).group_by(Progress.user_id).all()); week = dt.datetime.utcnow() - dt.timedelta(days=7)
@@ -2000,6 +2005,32 @@ def admin_dashboard(u: User = Depends(admin), s: Session = Depends(db)):
     out.sort(key=lambda x: URGENCY[x["level"]])
     nxt = s.query(CalendarEvent).filter(CalendarEvent.scope == "all", CalendarEvent.day >= today).order_by(CalendarEvent.day).first()
     return {"items": out, "next": {"title": nxt.title, "date": nxt.day.isoformat()} if nxt else None}
+def studied_on(s, d0, d1):  # {local day: set of student ids} who opened topics, finished one or took a quiz, d0..d1
+    out = defaultdict(set); since, until = day_start(d0), day_start(d1 + dt.timedelta(days=1))
+    stu = s.query(User.id).filter(User.role == "student", User.active == True)  # noqa: E712
+    for uid, d in s.query(ActivityDay.user_id, ActivityDay.day).filter(ActivityDay.day >= d0, ActivityDay.day <= d1, ActivityDay.user_id.in_(stu)): out[d].add(uid)
+    for uid, t in s.query(Progress.user_id, Progress.completed_at).filter(Progress.completed_at >= since, Progress.completed_at < until, Progress.user_id.in_(stu)): out[local_day(t)].add(uid)
+    for uid, t in s.query(Attempt.user_id, Attempt.at).filter(Attempt.at >= since, Attempt.at < until, Attempt.user_id.in_(stu)): out[local_day(t)].add(uid)
+    return out
+PLAN_ORDER = ("lite", "pro", "own", "college", "family", "off")
+@app.get("/api/admin/charts")
+def admin_charts(days: int = 30, u: User = Depends(admin), s: Session = Depends(db)):
+    """The admin dashboard's graphs, each a way into its details: students studying each day, course completion, AI tokens per day by provider
+    (the college's keys) and people by AI plan."""
+    days = min(max(days, 7), 90); today = local_day(dt.datetime.utcnow()); d0 = today - dt.timedelta(days=days - 1)
+    act = studied_on(s, d0, today); dates = [d0 + dt.timedelta(days=i) for i in range(days)]
+    ai = defaultdict(lambda: defaultdict(int))
+    for at, prov, t in s.query(AIEgress.at, egress_provider(), AIEgress.tokens).filter(AIEgress.at >= day_start(d0), AIEgress.own == False): ai[local_day(at)][prov] += t or 0  # noqa: E712
+    provs = [p for p in PROVIDERS if any(ai[d].get(p) for d in dates)]
+    plans = defaultdict(int)
+    for x in s.query(User).filter(User.active == True, User.role.in_(("student", "guardian"))): plans[ai_plan(x)] += 1  # noqa: E712
+    courses = sorted(report_courses(u=u, s=s), key=lambda r: (r["avg_completion"], r["course"]))
+    return {"days": days,
+            "activity": [{"date": d.isoformat(), "students": len(act[d])} for d in dates],
+            "courses": [{"course_id": r["course_id"], "course": r["course"], "program": r["program"], "semester": r["semester"], "students": r["students"],
+                         "completion": r["avg_completion"], "quiz": r["avg_quiz_percent"]} for r in courses if r["students"] and r["topics"]][:12],
+            "ai": {"providers": [{"id": p, "name": PROVIDERS[p].name} for p in provs], "days": [{"date": d.isoformat(), "tokens": {p: ai[d].get(p, 0) for p in provs}} for d in dates]},
+            "plans": [{"plan": p, "people": plans[p]} for p in PLAN_ORDER if plans[p]]}
 class RolloverIn(BaseModel): dry_run: bool = True; finishing: str = "keep"  # keep: leave the last semester's students where they are; deactivate: switch their accounts off
 @app.post("/api/admin/programs/{pid}/rollover")
 def rollover(pid: int, b: RolloverIn, bg: BackgroundTasks, _: User = Depends(admin), s: Session = Depends(db)):

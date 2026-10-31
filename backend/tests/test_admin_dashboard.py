@@ -44,3 +44,21 @@ def test_an_allowance_already_used_up_and_ai_off_are_urgent_and_only_admins_see_
     by = {x["key"]: x for x in dash(env)["items"]}
     assert by["allowance_out"]["level"] == "now" and by["ai_off"]["level"] == "now" and by["mail_off"]["level"] == "later"
     for h in (env.fac, env.stu): assert env.c.get("/api/admin/dashboard", headers=h).status_code == 403
+
+def test_the_graphs_and_where_each_one_leads(env):
+    i, unit = setup(env); now = dt.datetime.utcnow(); today = main.local_day(now); sid = env.c.get("/api/me", headers=env.stu).json()["id"]
+    with Session_() as s:
+        s.add(main.ActivityDay(user_id=sid, day=today - dt.timedelta(days=2), reads=3))
+        s.add(AIEgress(user_id=sid, kind="search", tokens=500, provider="deepseek", at=now)); s.add(AIEgress(user_id=sid, kind="vision", tokens=200, at=now))  # an old row: a photo is Claude
+        s.add(AIEgress(user_id=sid, kind="search", tokens=999, provider="openai", own=True, at=now))  # their own key: not the college's
+        s.add(User(name="Lite", email="lite@x.com", pw=hp("pw"), role="student", self_registered=True)); s.commit()
+    c = env.c.get("/api/admin/charts?days=14", headers=env.admin).json()
+    assert len(c["activity"]) == 14 and c["activity"][-3] == {"date": (today - dt.timedelta(days=2)).isoformat(), "students": 1} and c["activity"][-1]["students"] == 0
+    assert [p["id"] for p in c["ai"]["providers"]] == ["deepseek", "claude"] and c["ai"]["days"][-1]["tokens"] == {"deepseek": 500, "claude": 200}
+    plans = {p["plan"]: p["people"] for p in c["plans"]}; assert plans["lite"] == 1 and plans["college"] >= 1
+    assert all(set(x) >= {"course_id", "course", "completion", "students"} for x in c["courses"])
+    lst = env.c.get(f"/api/overview/list?kind=active_day&date={(today - dt.timedelta(days=2)).isoformat()}&limit=10", headers=env.admin).json()  # a bar's students
+    assert [x["title"] for x in lst["items"]] == [env.c.get("/api/me", headers=env.stu).json()["name"]]
+    names = [x["name"] for x in env.c.get("/api/admin/users?plan=lite&limit=50", headers=env.admin).json()["items"]]; assert "Lite" in names
+    assert "Lite" not in [x["name"] for x in env.c.get("/api/admin/users?plan=college&limit=50", headers=env.admin).json()["items"]]
+    assert env.c.get("/api/admin/charts", headers=env.fac).status_code == 403 and env.c.get("/api/overview/list?kind=active_day&date=2026-01-01", headers=env.fac).status_code == 403

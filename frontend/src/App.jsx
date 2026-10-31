@@ -600,10 +600,11 @@ function AreaList({areas,onStudy,staff}){
 let usersPlan='',settingsTab=''  // a filter for the Users page and a Settings tab, set when the Home page sends the admin there
 const ATTN_GO={drafts:'drafts',empty_courses:'empty_courses',unowned:'unowned',unenrolled:'unenrolled',semester_numbers:'semester_numbers',never_opened:'never_opened'}
 const RS_PAGE=PAGE
-function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard card: search, sort, 5 per page, and a tap on a row opens its details
+function ResultSet({kind:kind0,user,back,toast,open}){
+  const [kind,date]=kind0.split(':')  // the rows behind a dashboard card: search, sort, 5 per page, and a tap on a row opens its details
   const [q,setQ]=useState(''),[order,setOrder]=useState('name'),[page,setPage]=useState(0),[d,setD]=useState(null),[view,setView]=useState(null),[progs,setProgs]=useState([])
   useEffect(()=>{setPage(0)},[q,order])
-  useEffect(()=>{if(view)return;let live=true;const t=setTimeout(()=>api(`/overview/list?kind=${kind}&q=${encodeURIComponent(q)}&order=${order}&limit=${RS_PAGE}&offset=${page*RS_PAGE}`).then(r=>{if(!live)return;if(!r.items.length&&r.total&&page>0)setPage(Math.max(0,Math.ceil(r.total/RS_PAGE)-1));else setD(r)}).catch(e=>toast(e.message)),q?250:0);return()=>{live=false;clearTimeout(t)}},[kind,q,order,page,view])
+  useEffect(()=>{if(view)return;let live=true;const t=setTimeout(()=>api(`/overview/list?kind=${kind}${date?'&date='+date:''}&q=${encodeURIComponent(q)}&order=${order}&limit=${RS_PAGE}&offset=${page*RS_PAGE}`).then(r=>{if(!live)return;if(!r.items.length&&r.total&&page>0)setPage(Math.max(0,Math.ceil(r.total/RS_PAGE)-1));else setD(r)}).catch(e=>toast(e.message)),q?250:0);return()=>{live=false;clearTimeout(t)}},[kind,date,q,order,page,view])
   useEffect(()=>{if(view?.target.type==='user')api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[view])
   const shut=()=>setView(null)
   if(view){const t=view.target
@@ -611,7 +612,7 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     if(t.type==='topic')return <Topic id={t.id} back={shut} toast={toast} role={user.role}/>
     if(t.type==='course'&&kind==='courses'){const [p='',sm='']=(view.sub||'').split(' · ');return <StudentReport c={{course_id:t.id,course:view.title,program:p,semester:sm}} back={shut} toast={toast}/>}
     open(t.type==='program'?[t.id]:[t.program_id,t.semester_id,t.id].filter(x=>x!=null));return null}
-  const total=d?.total??0,pages=Math.max(1,Math.ceil(total/RS_PAGE)),title=srv(d?.title)||tl('Loading')
+  const total=d?.total??0,pages=Math.max(1,Math.ceil(total/RS_PAGE)),title=d?srv(d.title)+(date?' · '+shortDay(date):''):tl('Loading')
   return <><Bar title={title} sub={d?tl(q?(total===1?'{n} match':'{n} matches'):'{n} in total',{n:total}):''} back={back}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label={tl("Search {title}",{title:title.toLowerCase()})} placeholder={tl("Search")} value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="qopt"><select aria-label={tl("Sort by")} value={order} onChange={e=>setOrder(e.target.value)}><option value="name">{tl("Sort: A to Z")}</option><option value="name_desc">{tl("Sort: Z to A")}</option><option value="detail">{tl("Sort: by details")}</option><option value="newest">{tl("Sort: newest first")}</option>{d?.can_recent&&<option value="recent">{tl("Sort: last active")}</option>}</select></div>
@@ -623,6 +624,50 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     {d&&!d.items.length&&<p className="known">{q?tl("Nothing matches that search."):tl("Nothing here. All clear.")}</p>}
     {d&&total>RS_PAGE&&<nav className="pager" aria-label={tl("Pages")}><button className="btn ghost" disabled={page===0} onClick={()=>setPage(page-1)}><ChevronLeft size={18}/><span>{tl("Previous")}</span></button><small>{tl("Page {v} of",{v:page+1})}{" "}{pages}</small><button className="btn ghost" disabled={page+1>=pages} onClick={()=>setPage(page+1)}><span>{tl("Next")}</span><ChevronRight size={18}/></button></nav>}
   </div></>}
+// ---- graphs: hand-drawn SVG and HTML, colors from the validated chart palette (--v1..--v6 in styles.css), a tooltip on hover or focus,
+// ---- and a click (or Enter) on any bar opens what is behind it. Values are always written out too, so no reading depends on color alone.
+const compact=n=>new Intl.NumberFormat(getLang(),{notation:'compact',maximumFractionDigits:1}).format(n||0)
+const shortDay=d=>new Date(d+'T00:00:00').toLocaleDateString(getLang(),{day:'numeric',month:'short'})
+function Tip({tip}){return tip&&<div className="vtip" role="status" style={{left:tip.x+'%'}}>{tip.lines.map((l,i)=><div key={i}>{l}</div>)}</div>}
+function Columns({days,series,onPick,label}){  // time across, one column per day; series stack (each [{id,name,color}], values in d.v[id])
+  const [tip,setTip]=useState(null),n=days.length,max=Math.max(1,...days.map(d=>series.reduce((a,x)=>a+(d.v[x.id]||0),0))),W=n*10,H=100
+  const show=(d,i)=>setTip({x:(i+.5)/n*100,lines:[shortDay(d.date),...series.map(x=>(series.length>1?x.name+': ':'')+(x.fmt||compact)(d.v[x.id]||0))]})
+  return <div className="vchart" onMouseLeave={()=>setTip(null)}><Tip tip={tip}/>
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="vcols" role="group" aria-label={label}>
+      <line x1="0" x2={W} y1={H-.5} y2={H-.5} className="vaxis"/>
+      {days.map((d,i)=>{let y=H;return <g key={d.date} className="vcol" tabIndex={0} role="button" aria-label={shortDay(d.date)+': '+series.map(x=>(series.length>1?x.name+' ':'')+(d.v[x.id]||0)).join(', ')}
+        onMouseEnter={()=>show(d,i)} onFocus={()=>show(d,i)} onBlur={()=>setTip(null)} onClick={()=>onPick(d)} onKeyDown={e=>(e.key==='Enter'||e.key===' ')&&(e.preventDefault(),onPick(d))}>
+        <rect x={i*10} y="0" width="10" height={H} className="vhit"/>
+        {series.map(x=>{const h=(d.v[x.id]||0)/max*(H-6);if(!h)return null;y-=h;return <rect key={x.id} x={i*10+1.5} y={y} width="7" height={Math.max(h,.8)} rx="1.2" className={series.length>1?'vseg':''} style={{fill:x.color}}/>})}</g>})}
+    </svg>
+    <div className="vx"><span>{shortDay(days[0].date)}</span><span>{tl("max {v}",{v:compact(max)})}</span><span>{shortDay(days[n-1].date)}</span></div></div>}
+function HBars({rows,onPick,label}){  // one row per thing, its name and value written out, the bar in its color; a click opens it
+  const max=Math.max(1,...rows.map(r=>r.max??r.value))
+  return <div className="vbars" role="list" aria-label={label}>{rows.map(r=><button key={r.key} role="listitem" className="vbar" onClick={()=>onPick(r)} title={r.tip||''}>
+    <span className="vlab"><b>{r.label}</b>{r.sub&&<small>{r.sub}</small>}</span><span className="vtrack"><i style={{width:Math.max(1.5,100*r.value/max)+'%',background:r.color}}/></span><span className="vval">{r.valueLabel??r.value}</span></button>)}</div>}
+const PLAN_COL={lite:'var(--v1)',pro:'var(--v2)',own:'var(--v3)',college:'var(--v4)',family:'var(--v5)',off:'var(--v6)'}
+const PROV_COL=['var(--v1)','var(--v2)','var(--v3)','var(--v4)','var(--v5)']
+function AdminCharts({goUsers,goSettings,setList,setRep}){
+  const [c,setC]=useState(null),[days,setDays]=useState('30')
+  useEffect(()=>{api('/admin/charts?days='+days).then(setC).catch(()=>setC(false))},[days])
+  if(c===false)return null
+  if(!c)return <><div className="sk"/><div className="sk"/></>
+  const act=c.activity.map(d=>({date:d.date,v:{s:d.students}})),totalDays=act.filter(d=>d.v.s).length,peak=Math.max(0,...c.activity.map(d=>d.students))
+  const prov=c.ai.providers.map((p,i)=>({id:p.id,name:p.name,color:PROV_COL[i%PROV_COL.length],total:c.ai.days.reduce((a,d)=>a+(d.tokens[p.id]||0),0)}))
+  const people=c.plans.reduce((a,p)=>a+p.people,0)
+  return <><div className="vhead"><h3 className="sec">{tl("At a glance")}</h3><Opts label={tl("Period")} value={days} set={setDays} items={[['7',tl("Last 7 days")],['30',tl("Last 30 days")],['90',tl("Last 90 days")]]}/></div>
+    <div className="vgrid">
+    <section className="vcard"><h4>{tl("Students studying each day")}</h4><p className="known">{tl("Up to {peak} a day; someone studied on {n} of {d} days. Click a day to see who.",{peak,n:totalDays,d:act.length})}</p>
+      <Columns days={act} series={[{id:'s',name:tl("Students"),color:'var(--v1)',fmt:v=>tl("{n} students",{n:v})}]} label={tl("Students studying each day")} onPick={d=>setList('active_day:'+d.date)}/></section>
+    <section className="vcard"><h4>{tl("Course completion")}</h4><p className="known">{c.courses.length?tl("Average share of topics learned, lowest first. Click a course for its students."):tl("No course has students and topics yet.")}</p>
+      <HBars label={tl("Course completion")} rows={c.courses.map(x=>({key:x.course_id,label:x.course,sub:[x.program,x.semester].filter(Boolean).join(' · '),value:x.completion,max:100,valueLabel:x.completion+'%',color:'var(--v1)',
+        tip:tl("{n} students",{n:x.students})+(x.quiz!=null?' · '+tl("quiz average {p}%",{p:x.quiz}):''),x}))} onPick={r=>setRep({course_id:r.x.course_id,course:r.x.course,program:r.x.program,semester:r.x.semester})}/></section>
+    <section className="vcard"><h4>{tl("AI use per day")}</h4><p className="known">{prov.length?tl("Tokens on the college's keys, by provider. Click for costs."):tl("No AI use on the college's keys in this period.")}</p>
+      {prov.length>0&&<><Columns days={c.ai.days.map(d=>({date:d.date,v:d.tokens}))} series={prov.map(p=>({...p,fmt:v=>tl("{v} tokens",{v:compact(v)})}))} label={tl("AI use per day")} onPick={()=>goSettings('costs')}/>
+        <div className="vlegend">{prov.map(p=><button key={p.id} onClick={()=>goSettings('costs')}><i style={{background:p.color}}/>{p.name}<b>{compact(p.total)}</b></button>)}</div></>}</section>
+    <section className="vcard"><h4>{tl("People by AI plan")}</h4><p className="known">{tl("{n} people with a plan. Click a plan to see them.",{n:people})}</p>
+      <HBars label={tl("People by AI plan")} rows={c.plans.map(p=>({key:p.plan,label:tl(PLAN_NAME[p.plan]||p.plan),value:p.people,valueLabel:p.people.toLocaleString(),color:PLAN_COL[p.plan]||'var(--v6)'}))} onPick={r=>goUsers(r.key)}/></section>
+    </div></>}
 // the admin's dashboard: only what needs doing, grouped by kind and most urgent first, each with the one action that deals with it
 const DASH_CAT=[['ai','AI and costs'],['people','People and plans'],['content','Content'],['system','System']]
 const DASH_DO={settings:'Open Settings',test_ai:'Test the key',users:'Show them',list:'Show them',flags:'Review them'}
@@ -647,6 +692,7 @@ function StaffHome({user,toast,open,goUsers,goSettings}){
   const stats=o?(admin?[[o.people.students,'Active students','students'],[o.people.active_week,'Studied this week','active_week'],[o.people.faculty,'Faculty','faculty'],[o.courses,'Courses','courses']]:[[o.courses,'Your courses','courses'],[o.topics,'Topics','topics'],[o.drafts,'Drafts','drafts']]):[]
   if(admin)return <><Bar title={tl(hi,{name:firstName(user.name)})} sub={tl("What needs doing across the college")}/><div className="main">
     <AdminDashboard toast={toast} goUsers={goUsers} goSettings={goSettings} setList={setList} setFp={setFp}/>
+    <AdminCharts goUsers={goUsers} goSettings={goSettings} setList={setList} setRep={setRep}/>
     <h3 className="sec">{tl("Reports")}</h3>
     <div className="two"><button className="btn ghost" aria-expanded={reports} onClick={()=>setReports(!reports)}>{reports?tl("Hide course reports"):tl("Course reports")}</button><button className="btn ghost" onClick={()=>setList('students')}>{tl("Students")}</button></div>
     {reports&&<CourseReports toast={toast} onOpen={setRep}/>}
@@ -1955,7 +2001,7 @@ function Users({toast,me}){
       <select aria-label={tl("Filter by program")} value={prog} onChange={e=>{const id=e.target.value;setProg(id);if(+sem>semsOf(progs,id).length)setSem('')}}><option value="">{tl("All programs")}</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
       <select aria-label={tl("Filter by semester, year or grade")} value={sem} onChange={e=>setSem(e.target.value)}><option value="">{lab==='Term'?tl("All terms"):tl("All {lab}s",{lab:lab.toLowerCase()})}</option>{semsOf(progs,prog).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select>
       <select aria-label={tl("Sort by")} value={order} onChange={e=>setOrder(e.target.value)}><option value="role">{tl("Sort: role, then name")}</option><option value="name">{tl("Sort: name")}</option><option value="program">{tl("Sort: program")}</option><option value="semester">{tl("Sort:")}{" "}{lab.toLowerCase()}</option><option value="newest">{tl("Sort: newest first")}</option></select>
-      <select aria-label={tl("Filter by AI plan")} value={plan} onChange={e=>setPlan(e.target.value)}><option value="">{tl("All plans")}</option><option value="lite">{tl("Lite")}</option><option value="pro">{tl("Pro")}</option><option value="pro_ending">{tl("Pro ending within 7 days")}</option><option value="asked">{tl("Asked for more AI")}</option></select></div>
+      <select aria-label={tl("Filter by AI plan")} value={plan} onChange={e=>setPlan(e.target.value)}><option value="">{tl("All plans")}</option><option value="lite">{tl("Lite")}</option><option value="pro">{tl("Pro")}</option><option value="pro_ending">{tl("Pro ending within 7 days")}</option><option value="own">{tl("Own key")}</option><option value="college">{tl("College")}</option><option value="family">{tl("Family key")}</option><option value="off">{tl("No AI")}</option><option value="asked">{tl("Asked for more AI")}</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>{tl("New user")}</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>{tl("Bulk upload")}</button></div>
     <button className="btn ghost" style={{marginTop:10}} onClick={()=>setProCsv(true)}>{tl("Give Pro from a CSV")}</button>
     <button className="btn ghost" style={{marginTop:10}} aria-pressed={selMode} onClick={()=>{setSelMode(!selMode);setSel([])}}>{selMode?tl("Done selecting"):tl("Select several users")}</button>
