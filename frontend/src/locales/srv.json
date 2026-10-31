@@ -190,5 +190,9 @@
 [
 "^(?<name>[A-Za-z]+) refused the key \\((?<code>\\d+)\\)\\. Check it, or the [A-Za-z]+ balance, under AI key in the menu\\.$",
 "{name} refused the key ({code}). Check it, or the {name} balance, under AI key in the menu."
+],
+[
+"^You have used all (?<n>\\d+) attempts for this assignment\\.$",
+"You have used all {n} attempts for this assignment."
 ]
 ]

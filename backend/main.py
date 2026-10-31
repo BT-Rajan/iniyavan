@@ -859,7 +859,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0030_users_google", lambda c: google_columns(c)),
               ("0031_calendar", lambda c: calendar_tables(c)),
               ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)]),
-              ("0033_progress_history", lambda c: Base.metadata.create_all(c, tables=[ProgressHistory.__table__]))]
+              ("0033_progress_history", lambda c: Base.metadata.create_all(c, tables=[ProgressHistory.__table__])),
+              ("0034_assignments", lambda c: [Base.metadata.create_all(c, tables=[Assignment.__table__, AssignmentStudent.__table__]), _addcol("mcq_attempts", "assignment_id", "INTEGER NULL")(c)])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -2690,6 +2691,7 @@ def attempt_quiz(qid: int, b: AttemptIn, u: User = Depends(me), s: Session = Dep
     if not q.published and not (u.role == "admin" or can_edit(u, cid, s)): raise HTTPException(404, "Quiz not found")
     check_course_access(u, cid, s)
     if not can_edit(u, cid, s): quiz_unit_open(q, s)
+    if u.role == "student": quiz_attempt_allowed(s, u, qid)
     qs = s.query(Question).filter_by(quiz_id=qid).order_by(Question.pos, Question.id).all()
     if not qs: raise HTTPException(400, "This quiz has no questions yet")
     if len(b.answers) != len(qs): raise HTTPException(400, "Answer every question or leave it blank")
@@ -2926,6 +2928,12 @@ def drop_quizzes(s, cond):
     if ids:
         for m in (Attempt, Question): s.query(m).filter(m.quiz_id.in_(ids)).delete(synchronize_session=False)
         s.query(Quiz).filter(Quiz.id.in_(ids)).delete(synchronize_session=False)
+def assigner(u: User = Depends(me)):  # faculty and admins for the courses they edit; school teachers for their linked students
+    if u.role in ("admin", "faculty") or (u.role == "guardian" and u.relation == "teacher"): return u
+    raise HTTPException(403, "Only teachers can assign tests")
+@app.delete("/api/assignments/{aid}")  # before the generic delete below, which would take this path (the rest of assignments is further down)
+def delete_assignment(aid: int, u: User = Depends(assigner), s: Session = Depends(db)):
+    a = assignment_mine(aid, u, s); s.query(AssignmentStudent).filter_by(assignment_id=a.id).delete(); s.delete(a); s.commit(); return {"ok": True}
 @app.delete("/api/{kind}/{rid}")
 def remove(kind: str, rid: int, u: User = Depends(staff), s: Session = Depends(db)):
     if kind not in M: raise HTTPException(404, "Unknown item")
@@ -3448,6 +3456,11 @@ def student_dashboard(u: User = Depends(me), s: Session = Depends(db)):
         e = exams[0]; weak = len(my_insights(u, s)["needs_study"]); v = {"title": e.title, "date": e.day.isoformat(), "n": weak}
         if weak: add("now" if (e.day - today).days <= 3 else "soon", "exam", "{title} on {date}: revise {n} weak topics first", v, "progress")
         else: add("soon", "exam", "{title} on {date}", v, "calendar")
+    for a in assigned_to(s, u.id).filter(Assignment.due_at > now).order_by(Assignment.due_at).limit(3):  # a teacher's assignments still to do
+        if student_state(s, a, u.id, now)["status"] != "to_do": continue
+        left = a.due_at - now
+        add("now" if left <= dt.timedelta(days=1) else "soon" if left <= dt.timedelta(days=3) else "later", "assignment", "{title}: due {due}",
+            {"title": a.title, "due": due_local(a.due_at)}, "assignment", id=a.id, kind=a.kind, quiz_id=a.quiz_id)
     for f in t["focus"][:3]:  # the ranked next steps, written by the server in words each language translates (srv shapes)
         lvl = "now" if f["kind"] == "overdue" else "soon" if f["kind"] in ("due_soon", "weak", "quiz_retake") else "later"
         items.append({"key": "focus_" + f["kind"], "level": lvl, "text": f["reason"], "title": f["title"], "course": f["course"], "vars": {},
@@ -5482,6 +5495,7 @@ class McqAttempt(Base):  # one set a person started: open, then submitted (score
     tier = Column(String(10), default="none")  # the limit it was counted under: lite, pro, or none (staff)
     score = Column(Integer, nullable=True); total = Column(Integer, default=0); percent = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow); submitted_at = Column(DateTime, nullable=True, index=True)
+    assignment_id = Column(Integer, nullable=True, index=True)  # a set taken for a teacher's assignment: outside the daily limits, counted against its attempts
     __table_args__ = (UniqueConstraint("user_id", "request_id"),)
 class McqAttemptItem(Base):  # a question as it was when the set started; the answer chosen; right or wrong once submitted
     __tablename__ = "mcq_attempt_items"
@@ -6203,6 +6217,169 @@ def back_under(loc, base, host):  # a redirect the app made (/app -> /app/) goes
     if not u.path.startswith("/") or u.path == base or u.path.startswith(base + "/") or (u.netloc and u.netloc != host): return loc
     return urlunsplit(u._replace(path=base + u.path))
 app.add_middleware(UnderBase)  # added last, so it runs first
+# ---- assigned tests: faculty (for their courses) and school teachers (for their linked students) give one student or a group a course quiz or test,
+# ---- or an MCQ set from the bank on chosen topics, to finish by a date and time, with 1, 2, 3 or unlimited attempts. Quiz attempts are the ordinary
+# ---- ones (made between the assignment and its due time; later ones are late); an assigned MCQ set is started from the assignment, outside the daily
+# ---- limits. The best attempt counts. Times are the students' local clock (DAY_OFFSET_MINUTES).
+class Assignment(Base):
+    __tablename__ = "assignments"
+    id = Column(Integer, primary_key=True); created_by = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind = Column(String(4)); quiz_id = Column(Integer, ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=True); course_id = Column(Integer, index=True)
+    topic_ids = Column(Text, nullable=True); size = Column(Integer, default=10)  # an MCQ set: its topics (JSON) and how many questions
+    title = Column(String(200)); due_at = Column(DateTime, index=True); attempts = Column(Integer, default=1)  # 0: unlimited
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+class AssignmentStudent(Base):
+    __tablename__ = "assignment_students"
+    id = Column(Integer, primary_key=True); assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    __table_args__ = (UniqueConstraint("assignment_id", "user_id"),)
+ATTEMPT_CHOICES = (0, 1, 2, 3)
+def local_due(v):  # "2026-11-05T17:00" on the students' clock -> the UTC instant
+    try: t = dt.datetime.fromisoformat(str(v).strip()[:16])
+    except ValueError: raise HTTPException(400, "Give the due date and time as YYYY-MM-DDTHH:MM")
+    return t - dt.timedelta(minutes=DAY_OFFSET)
+def due_local(t): return (t + dt.timedelta(minutes=DAY_OFFSET)).strftime("%Y-%m-%dT%H:%M")
+def assignable_students(u, c, s):  # who this person may assign a course's tests to
+    sems = {x.id: x for x in s.query(Semester)}; links = defaultdict(list)
+    for l in s.query(CourseLink).filter_by(course_id=c.id): links[c.id].append(l.semester_id)
+    pool = s.query(User).filter_by(role="student", active=True).all() if u.role != "guardian" else [x for x in guardian_students(s, u.id) if x.active]
+    return course_audience(c, pool, sems, links)
+def assign_courses(u, s):
+    if u.role == "guardian":
+        kids = [x for x in guardian_students(s, u.id) if x.active]; ids = set()
+        for x in kids: ids |= student_course_ids(x, s)
+        return [c for c in s.query(Course).filter(Course.id.in_(list(ids) or [0])).order_by(Course.name) if not course_off(s, c)]
+    return live_courses(u, s)
+def course_quizzes(c, s):
+    unit_q = s.query(Quiz).join(Unit, Unit.id == Quiz.unit_id).filter(Unit.course_id == c.id, Quiz.published == True)  # noqa: E712
+    tests = s.query(Quiz).filter(Quiz.unit_id.is_(None), Quiz.course_id == c.id, Quiz.published == True)  # noqa: E712
+    counts = dict(s.query(Question.quiz_id, func.count(Question.id)).group_by(Question.quiz_id).all())
+    return [{"id": q.id, "title": q.title, "questions": counts.get(q.id, 0)} for q in list(tests) + list(unit_q) if counts.get(q.id)]
+@app.get("/api/assign/options")
+def assign_options(course_id: int = 0, u: User = Depends(assigner), s: Session = Depends(db)):
+    """The courses this person can assign from; with course_id, its quizzes and tests, its topics with published MCQs, and who can be given them."""
+    cs = assign_courses(u, s)
+    if not course_id: return {"courses": [{"id": c.id, "name": c.name} for c in cs]}
+    c = next((c for c in cs if c.id == course_id), None)
+    if not c: raise HTTPException(404, "Course not found")
+    bank = dict(s.query(McqItem.topic_id, func.count(McqItem.id)).filter(McqItem.status == "published").group_by(McqItem.topic_id).all())
+    topics = [{"id": t.id, "title": t.title, "mcqs": bank.get(t.id, 0)} for t in s.query(Topic).join(Unit, Unit.id == Topic.unit_id)
+              .filter(Unit.course_id == c.id, Topic.published.isnot(False), Topic.archived_at.is_(None)).order_by(Unit.position, Topic.position) if bank.get(t.id)]
+    pn = {p.id: p.name for p in s.query(Program)}
+    studs = [{"id": x.id, "name": x.name, "group": pn.get(x.program_id, "") + (f" · {x.semester}" if x.semester else "")} for x in assignable_students(u, c, s)]
+    return {"course": {"id": c.id, "name": c.name}, "quizzes": course_quizzes(c, s), "topics": topics, "students": sorted(studs, key=lambda x: (x["group"], x["name"].lower()))}
+class AssignIn(BaseModel):
+    course_id: int; kind: str; quiz_id: int | None = None; topic_ids: list[int] = []; size: int = MCQ_SIZE
+    students: list[int]; due: str; attempts: int = 1; title: str = ""
+@app.post("/api/assignments")
+def create_assignment(b: AssignIn, u: User = Depends(assigner), s: Session = Depends(db)):
+    c = next((c for c in assign_courses(u, s) if c.id == b.course_id), None)
+    if not c: raise HTTPException(404, "Course not found")
+    if b.kind not in ("quiz", "mcq"): raise HTTPException(400, "Choose a quiz or an MCQ set")
+    if b.attempts not in ATTEMPT_CHOICES: raise HTTPException(400, "Choose 1, 2 or 3 attempts, or unlimited")
+    due = local_due(b.due); now = dt.datetime.utcnow()
+    if due <= now: raise HTTPException(400, "Choose a due time in the future")
+    if due > now + dt.timedelta(days=366): raise HTTPException(400, "Choose a due date within a year")
+    if b.kind == "quiz":
+        q = next((x for x in course_quizzes(c, s) if x["id"] == b.quiz_id), None)
+        if not q: raise HTTPException(400, "Choose a published quiz or test of this course")
+        title, tids, size = b.title.strip() or q["title"], None, 0
+    else:
+        ok = {t["id"]: t for t in assign_options(c.id, u, s)["topics"]}; tids = [t for t in dict.fromkeys(b.topic_ids) if t in ok]
+        if not tids: raise HTTPException(400, "Choose at least one topic with published MCQs")
+        size = min(max(b.size, MCQ_MIN_SET), MCQ_MAX_SIZE)
+        if sum(ok[t]["mcqs"] for t in tids) < MCQ_MIN_SET: raise HTTPException(400, "These topics don't have enough published MCQs yet")
+        title = b.title.strip() or ("MCQ set: " + ", ".join(ok[t]["title"] for t in tids[:3]))
+    allowed = {x.id for x in assignable_students(u, c, s)}; who = [i for i in dict.fromkeys(b.students) if i in allowed]
+    if not who: raise HTTPException(400, "Choose at least one student who takes this course")
+    a = Assignment(created_by=u.id, kind=b.kind, quiz_id=b.quiz_id if b.kind == "quiz" else None, course_id=c.id, topic_ids=json.dumps(tids) if tids else None,
+                   size=size, title=title[:200], due_at=due, attempts=b.attempts)
+    s.add(a); s.flush(); s.add_all([AssignmentStudent(assignment_id=a.id, user_id=i) for i in who]); s.commit()
+    return {"id": a.id, "students": len(who), "skipped": len(set(b.students)) - len(who)}
+def assignment_attempts(s, a, uid):  # [(percent, at, late)] for this student and assignment
+    if a.kind == "quiz":
+        rows = s.query(Attempt.percent, Attempt.at).filter(Attempt.user_id == uid, Attempt.quiz_id == a.quiz_id, Attempt.at >= a.created_at).all()
+    else:
+        rows = s.query(McqAttempt.percent, McqAttempt.submitted_at).filter(McqAttempt.user_id == uid, McqAttempt.assignment_id == a.id, McqAttempt.status == "submitted").all()
+    return [(p or 0, t, t > a.due_at) for p, t in rows if t]
+def student_state(s, a, uid, now):
+    rows = assignment_attempts(s, a, uid); on_time = [p for p, _, late in rows if not late]
+    used = len(on_time); best = max(on_time) if on_time else None; late = max((p for p, _, l in rows if l), default=None)
+    status = "done" if on_time else "late" if late is not None else "missed" if now > a.due_at else "to_do"
+    left = None if not a.attempts else max(0, a.attempts - used)
+    return {"status": status, "used": used, "left": left, "best": best, "late_best": late}
+def assignment_json(a, s, extra=None):
+    return {"id": a.id, "kind": a.kind, "title": a.title, "course_id": a.course_id, "quiz_id": a.quiz_id, "due": due_local(a.due_at), "due_at": utc_iso(a.due_at),
+            "attempts": a.attempts, "size": a.size if a.kind == "mcq" else None, **(extra or {})}
+@app.get("/api/assignments")
+def my_assignments(u: User = Depends(assigner), s: Session = Depends(db)):  # what this person assigned, newest due first, with how far each has got
+    now = dt.datetime.utcnow(); out = []
+    for a in s.query(Assignment).filter_by(created_by=u.id).order_by(Assignment.due_at.desc()).limit(200):
+        st = [student_state(s, a, i, now)["status"] for (i,) in s.query(AssignmentStudent.user_id).filter_by(assignment_id=a.id)]
+        out.append(assignment_json(a, s, {"students": len(st), "done": st.count("done"), "late": st.count("late"), "missed": st.count("missed"), "to_do": st.count("to_do")}))
+    return {"items": out}
+def assignment_mine(aid, u, s):
+    a = s.get(Assignment, aid)
+    if not a or (a.created_by != u.id and u.role != "admin"): raise HTTPException(404, "Assignment not found")
+    return a
+@app.get("/api/assignments/{aid}")
+def assignment_detail(aid: int, u: User = Depends(assigner), s: Session = Depends(db)):
+    a = assignment_mine(aid, u, s); now = dt.datetime.utcnow(); rows = []
+    for x in s.query(User).join(AssignmentStudent, AssignmentStudent.user_id == User.id).filter(AssignmentStudent.assignment_id == a.id).order_by(User.name):
+        rows.append({"id": x.id, "name": x.name, **student_state(s, a, x.id, now)})
+    return assignment_json(a, s, {"rows": rows})
+class AssignEditIn(BaseModel): due: str | None = None; attempts: int | None = None
+@app.patch("/api/assignments/{aid}")
+def edit_assignment(aid: int, b: AssignEditIn, u: User = Depends(assigner), s: Session = Depends(db)):
+    a = assignment_mine(aid, u, s)
+    if b.due is not None:
+        d = local_due(b.due)
+        if d <= dt.datetime.utcnow(): raise HTTPException(400, "Choose a due time in the future")
+        a.due_at = d
+    if b.attempts is not None:
+        if b.attempts not in ATTEMPT_CHOICES: raise HTTPException(400, "Choose 1, 2 or 3 attempts, or unlimited")
+        a.attempts = b.attempts
+    s.commit(); return assignment_json(a, s)
+def assigned_to(s, uid):
+    return s.query(Assignment).join(AssignmentStudent, AssignmentStudent.assignment_id == Assignment.id).filter(AssignmentStudent.user_id == uid)
+@app.get("/api/me/assignments")
+def assigned_to_me(u: User = Depends(me), s: Session = Depends(db)):  # a student's assignments: still open first (soonest due), then the finished ones
+    now = dt.datetime.utcnow(); out = []
+    for a in assigned_to(s, u.id).order_by(Assignment.due_at).all():
+        by = s.get(User, a.created_by); c = s.get(Course, a.course_id)
+        out.append(assignment_json(a, s, {**student_state(s, a, u.id, now), "by": by.name if by else "", "course": c.name if c else ""}))
+    out.sort(key=lambda x: (x["status"] not in ("to_do",), x["due_at"]))
+    return {"items": out}
+def quiz_attempt_allowed(s, u, qid):  # an assigned quiz with its attempts used up waits until the assignment is over
+    now = dt.datetime.utcnow()
+    for a in assigned_to(s, u.id).filter(Assignment.kind == "quiz", Assignment.quiz_id == qid, Assignment.due_at > now, Assignment.attempts > 0):
+        if student_state(s, a, u.id, now)["left"] == 0: raise HTTPException(403, f"You have used all {a.attempts} attempts for this assignment.")
+class AssignStartIn(BaseModel): request_id: str = ""
+@app.post("/api/assignments/{aid}/start")
+def start_assigned_mcq(aid: int, b: AssignStartIn, u: User = Depends(me), s: Session = Depends(db)):
+    """Starts the MCQ set of an assignment (or gives back the one already open for it). Outside the daily MCQ limits; each set counts as an attempt."""
+    a = assigned_to(s, u.id).filter(Assignment.id == aid).first()
+    if not a: raise HTTPException(404, "Assignment not found")
+    if a.kind != "mcq": raise HTTPException(400, "This assignment is a quiz: open it from its course")
+    hit = s.query(McqAttempt).filter_by(user_id=u.id, status="open").first()
+    if hit and hit.assignment_id == a.id: return mcq_view(hit, s, resumed=True)
+    if hit: raise HTTPException(409, "Finish or leave your open MCQ set first.")
+    now = dt.datetime.utcnow(); st = student_state(s, a, u.id, now)
+    if now <= a.due_at and st["left"] == 0: raise HTTPException(403, f"You have used all {a.attempts} attempts for this assignment.")
+    tids = json.loads(a.topic_ids or "[]"); titles = {t.id: t.title for t in s.query(Topic).filter(Topic.id.in_(tids or [0]))}
+    pool = s.query(McqItem).filter(McqItem.topic_id.in_(tids or [0]), McqItem.status == "published").all(); _rng.shuffle(pool); items = pool[:a.size]
+    if len(items) < MCQ_MIN_SET: raise HTTPException(409, "There aren't enough published questions for this assignment yet. Tell your teacher.")
+    snaps = [mcq_snapshot(x, titles.get(x.topic_id, "")) for x in items]
+    rid = re.sub(r"[^A-Za-z0-9_-]", "", b.request_id or "")[:64] or None
+    at = McqAttempt(user_id=u.id, mode="topic" if len(tids) == 1 else "practice", source="bank", topic_id=tids[0] if len(tids) == 1 else None, course_id=a.course_id,
+                    status="open", open_key=u.id, request_id=rid, tier="none", total=len(snaps), created_at=now, assignment_id=a.id)
+    try:
+        s.add(at); s.flush()
+        s.add_all([McqAttemptItem(attempt_id=at.id, pos=i, item_id=x["item_id"], version=x["version"], topic_id=x["topic_id"], snapshot=json.dumps(x, ensure_ascii=False)) for i, x in enumerate(snaps)])
+        s.commit()
+    except IntegrityError:
+        s.rollback(); raise HTTPException(409, "Another set was being started. Try again.")
+    return mcq_view(at, s)
 # the site: the home page (web/) at the root, and the app itself under /app/
 web = os.path.join(os.path.dirname(__file__), "..", "web")
 if os.path.isdir(dist): app.mount("/app", StaticFiles(directory=dist, html=True), name="ui")
@@ -6210,3 +6387,4 @@ if os.path.isdir(web): app.mount("/", StaticFiles(directory=web, html=True), nam
 else:
     @app.get("/", include_in_schema=False)
     def home(): return RedirectResponse("/app/")
+
