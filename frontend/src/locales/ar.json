@@ -2337,5 +2337,13 @@
 "{title} on {date}": "{title} في {date}",
 "Practise MCQs on {topics}": "تدرّب على أسئلة الاختيار من متعدد في {topics}",
 "You have used {used} of today's {limit} free AI searches": "استخدمت {used} من {limit} عمليات بحث مجانية بالذكاء الاصطناعي اليوم",
-"Your Pro ends on {date}: ask for more if you need it": "ينتهي Pro لديك في {date}: اطلب المزيد إن احتجت"
+"Your Pro ends on {date}: ask for more if you need it": "ينتهي Pro لديك في {date}: اطلب المزيد إن احتجت",
+"Start over": "ابدأ من جديد",
+"Start this topic over?": "هل تبدأ هذا الموضوع من جديد؟",
+"It goes back to not started, so you can study it again. Your quiz scores and your streak stay.": "يعود إلى «لم يبدأ» لتدرسه مجددًا. تبقى درجات اختباراتك وسلسلتك كما هي.",
+"Started over": "بدأت من جديد",
+"Start this course over": "ابدأ هذا المقرر من جديد",
+"Start {name} over?": "هل تبدأ {name} من جديد؟",
+"Every topic goes back to not started, so you can study the course again. Your quiz scores and your streak stay.": "يعود كل موضوع إلى «لم يبدأ» لتدرس المقرر مجددًا. تبقى درجات اختباراتك وسلسلتك كما هي.",
+"{n} topics are ready to study again": "{n} مواضيع جاهزة للدراسة مجددًا"
 }

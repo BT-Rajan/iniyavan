@@ -2337,5 +2337,13 @@
 "{title} on {date}": "{date} அன்று {title}",
 "Practise MCQs on {topics}": "{topics} மீது MCQ பயிற்சி செய்யுங்கள்",
 "You have used {used} of today's {limit} free AI searches": "இன்றைய {limit} இலவச AI தேடல்களில் {used} பயன்படுத்திவிட்டீர்கள்",
-"Your Pro ends on {date}: ask for more if you need it": "உங்கள் Pro {date} அன்று முடிகிறது: தேவைப்பட்டால் கூடுதலாகக் கேளுங்கள்"
+"Your Pro ends on {date}: ask for more if you need it": "உங்கள் Pro {date} அன்று முடிகிறது: தேவைப்பட்டால் கூடுதலாகக் கேளுங்கள்",
+"Start over": "மீண்டும் தொடங்கு",
+"Start this topic over?": "இந்தத் தலைப்பை மீண்டும் தொடங்கவா?",
+"It goes back to not started, so you can study it again. Your quiz scores and your streak stay.": "இது தொடங்காத நிலைக்குத் திரும்பும், எனவே மீண்டும் படிக்கலாம். உங்கள் வினாடி வினா மதிப்பெண்களும் தொடரும் அப்படியே இருக்கும்.",
+"Started over": "மீண்டும் தொடங்கப்பட்டது",
+"Start this course over": "இந்தப் பாடத்தை மீண்டும் தொடங்கு",
+"Start {name} over?": "{name} ஐ மீண்டும் தொடங்கவா?",
+"Every topic goes back to not started, so you can study the course again. Your quiz scores and your streak stay.": "ஒவ்வொரு தலைப்பும் தொடங்காத நிலைக்குத் திரும்பும், எனவே பாடத்தை மீண்டும் படிக்கலாம். உங்கள் வினாடி வினா மதிப்பெண்களும் தொடரும் அப்படியே இருக்கும்.",
+"{n} topics are ready to study again": "{n} தலைப்புகள் மீண்டும் படிக்கத் தயார்"
 }

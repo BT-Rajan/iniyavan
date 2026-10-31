@@ -108,6 +108,7 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
     val t = (topic.state as? Load.Ok)?.value
     var marked by remember(t) { mutableStateOf(t?.bookmarked ?: false) }
     var status by remember(t) { mutableStateOf(t?.status ?: "not_started") }
+    var redoAsk by remember { mutableStateOf(false) }  // asking before a topic starts over
     var known by remember(id) { mutableStateOf(emptyList<String>()) }
     var upNext by remember(id) { mutableStateOf<List<SessionItem>?>(null) }
     var practising by remember { mutableStateOf("") }
@@ -168,7 +169,14 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
                                 catch (e: Exception) { snack.showSnackbar(e.message.orEmpty()) }
                             }
                         }) { Text(stringResource(if (status == "completed") R.string.undo else R.string.ive_learned_this)) }
+                        if (status != "not_started") TextButton(onClick = { redoAsk = true }) { Text(tl("Start over")) }
                     }
+                    if (redoAsk) androidx.compose.material3.AlertDialog(onDismissRequest = { redoAsk = false }, title = { Text(tl("Start this topic over?")) },
+                        text = { Text(tl("It goes back to not started, so you can study it again. Your quiz scores and your streak stay.")) },
+                        confirmButton = { TextButton(onClick = { redoAsk = false; scope.launch {
+                            try { a.raw("POST", "/topics/$id/redo"); status = "not_started"; snack.showSnackbar(tl("Started over")) } catch (e: Exception) { snack.showSnackbar(e.message.orEmpty()) }
+                        } }) { Text(tl("Start over")) } },
+                        dismissButton = { TextButton(onClick = { redoAsk = false }) { Text(stringResource(R.string.cancel)) } })
                 }
                 upNext?.let { items ->
                     Gap(12)

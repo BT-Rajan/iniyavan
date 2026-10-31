@@ -208,6 +208,11 @@ class Progress(Base):  # one row per student and topic, made when they first ope
     reads = Column(Integer, default=1); last_read = Column(DateTime, default=dt.datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)  # set when the student marks the topic completed (UTC); cleared only if they undo it
     __table_args__ = (UniqueConstraint("user_id", "topic_id"),)
+class ProgressHistory(Base):  # a topic's progress set aside when the student chose to redo it (or its course): kept for their record and streak
+    __tablename__ = "progress_history"
+    id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True); reads = Column(Integer, default=0)
+    last_read = Column(DateTime, nullable=True); completed_at = Column(DateTime, nullable=True); redone_at = Column(DateTime, default=dt.datetime.utcnow)
 class Highlight(Base):  # a passage someone marked in a topic's content; found again by its text and the words just before it
     __tablename__ = "highlights"
     id = Column(Integer, primary_key=True); user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -853,7 +858,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__])),  # new tables only
               ("0030_users_google", lambda c: google_columns(c)),
               ("0031_calendar", lambda c: calendar_tables(c)),
-              ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)])]
+              ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)]),
+              ("0033_progress_history", lambda c: Base.metadata.create_all(c, tables=[ProgressHistory.__table__]))]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -3402,6 +3408,9 @@ def study_days(s, uid, since):  # {local day: activity count}: topics opened, to
     for (t,) in s.query(Progress.completed_at).filter(Progress.user_id == uid, Progress.completed_at.isnot(None)): days[local_day(t)] += 1
     for (t,) in s.query(Progress.last_read).filter(Progress.user_id == uid, Progress.last_read.isnot(None)): days[local_day(t)] += 1  # opens made before day tracking began
     for (t,) in s.query(Attempt.at).filter(Attempt.user_id == uid): days[local_day(t)] += 1
+    for a, b in s.query(ProgressHistory.completed_at, ProgressHistory.last_read).filter(ProgressHistory.user_id == uid):  # topics they chose to redo: those days still count
+        for t in (a, b):
+            if t: days[local_day(t)] += 1
     for (t,) in s.query(StudyAttempt.at).filter(StudyAttempt.user_id == uid): days[local_day(t)] += 1  # courses students build count toward the streak too
     for (t,) in s.query(McqAttempt.submitted_at).filter(McqAttempt.user_id == uid, McqAttempt.status == "submitted"): days[local_day(t)] += 1  # each MCQ set once, when submitted
     for (t,) in s.query(StudyProgress.opened_at).filter(StudyProgress.user_id == uid, StudyProgress.opened_at.isnot(None)): days[local_day(t)] += 1
@@ -3501,6 +3510,23 @@ def my_today(u: User = Depends(me), s: Session = Depends(db)):
     return {"streak": streak, "active_today": today in days, "week": week, "active_days_week": len(in7), "completed_this_week": done7,
             "topics_total": topics_total, "topics_completed": topics_done, "percent": round(100 * topics_done / topics_total) if topics_total else 0,
             "quiz_average": round(sum(bests) / len(bests)) if bests else None, "focus": focus}
+# ---- redo: a student starts a topic, or a whole course, over. Its progress is set aside (ProgressHistory), so it reads "not started" again
+# ---- everywhere; quiz attempts and scores stay as they are, and the days they studied still count toward their streak.
+def set_aside(s, uid, tids):
+    rows = s.query(Progress).filter(Progress.user_id == uid, Progress.topic_id.in_(list(tids) or [0])).all()
+    for p in rows: s.add(ProgressHistory(user_id=uid, topic_id=p.topic_id, reads=p.reads, last_read=p.last_read, completed_at=p.completed_at)); s.delete(p)
+    return len(rows)
+@app.post("/api/topics/{tid}/redo")
+def redo_topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s); n = set_aside(s, u.id, [tid]); s.commit(); return {"ok": True, "topics": n}
+@app.post("/api/courses/{cid}/redo")
+def redo_course(cid: int, u: User = Depends(me), s: Session = Depends(db)):
+    if not s.get(Course, cid): raise HTTPException(404, "Course not found")
+    check_course_access(u, cid, s)
+    tids = [i for (i,) in s.query(Topic.id).join(Unit, Unit.id == Topic.unit_id).filter(Unit.course_id == cid)]
+    n = set_aside(s, u.id, tids); s.commit(); return {"ok": True, "topics": n}
 @app.post("/api/topics/{tid}/read")
 def read(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
