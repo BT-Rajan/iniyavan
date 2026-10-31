@@ -163,6 +163,11 @@ import kotlinx.serialization.json.JsonObject
                                    val vars: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(), val action: String = "progress")
 @Serializable data class GWard(val id: Int, val name: String = "", val place: String = "", val streak: Int = 0, val week: List<Boolean> = emptyList(), val active_days_week: Int = 0,
                                val completed_this_week: Int = 0, val last_studied: String? = null, val routine: Boolean = false)
+@Serializable data class STarget(val topic_id: Int? = null, val quiz_id: Int? = null, val nav: List<Int> = emptyList())
+@Serializable data class SDashItem(val key: String = "", val level: String = "later", val text: String = "", val title: String? = null, val course: String? = null,
+                                   val vars: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(), val action: String = "topic", val target: STarget = STarget())
+@Serializable data class SDash(val items: List<SDashItem> = emptyList(), val streak: Int = 0, val week: List<Boolean> = emptyList(), val completed_this_week: Int = 0,
+                               val percent: Int = 0, val routine: Boolean = false)
 @Serializable data class GDash(val items: List<GDashItem> = emptyList(), val students: List<GWard> = emptyList())
 @Serializable data class WardMcq(val sets: Int = 0, val average: Int? = null, val last_at: String? = null, val revisit: List<String> = emptyList())
 @Serializable data class Invitation(val id: Int, val name: String, val relation: String? = null, val institution: String = "")

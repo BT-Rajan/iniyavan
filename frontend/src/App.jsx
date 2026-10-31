@@ -81,7 +81,7 @@ export default function App(){
     <TopBar user={user} lang={lang} pickLang={pickLang} theme={theme} pickTheme={pickTheme} onMenu={()=>setOpen(true)} onHome={()=>go('home')} onAccount={()=>go('profile')} onOut={signOut} onNote={()=>go('home')} page={page}/>
     {page!=='search'&&!guardian&&<GlobalSearch key={findQ.n} onFind={find} onPhoto={user.ai_off?null:()=>go('photo')}/>}{page==='photo'&&<PhotoAsk toast={toast}/>}
     <div id="pageslot"/>
-    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')} onCalendar={()=>go('calendar')}/>}
+    {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')} onCalendar={()=>go('calendar')} onGo={go}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
     {page==='home'&&guardian&&<GuardianHome user={user} toast={toast} onKey={()=>go('aikey')} onCalendar={()=>go('calendar')}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}} goSettings={t=>{settingsTab=t;go('ai')}}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
@@ -738,10 +738,27 @@ function FlagsPage({toast,back}){
       {f.reasons.length>0&&<ul className="flagwhy">{f.reasons.map((r,i)=><li key={i}>“{r}”</li>)}</ul>}
       <div className="tools">{f.source==='topic'&&f.topic_id&&<button onClick={()=>setT(f.topic_id)}>{tl("Open the topic")}</button>}<button onClick={()=>act(f,'rewrite')}>{tl("Write it again")}</button><button onClick={()=>act(f,'keep')}>{tl("It's fine")}</button></div></div>)}
     <Pager page={page} total={total} onPage={setPage}/></div></>}
-function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar}){
+// a student's Home, made for a phone: what to do next (most useful first, one button each), then this week at a glance
+const DO_LABEL={topic:'Open',quiz:'Take the quiz',progress:'See weak topics',calendar:'Open calendar',mcq:'Practise',plan:'See my plan',courses:'My courses'}
+function DoNext({d:d0,openTopic,onOpen,onGo,onCalendar,session}){  // with a routine, today's session already lists the topics: then only the other signals
+  const d={...d0,items:session?d0.items.filter(x=>!x.key.startsWith('focus_')):d0.items}
+  const run=x=>{const t=x.target||{};if(x.action==='topic'&&t.topic_id)return openTopic(t.topic_id);if(x.action==='quiz'&&t.nav)return onOpen(t.nav)
+    if(x.action==='calendar')return onCalendar();onGo({progress:'progress',mcq:'mcq',plan:'profile',courses:'learn'}[x.action]||'learn')}
+  if(!d.items.length)return null
+  return <><h3 className="sec first">{tl("Do next")}</h3>{d.items.map((x,i)=><div key={x.key+i} className={'card dash '+x.level}><span className="dot" aria-hidden="true"/>
+    <div style={{flex:1}}><b>{x.title||tl(x.text,{...x.vars,...(x.vars.date?{date:day(x.vars.date)}:{})})}</b>{x.title&&<small className="known">{srv(x.text)}{x.course?' · '+x.course:''}</small>}</div>
+    <button className="btn ghost" onClick={()=>run(x)}>{tl(DO_LABEL[x.action]||'Open')}</button></div>)}</>}
+function ThisWeek({d,onGo}){
+  const days=[...Array(7)].map((_,i)=>{const t=new Date();t.setDate(t.getDate()-6+i);return t.toLocaleDateString(getLang(),{weekday:'narrow'})})
+  return <button className="card ward" onClick={()=>onGo('progress')} aria-label={tl("My progress")}>
+    <span className="wtop"><b>{tl("This week")}</b><span className="chip">{tl("{n}-day streak",{n:d.streak})}</span></span>
+    <span className="wweek" aria-label={tl("Studied on {n} of the last 7 days",{n:d.week.filter(Boolean).length})}>{d.week.map((on,i)=><span key={i} className={on?'on':''} aria-hidden="true">{days[i]}</span>)}</span>
+    <small className="known">{tl("Topics learned this week: {n}",{n:d.completed_this_week})} · {tl("{p}% of your topics learned",{p:d.percent})}</small></button>}
+function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar,onGo}){
   const [sme,setSme]=useState(null);useEffect(()=>{api('/study/me').then(setSme).catch(()=>{})},[])
   const [tree,setTree]=useState(null),[today,setToday]=useState(null),[topic,setTopic]=useState(null),[sess,setSess]=useState(null)
-  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/today').then(setToday).catch(()=>{})},[topic,toast])
+  const [dd,setDd]=useState(null)
+  useEffect(()=>{if(topic)return;api('/tree').then(setTree).catch(e=>toast(e.message));api('/me/today').then(setToday).catch(()=>{});api('/me/dashboard').then(setDd).catch(()=>{})},[topic,toast])
   if(topic)return <Topic id={topic} back={()=>setTopic(null)} toast={toast} role={user.role}/>
   const hour=new Date().getHours(),hi=hour<12?'Good morning, {name}':hour<17?'Good afternoon, {name}':'Good evening, {name}'
   const seen=new Map(),courses=[]
@@ -751,7 +768,9 @@ function Dashboard({user,toast,onOpen,onStudy,onRoutine,onCalendar}){
   return <><Bar title={tl(hi,{name:firstName(user.name)})}/><div className="main">
     <Invitations/>
     <SessionCard toast={toast} onRoutine={onRoutine} openTopic={setTopic} onStudy={onStudy} refresh={topic} onLoad={setSess}/>
-    {!sess?.routine&&resume&&<div className="card"><button className="hit" onClick={()=>setTopic(resume.topic_id)}><span className="dot" style={{background:'var(--acc)'}}><Play size={18}/></span><div><b>{resume.title}</b><span>{resume.kind==='resume'?tl("Where you left off"):tl("Up next, if you like")} · {resume.course}</span></div><ChevronRight size={18}/></button></div>}
+    {dd&&<DoNext d={dd} openTopic={setTopic} onOpen={onOpen} onGo={onGo} onCalendar={onCalendar} session={!!sess?.routine}/>}
+    {dd&&<ThisWeek d={dd} onGo={onGo}/>}
+    {!dd&&!sess?.routine&&resume&&<div className="card"><button className="hit" onClick={()=>setTopic(resume.topic_id)}><span className="dot" style={{background:'var(--acc)'}}><Play size={18}/></span><div><b>{resume.title}</b><span>{resume.kind==='resume'?tl("Where you left off"):tl("Up next, if you like")} · {resume.course}</span></div><ChevronRight size={18}/></button></div>}
     <RecallCard open={setTopic}/>
     <ComingUp onAll={onCalendar}/>
     {sme&&sme.courses>0&&<><h3 className="sec">{tl("Your own courses")}</h3><LearnCard me={sme} compact onContinue={n=>onStudy({id:n.course_id,topic:n.topic_id})} onReview={cid=>onStudy({review:cid})}/></>}

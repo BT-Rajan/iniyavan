@@ -3419,6 +3419,40 @@ def due_phrase(due, now):  # in the student's own calendar days, so "tomorrow" m
     n = (local_day(due) - local_day(now)).days
     if due < now: return f"Overdue by {-n} day{'s' if n != -1 else ''}" if n < 0 else "Overdue since earlier today"
     return "Due today" if n == 0 else "Due tomorrow" if n == 1 else f"Due in {n} days"
+# ---- a student's dashboard: what to do next, most useful first, each with one action, and this week at a glance. The ranked next steps come from
+# ---- /me/today (overdue, due soon, weak, a quiz to retake, where they left off); added to them: a streak at risk, an exam coming with topics to
+# ---- revise, MCQ topics to practise again, and their AI allowance running low or Pro ending.
+STREAK_EVENING = 18  # without a set study time, a routine day with no study yet is flagged from this hour (the students' local time)
+@app.get("/api/me/dashboard")
+def student_dashboard(u: User = Depends(me), s: Session = Depends(db)):
+    if u.role != "student": raise HTTPException(403, "For students")
+    now = dt.datetime.utcnow(); today = local_day(now); t = my_today(u, s); items = []
+    def add(level, key, text, vars_=None, action="topic", **target): items.append({"key": key, "level": level, "text": text, "vars": vars_ or {}, "action": action, "target": target})
+    r = s.get(Routine, u.id); local_now = now + dt.timedelta(minutes=DAY_OFFSET)
+    if r and t["streak"] and not t["active_today"] and r.days[today.weekday()] == "1":
+        due = r.at or f"{STREAK_EVENING}:00"
+        if local_now.strftime("%H:%M") >= due.zfill(5):
+            first = next((f for f in t["focus"] if f.get("topic_id")), None)
+            add("now", "streak", "Keep your {n}-day streak: study a little today", {"n": t["streak"]}, "topic" if first else "courses", **({"topic_id": first["topic_id"]} if first else {}))
+    exams = [e for e in event_rows(s, today, today + dt.timedelta(days=EXAM_AHEAD), who=u) if e.kind in ("exam", "test") and e.day >= today]
+    if exams:
+        e = exams[0]; weak = len(my_insights(u, s)["needs_study"]); v = {"title": e.title, "date": e.day.isoformat(), "n": weak}
+        if weak: add("now" if (e.day - today).days <= 3 else "soon", "exam", "{title} on {date}: revise {n} weak topics first", v, "progress")
+        else: add("soon", "exam", "{title} on {date}", v, "calendar")
+    for f in t["focus"][:3]:  # the ranked next steps, written by the server in words each language translates (srv shapes)
+        lvl = "now" if f["kind"] == "overdue" else "soon" if f["kind"] in ("due_soon", "weak", "quiz_retake") else "later"
+        items.append({"key": "focus_" + f["kind"], "level": lvl, "text": f["reason"], "title": f["title"], "course": f["course"], "vars": {},
+                      "action": "quiz" if f.get("quiz_id") else "topic", "target": {k: f[k] for k in ("topic_id", "quiz_id", "nav") if f.get(k) is not None}})
+    revisit = mcq_summary(s, u.id)["revisit"]
+    if revisit: add("later", "mcq", "Practise MCQs on {topics}", {"topics": ", ".join(revisit[:3])}, "mcq")
+    p = plan_json(u, s)
+    if p["plan"] == "lite" and p["searches_limit"] and p["searches_used"] >= 0.8 * p["searches_limit"]:
+        add("soon", "lite", "You have used {used} of today's {limit} free AI searches", {"used": p["searches_used"], "limit": p["searches_limit"]}, "plan")
+    if p["plan"] == "pro" and u.pro_until and u.pro_until - now <= dt.timedelta(days=3):
+        add("soon", "pro_ending", "Your Pro ends on {date}: ask for more if you need it", {"date": local_day(u.pro_until - dt.timedelta(seconds=1)).isoformat()}, "plan")
+    items.sort(key=lambda i: URGENCY[i["level"]])  # stable: within a level, the server's own ranking stands
+    return {"items": items[:5], "more": max(0, len(items) - 5), "streak": t["streak"], "active_today": t["active_today"], "week": [w["active"] for w in t["week"]],
+            "completed_this_week": t["completed_this_week"], "percent": t["percent"], "routine": bool(r)}
 @app.get("/api/me/today")
 def my_today(u: User = Depends(me), s: Session = Depends(db)):
     now = dt.datetime.utcnow(); today = local_day(now); since = today - dt.timedelta(days=400)

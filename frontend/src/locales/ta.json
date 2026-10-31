@@ -2323,5 +2323,19 @@
 "{name} scored {p}% in the latest quiz, below their usual {usual}%": "{name} சமீபத்திய வினாடி வினாவில் {p}% பெற்றார், வழக்கமான {usual}%-ஐ விடக் குறைவு",
 "{name} has no study routine yet: help them set one in their app": "{name} க்கு இன்னும் படிப்பு வழக்கம் இல்லை: அவர்களின் செயலியில் ஒன்றை அமைக்க உதவுங்கள்",
 "AI help is off for your school students: add your AI key to turn it on": "உங்கள் பள்ளி மாணவர்களுக்கு AI உதவி முடக்கத்தில் உள்ளது: இயக்க உங்கள் AI விசையைச் சேர்க்கவும்",
-"Topics learned this week: {n}": "இந்த வாரம் கற்ற தலைப்புகள்: {n}"
+"Topics learned this week: {n}": "இந்த வாரம் கற்ற தலைப்புகள்: {n}",
+"Do next": "அடுத்து செய்ய",
+"Open": "திற",
+"See weak topics": "பலவீனமான தலைப்புகளைப் பார்",
+"Open calendar": "நாள்காட்டியைத் திற",
+"Practise": "பயிற்சி செய்",
+"See my plan": "என் திட்டத்தைப் பார்",
+"This week": "இந்த வாரம்",
+"{p}% of your topics learned": "உங்கள் தலைப்புகளில் {p}% கற்றுவிட்டீர்கள்",
+"Keep your {n}-day streak: study a little today": "உங்கள் {n} நாள் தொடரைத் தக்கவையுங்கள்: இன்று கொஞ்சம் படியுங்கள்",
+"{title} on {date}: revise {n} weak topics first": "{date} அன்று {title}: முதலில் {n} பலவீனமான தலைப்புகளை மீண்டும் படியுங்கள்",
+"{title} on {date}": "{date} அன்று {title}",
+"Practise MCQs on {topics}": "{topics} மீது MCQ பயிற்சி செய்யுங்கள்",
+"You have used {used} of today's {limit} free AI searches": "இன்றைய {limit} இலவச AI தேடல்களில் {used} பயன்படுத்திவிட்டீர்கள்",
+"Your Pro ends on {date}: ask for more if you need it": "உங்கள் Pro {date} அன்று முடிகிறது: தேவைப்பட்டால் கூடுதலாகக் கேளுங்கள்"
 }
