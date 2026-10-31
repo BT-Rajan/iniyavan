@@ -78,8 +78,8 @@ def test_parents_have_no_mcq_access_and_teachers_who_follow_see_only_a_summary(e
         assert env.c.get("/api/mcq/items", headers=h).status_code == 403 and env.c.post("/api/mcq/generate", headers=h, json={"topic_id": i["water"]}).status_code == 403
     aid = start(env, env.stu, topic_id=i["water"]).json()["id"]; submit(env, env.stu, aid, key_of(aid))
     assert env.c.get(f"/api/mcq/attempts/{aid}", headers=env.mum).status_code == 403
-    assert "mcq" not in env.c.get(f"/api/guardian/students/{i['stu']}/progress", headers=env.mum).json()  # a parent's view has no MCQ results
-    m = env.c.get(f"/api/guardian/students/{i['stu']}/progress", headers=env.rani).json()["mcq"]; assert (m["sets"], m["average"]) == (1, 100)
+    for h in (env.mum, env.rani):  # parents and teachers both see the results, never the questions themselves
+        m = env.c.get(f"/api/guardian/students/{i['stu']}/progress", headers=h).json()["mcq"]; assert (m["sets"], m["average"]) == (1, 100)
 
 def test_students_and_staff_practise_and_only_owners_and_admins_manage(env):
     i = world(env)

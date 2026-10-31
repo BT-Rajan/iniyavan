@@ -150,7 +150,16 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class GCourse(val course: String, val topics: Int = 0, val completed: Int = 0, val opened: Int = 0, val last_active: String? = null,
                                  val tests: Int = 0, val tests_taken: Int = 0, val test_average: Int? = null)
 @Serializable data class GProgress(val name: String, val username: String? = null, val place: String = "", val courses: List<GCourse> = emptyList(), val can_reset: Boolean = false,
-                                   val program_id: Int? = null, val semester: Int? = null)
+                                   val program_id: Int? = null, val semester: Int? = null, val scores: WardScores? = null, val activity: WardActivity? = null, val mcq: WardMcq? = null)
+@Serializable data class WardArea(val title: String = "", val course: String = "", val percent: Int = 0)
+@Serializable data class WardCourseScore(val course: String = "", val percent: Int = 0)
+@Serializable data class WardScores(val quizzes_taken: Int = 0, val courses: List<WardCourseScore> = emptyList(), val strong: List<WardArea> = emptyList(),
+                                    val getting_there: List<WardArea> = emptyList(), val needs_study: List<WardArea> = emptyList())
+@Serializable data class WardDay(val date: String = "", val active: Boolean = false)
+@Serializable data class WardRoutine(val days: String = "", val minutes: Int = 0, val at: String? = null)
+@Serializable data class WardActivity(val streak: Int = 0, val active_today: Boolean = false, val days: List<WardDay> = emptyList(), val active_days_28: Int = 0,
+                                      val active_days_week: Int = 0, val completed_this_week: Int = 0, val routine: WardRoutine? = null)
+@Serializable data class WardMcq(val sets: Int = 0, val average: Int? = null, val last_at: String? = null, val revisit: List<String> = emptyList())
 @Serializable data class Invitation(val id: Int, val name: String, val relation: String? = null, val institution: String = "")
 @Serializable data class Invitations(val invitations: List<Invitation> = emptyList())
 

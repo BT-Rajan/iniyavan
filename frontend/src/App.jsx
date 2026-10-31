@@ -83,7 +83,7 @@ export default function App(){
     <div id="pageslot"/>
     {page==='home'&&student&&<Dashboard user={user} toast={toast} onOpen={openIn} onStudy={openStudy} onRoutine={()=>go('routine')} onCalendar={()=>go('calendar')}/>}
     {page==='routine'&&student&&<RoutinePage toast={toast} done={()=>go('home')}/>}
-    {page==='home'&&guardian&&<GuardianHome user={user} toast={toast} onKey={()=>go('aikey')} onCalendar={()=>go('calendar')}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}}/>}
+    {page==='home'&&guardian&&<GuardianHome user={user} toast={toast} onKey={()=>go('aikey')} onCalendar={()=>go('calendar')}/>}{page==='home'&&!student&&!guardian&&<StaffHome user={user} toast={toast} open={openIn} goUsers={p=>{usersPlan=p;go('users')}} goSettings={t=>{settingsTab=t;go('ai')}}/>}
     {page==='search'&&<SearchPage key={findQ.n} initial={findQ.q} user={user} toast={toast}/>}{page==='learn'&&<Learn key={String(start)} start={start} user={user} toast={toast} appName={name}/>}
     {page==='progress'&&user.role==='student'&&<Insights toast={toast} role={user.role} onRoutine={()=>go('routine')}/>}{page==='saved'&&student&&<Saved toast={toast} role={user.role}/>}
     {page==='build'&&user.role==='student'&&<StudyHome key={JSON.stringify(studyStart)} start={studyStart} toast={toast}/>}
@@ -245,6 +245,7 @@ function StudentProgress({id,back,toast}){  // what a parent or teacher sees: pe
   return <><Bar title={d?d.name:tl("Loading")} sub={d?.place} back={back}/><div className="main">
     {!d&&<Skeleton rows={2}/>}{d&&!d.courses.length&&<p className="known">{tl("No courses yet. They appear once an admin places them in a program.")}</p>}
     {d?.courses.map(c=><div className="row" key={c.course}><div style={{flex:1}}>{c.course}<small>{tl("{done} of {n} topics learned · {opened} opened",{done:c.completed,n:c.topics,opened:c.opened})}{c.tests?' · '+tl("tests {taken} of {n}",{taken:c.tests_taken,n:c.tests})+(c.test_average!=null?', '+tl("average {p}%",{p:c.test_average}):''):''}{' · '+(c.last_active?tl("last studied {when}",{when:day(c.last_active)}):tl("not started yet"))}</small><Bar2 v={c.topics?100*c.completed/c.topics:0}/></div></div>)}
+    {d?.activity&&<WardActivity a={d.activity}/>}{d?.scores&&<WardScores sc={d.scores} mcq={d.mcq}/>}
     {d&&<p className="known">{tl("You see progress only, never their own notes or highlights.")}</p>}
     {d?.can_reset&&<><h3 className="sec">{tl("Forgot their password?")}</h3><p className="known" style={{marginTop:0}}>{tl("They sign in with a username, so there is no email to reset it from. Set a new one here and tell them.")}</p>
       <label htmlFor="spw">{tl("New password")}</label><input id="spw" type="password" autoComplete="new-password" value={pw} onChange={e=>setPw(e.target.value)}/>
@@ -254,6 +255,23 @@ function StudentProgress({id,back,toast}){  // what a parent or teacher sees: pe
       <Place id="se" opts={opts} level={level||'school'} v={ed} set={o=>setEd({...ed,...o})}/>
       <div className="two"><button className="btn" disabled={b||!ed.name.trim()||(ed.program_id!==''&&ed.semester==='')} onClick={saveEd}>{tl("Save")}</button><button className="btn ghost" onClick={()=>setEd(null)}>{tl("Cancel")}</button></div></div>}
     {d&&<button className="btn ghost" style={{color:'var(--bad)'}} onClick={drop}>{tl("Remove {name} from my list",{name:d.name})}</button>}</div></>}
+// a student's study days over the last four weeks, their streak and the routine they set, as their parent or teacher sees it
+function WardActivity({a}){
+  const dt0=d=>new Date(d+'T00:00:00'),num=d=>dt0(d).toLocaleDateString(getLang(),{day:'numeric'}),full=d=>dt0(d).toLocaleDateString(getLang(),{weekday:'long',day:'numeric',month:'long'}),mon=new Date(2024,0,1)  // 1 Jan 2024 was a Monday
+  const plan=a.routine?[...a.routine.days].map((c,i)=>c==='1'?new Date(mon.getTime()+i*864e5).toLocaleDateString(getLang(),{weekday:'short'}):null).filter(Boolean).join(', '):''
+  return <><h3 className="sec">{tl("Study activity")}</h3>
+    <p className="known" style={{marginTop:0}}>{tl("{streak}-day streak · studied on {week} of the last 7 days and {days} of the last 28 · {done} topics learned this week",{streak:a.streak,week:a.active_days_week,days:a.active_days_28,done:a.completed_this_week})}</p>
+    {[0,1,2,3].map(w=><div key={w} className="week" aria-label={tl("Week {n}",{n:w+1})}>{a.days.slice(w*7,w*7+7).map(x=><span key={x.date} className={(x.active?'on':'')+(x===a.days[27]?' today':'')} title={full(x.date)} aria-label={full(x.date)+(x.active?' · '+tl("Studied"):'')}>{num(x.date)}</span>)}</div>)}
+    <p className="known">{a.routine?tl("Their routine: {days}, {minutes} minutes{at}",{days:plan,minutes:a.routine.minutes,at:a.routine.at?' '+tl("at {time}",{time:a.routine.at}):''}):tl("They have not set a study routine yet.")}</p></>}
+// their quiz and test scores per course, the topics they are strong in and the ones to study again, and their MCQ practice
+function WardScores({sc,mcq}){
+  const list=(L,title)=>L.length>0&&<><b style={{display:'block',marginTop:10}}>{title}</b>{L.map(x=><div key={x.course+x.title} className="row"><div>{x.title}<small>{x.course}</small></div><span className="chip">{x.percent}%</span></div>)}</>
+  return <><h3 className="sec">{tl("Scores")}</h3>
+    {!sc.quizzes_taken?<p className="known" style={{marginTop:0}}>{tl("No quizzes or tests taken yet.")}</p>:<>
+      {sc.courses.map(c=><div key={c.course} className="row"><div>{c.course}<small>{tl("Correct answers in quizzes and tests")}</small></div><span className="chip">{c.percent}%</span></div>)}
+      {list(sc.needs_study,tl("Needs more study"))}{list(sc.getting_there,tl("Getting there"))}{list(sc.strong,tl("Strong"))}</>}
+    {mcq&&<><h3 className="sec">{tl("MCQ practice")}</h3><p className="known" style={{marginTop:0}}>{mcq.sets?tl("{sets} sets done, {average}% correct on average. Last practised {when}.",{sets:mcq.sets,average:mcq.average,when:when(mcq.last_at)}):tl("No MCQ practice yet.")}</p>
+      {mcq.revisit.length>0&&<p className="known">{tl("Topics to revisit: {topics}",{topics:mcq.revisit.join(', ')})}</p>}</>}</>}
 function Invitations(){  // a teacher asked to follow this student's progress; nothing is shared until they accept
   const [list,setList]=useState([]),load=()=>api('/me/invitations').then(r=>setList(r.invitations)).catch(()=>{});useEffect(()=>{load()},[])
   const answer=async(x,a)=>{try{await api(`/me/invitations/${x.id}/${a}`,{method:'POST'});load()}catch{/* the list reloads either way */load()}}
@@ -579,13 +597,14 @@ function AreaList({areas,onStudy,staff}){
     return <div className={'qbox area '+k} key={k}><b>{title} ({L.length})</b>{hint&&!staff&&<p className="known" style={{margin:'4px 0 8px'}}>{hint}</p>}
       {<Paged rows={L} render={a=><div className="arow" key={a.topic_id||'u'+a.unit_id}><div><span>{a.title}</span><small>{a.correct}{" "}{tl("of {total} right · {percent}%",{total:a.total,percent:a.percent})}{a.study&&!staff?' · '+STUDY[a.study]:''}{a.course?' · '+a.course:''}</small><Bar2 v={a.percent}/></div>
         {a.topic_id&&onStudy&&<button className="tool" onClick={()=>onStudy(a.topic_id)}>{k==='strong'?tl("Review"):tl("Study again")}</button>}</div>}/>}</div>})}</>}
-let usersPlan=''  // a filter for the Users page, set when the Home page sends the admin there
+let usersPlan='',settingsTab=''  // a filter for the Users page and a Settings tab, set when the Home page sends the admin there
 const ATTN_GO={drafts:'drafts',empty_courses:'empty_courses',unowned:'unowned',unenrolled:'unenrolled',semester_numbers:'semester_numbers',never_opened:'never_opened'}
 const RS_PAGE=PAGE
-function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard card: search, sort, 5 per page, and a tap on a row opens its details
+function ResultSet({kind:kind0,user,back,toast,open}){
+  const [kind,date]=kind0.split(':')  // the rows behind a dashboard card: search, sort, 5 per page, and a tap on a row opens its details
   const [q,setQ]=useState(''),[order,setOrder]=useState('name'),[page,setPage]=useState(0),[d,setD]=useState(null),[view,setView]=useState(null),[progs,setProgs]=useState([])
   useEffect(()=>{setPage(0)},[q,order])
-  useEffect(()=>{if(view)return;let live=true;const t=setTimeout(()=>api(`/overview/list?kind=${kind}&q=${encodeURIComponent(q)}&order=${order}&limit=${RS_PAGE}&offset=${page*RS_PAGE}`).then(r=>{if(!live)return;if(!r.items.length&&r.total&&page>0)setPage(Math.max(0,Math.ceil(r.total/RS_PAGE)-1));else setD(r)}).catch(e=>toast(e.message)),q?250:0);return()=>{live=false;clearTimeout(t)}},[kind,q,order,page,view])
+  useEffect(()=>{if(view)return;let live=true;const t=setTimeout(()=>api(`/overview/list?kind=${kind}${date?'&date='+date:''}&q=${encodeURIComponent(q)}&order=${order}&limit=${RS_PAGE}&offset=${page*RS_PAGE}`).then(r=>{if(!live)return;if(!r.items.length&&r.total&&page>0)setPage(Math.max(0,Math.ceil(r.total/RS_PAGE)-1));else setD(r)}).catch(e=>toast(e.message)),q?250:0);return()=>{live=false;clearTimeout(t)}},[kind,date,q,order,page,view])
   useEffect(()=>{if(view?.target.type==='user')api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[view])
   const shut=()=>setView(null)
   if(view){const t=view.target
@@ -593,7 +612,7 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     if(t.type==='topic')return <Topic id={t.id} back={shut} toast={toast} role={user.role}/>
     if(t.type==='course'&&kind==='courses'){const [p='',sm='']=(view.sub||'').split(' · ');return <StudentReport c={{course_id:t.id,course:view.title,program:p,semester:sm}} back={shut} toast={toast}/>}
     open(t.type==='program'?[t.id]:[t.program_id,t.semester_id,t.id].filter(x=>x!=null));return null}
-  const total=d?.total??0,pages=Math.max(1,Math.ceil(total/RS_PAGE)),title=srv(d?.title)||tl('Loading')
+  const total=d?.total??0,pages=Math.max(1,Math.ceil(total/RS_PAGE)),title=d?srv(d.title)+(date?' · '+shortDay(date):''):tl('Loading')
   return <><Bar title={title} sub={d?tl(q?(total===1?'{n} match':'{n} matches'):'{n} in total',{n:total}):''} back={back}/><div className="main">
     <div className="search"><Search size={18}/><input type="search" aria-label={tl("Search {title}",{title:title.toLowerCase()})} placeholder={tl("Search")} value={q} onChange={e=>setQ(e.target.value)}/></div>
     <div className="qopt"><select aria-label={tl("Sort by")} value={order} onChange={e=>setOrder(e.target.value)}><option value="name">{tl("Sort: A to Z")}</option><option value="name_desc">{tl("Sort: Z to A")}</option><option value="detail">{tl("Sort: by details")}</option><option value="newest">{tl("Sort: newest first")}</option>{d?.can_recent&&<option value="recent">{tl("Sort: last active")}</option>}</select></div>
@@ -605,20 +624,82 @@ function ResultSet({kind,user,back,toast,open}){  // the rows behind a dashboard
     {d&&!d.items.length&&<p className="known">{q?tl("Nothing matches that search."):tl("Nothing here. All clear.")}</p>}
     {d&&total>RS_PAGE&&<nav className="pager" aria-label={tl("Pages")}><button className="btn ghost" disabled={page===0} onClick={()=>setPage(page-1)}><ChevronLeft size={18}/><span>{tl("Previous")}</span></button><small>{tl("Page {v} of",{v:page+1})}{" "}{pages}</small><button className="btn ghost" disabled={page+1>=pages} onClick={()=>setPage(page+1)}><span>{tl("Next")}</span><ChevronRight size={18}/></button></nav>}
   </div></>}
-function StaffHome({user,toast,open,goUsers}){
-  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null),[flags,setFlags]=useState(0),[fp,setFp]=useState(false),[bud,setBud]=useState(null)
-  useEffect(()=>{if(!list&&!rep&&!fp){api('/overview').then(setO).catch(e=>toast(e.message));api('/flags?limit=1').then(r=>setFlags(r.total)).catch(()=>{})
-    if(user.role==='admin')api('/admin/budget').then(setBud).catch(()=>{})}},[toast,list,rep,fp,user.role])
+// ---- graphs: hand-drawn SVG and HTML, colors from the validated chart palette (--v1..--v6 in styles.css), a tooltip on hover or focus,
+// ---- and a click (or Enter) on any bar opens what is behind it. Values are always written out too, so no reading depends on color alone.
+const compact=n=>new Intl.NumberFormat(getLang(),{notation:'compact',maximumFractionDigits:1}).format(n||0)
+const shortDay=d=>new Date(d+'T00:00:00').toLocaleDateString(getLang(),{day:'numeric',month:'short'})
+function Tip({tip}){return tip&&<div className="vtip" role="status" style={{left:tip.x+'%'}}>{tip.lines.map((l,i)=><div key={i}>{l}</div>)}</div>}
+function Columns({days,series,onPick,label}){  // time across, one column per day; series stack (each [{id,name,color}], values in d.v[id])
+  const [tip,setTip]=useState(null),n=days.length,max=Math.max(1,...days.map(d=>series.reduce((a,x)=>a+(d.v[x.id]||0),0))),W=n*10,H=100
+  const show=(d,i)=>setTip({x:(i+.5)/n*100,lines:[shortDay(d.date),...series.map(x=>(series.length>1?x.name+': ':'')+(x.fmt||compact)(d.v[x.id]||0))]})
+  return <div className="vchart" onMouseLeave={()=>setTip(null)}><Tip tip={tip}/>
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="vcols" role="group" aria-label={label}>
+      <line x1="0" x2={W} y1={H-.5} y2={H-.5} className="vaxis"/>
+      {days.map((d,i)=>{let y=H;return <g key={d.date} className="vcol" tabIndex={0} role="button" aria-label={shortDay(d.date)+': '+series.map(x=>(series.length>1?x.name+' ':'')+(d.v[x.id]||0)).join(', ')}
+        onMouseEnter={()=>show(d,i)} onFocus={()=>show(d,i)} onBlur={()=>setTip(null)} onClick={()=>onPick(d)} onKeyDown={e=>(e.key==='Enter'||e.key===' ')&&(e.preventDefault(),onPick(d))}>
+        <rect x={i*10} y="0" width="10" height={H} className="vhit"/>
+        {series.map(x=>{const h=(d.v[x.id]||0)/max*(H-6);if(!h)return null;y-=h;return <rect key={x.id} x={i*10+1.5} y={y} width="7" height={Math.max(h,.8)} rx="1.2" className={series.length>1?'vseg':''} style={{fill:x.color}}/>})}</g>})}
+    </svg>
+    <div className="vx"><span>{shortDay(days[0].date)}</span><span>{tl("max {v}",{v:compact(max)})}</span><span>{shortDay(days[n-1].date)}</span></div></div>}
+function HBars({rows,onPick,label}){  // one row per thing, its name and value written out, the bar in its color; a click opens it
+  const max=Math.max(1,...rows.map(r=>r.max??r.value))
+  return <div className="vbars" role="list" aria-label={label}>{rows.map(r=><button key={r.key} role="listitem" className="vbar" onClick={()=>onPick(r)} title={r.tip||''}>
+    <span className="vlab"><b>{r.label}</b>{r.sub&&<small>{r.sub}</small>}</span><span className="vtrack"><i style={{width:Math.max(1.5,100*r.value/max)+'%',background:r.color}}/></span><span className="vval">{r.valueLabel??r.value}</span></button>)}</div>}
+const PLAN_COL={lite:'var(--v1)',pro:'var(--v2)',own:'var(--v3)',college:'var(--v4)',family:'var(--v5)',off:'var(--v6)'}
+const PROV_COL=['var(--v1)','var(--v2)','var(--v3)','var(--v4)','var(--v5)']
+function AdminCharts({goUsers,goSettings,setList,setRep}){
+  const [c,setC]=useState(null),[days,setDays]=useState('30')
+  useEffect(()=>{api('/admin/charts?days='+days).then(setC).catch(()=>setC(false))},[days])
+  if(c===false)return null
+  if(!c)return <><div className="sk"/><div className="sk"/></>
+  const act=c.activity.map(d=>({date:d.date,v:{s:d.students}})),totalDays=act.filter(d=>d.v.s).length,peak=Math.max(0,...c.activity.map(d=>d.students))
+  const prov=c.ai.providers.map((p,i)=>({id:p.id,name:p.name,color:PROV_COL[i%PROV_COL.length],total:c.ai.days.reduce((a,d)=>a+(d.tokens[p.id]||0),0)}))
+  const people=c.plans.reduce((a,p)=>a+p.people,0)
+  return <><div className="vhead"><h3 className="sec">{tl("At a glance")}</h3><Opts label={tl("Period")} value={days} set={setDays} items={[['7',tl("Last 7 days")],['30',tl("Last 30 days")],['90',tl("Last 90 days")]]}/></div>
+    <div className="vgrid">
+    <section className="vcard"><h4>{tl("Students studying each day")}</h4><p className="known">{tl("Up to {peak} a day; someone studied on {n} of {d} days. Click a day to see who.",{peak,n:totalDays,d:act.length})}</p>
+      <Columns days={act} series={[{id:'s',name:tl("Students"),color:'var(--v1)',fmt:v=>tl("{n} students",{n:v})}]} label={tl("Students studying each day")} onPick={d=>setList('active_day:'+d.date)}/></section>
+    <section className="vcard"><h4>{tl("Course completion")}</h4><p className="known">{c.courses.length?tl("Average share of topics learned, lowest first. Click a course for its students."):tl("No course has students and topics yet.")}</p>
+      <HBars label={tl("Course completion")} rows={c.courses.map(x=>({key:x.course_id,label:x.course,sub:[x.program,x.semester].filter(Boolean).join(' · '),value:x.completion,max:100,valueLabel:x.completion+'%',color:'var(--v1)',
+        tip:tl("{n} students",{n:x.students})+(x.quiz!=null?' · '+tl("quiz average {p}%",{p:x.quiz}):''),x}))} onPick={r=>setRep({course_id:r.x.course_id,course:r.x.course,program:r.x.program,semester:r.x.semester})}/></section>
+    <section className="vcard"><h4>{tl("AI use per day")}</h4><p className="known">{prov.length?tl("Tokens on the college's keys, by provider. Click for costs."):tl("No AI use on the college's keys in this period.")}</p>
+      {prov.length>0&&<><Columns days={c.ai.days.map(d=>({date:d.date,v:d.tokens}))} series={prov.map(p=>({...p,fmt:v=>tl("{v} tokens",{v:compact(v)})}))} label={tl("AI use per day")} onPick={()=>goSettings('costs')}/>
+        <div className="vlegend">{prov.map(p=><button key={p.id} onClick={()=>goSettings('costs')}><i style={{background:p.color}}/>{p.name}<b>{compact(p.total)}</b></button>)}</div></>}</section>
+    <section className="vcard"><h4>{tl("People by AI plan")}</h4><p className="known">{tl("{n} people with a plan. Click a plan to see them.",{n:people})}</p>
+      <HBars label={tl("People by AI plan")} rows={c.plans.map(p=>({key:p.plan,label:tl(PLAN_NAME[p.plan]||p.plan),value:p.people,valueLabel:p.people.toLocaleString(),color:PLAN_COL[p.plan]||'var(--v6)'}))} onPick={r=>goUsers(r.key)}/></section>
+    </div></>}
+// the admin's dashboard: only what needs doing, grouped by kind and most urgent first, each with the one action that deals with it
+const DASH_CAT=[['ai','AI and costs'],['people','People and plans'],['content','Content'],['system','System']]
+const DASH_DO={settings:'Open Settings',test_ai:'Test the key',users:'Show them',list:'Show them',flags:'Review them'}
+function AdminDashboard({toast,goUsers,goSettings,setList,setFp}){
+  const [d,setD]=useState(null),[busy,setBusy]=useState(false)
+  useEffect(()=>{api('/admin/dashboard').then(setD).catch(e=>toast(e.message))},[toast])
+  const run=async x=>{if(x.action==='settings')return goSettings(x.target.tab);if(x.action==='users')return goUsers(x.target.plan);if(x.action==='list')return setList(x.target.kind);if(x.action==='flags')return setFp(true)
+    setBusy(true);try{toast(srv((await api('/admin/ai/test',{method:'POST'})).message))}catch(e){toast(e.message)}setBusy(false)}
+  if(!d)return <><div className="sk"/><div className="sk"/></>
+  const vars=v=>({...v,...(v.date?{date:day(v.date)}:{})}),rank={now:0,soon:1,later:2},first=c=>Math.min(...d.items.filter(x=>x.category===c).map(x=>rank[x.level]))
+  if(!d.items.length)return <div className="qbox" role="status" style={{marginTop:0}}><b>{tl("All clear. Nothing needs you right now.")}</b>{d.next&&<p className="known" style={{margin:'4px 0 0'}}>{tl("Next on the calendar: {title}, {date}",{title:d.next.title,date:day(d.next.date)})}</p>}</div>
+  return DASH_CAT.filter(([c])=>d.items.some(x=>x.category===c)).sort((a,b)=>first(a[0])-first(b[0])).map(([c,label])=><div key={c}><h3 className="sec">{tl(label)}</h3>
+    {d.items.filter(x=>x.category===c).map(x=><div key={x.key} className={'card dash '+x.level}><span className="dot" aria-hidden="true"/><div style={{flex:1}}><b>{tl(x.text,vars(x.vars))}</b>
+      {x.level==='now'&&<small className="known">{tl("Needs you now")}</small>}</div><button className="btn ghost" disabled={busy&&x.action==='test_ai'} onClick={()=>run(x)}>{tl(DASH_DO[x.action])}</button></div>)}</div>)}
+function StaffHome({user,toast,open,goUsers,goSettings}){
+  const [o,setO]=useState(null),[list,setList]=useState(null),[rep,setRep]=useState(null),[flags,setFlags]=useState(0),[fp,setFp]=useState(false),[reports,setReports]=useState(false)
+  useEffect(()=>{if(!list&&!rep&&!fp){api('/overview').then(setO).catch(e=>toast(e.message));if(user.role!=='admin')api('/flags?limit=1').then(r=>setFlags(r.total)).catch(()=>{})}},[toast,list,rep,fp,user.role])
   if(fp)return <FlagsPage toast={toast} back={()=>setFp(false)}/>
   if(rep)return <StudentReport c={rep} back={()=>setRep(null)} toast={toast}/>
   if(list)return <ResultSet kind={list} user={user} back={()=>setList(null)} toast={toast} open={open}/>
   const admin=user.role==='admin',hour=new Date().getHours(),hi=hour<12?'Good morning, {name}':hour<17?'Good afternoon, {name}':'Good evening, {name}'
   const stats=o?(admin?[[o.people.students,'Active students','students'],[o.people.active_week,'Studied this week','active_week'],[o.people.faculty,'Faculty','faculty'],[o.courses,'Courses','courses']]:[[o.courses,'Your courses','courses'],[o.topics,'Topics','topics'],[o.drafts,'Drafts','drafts']]):[]
+  if(admin)return <><Bar title={tl(hi,{name:firstName(user.name)})} sub={tl("What needs doing across the college")}/><div className="main">
+    <AdminDashboard toast={toast} goUsers={goUsers} goSettings={goSettings} setList={setList} setFp={setFp}/>
+    <AdminCharts goUsers={goUsers} goSettings={goSettings} setList={setList} setRep={setRep}/>
+    <h3 className="sec">{tl("Reports")}</h3>
+    <div className="two"><button className="btn ghost" aria-expanded={reports} onClick={()=>setReports(!reports)}>{reports?tl("Hide course reports"):tl("Course reports")}</button><button className="btn ghost" onClick={()=>setList('students')}>{tl("Students")}</button></div>
+    {reports&&<CourseReports toast={toast} onOpen={setRep}/>}
+  </div></>
   return <><Bar title={tl(hi,{name:firstName(user.name)})} sub={admin?tl("Across the whole college"):tl("Your courses")}/><div className="main">
     {!o&&<><div className="sk"/><div className="sk"/><div className="sk"/></>}
     {o&&<div className="stats">{stats.map(([n,l0,k])=>{const l=tl(l0);return <button className="stat" key={l0} style={{textAlign:'start',width:'100%'}} onClick={()=>setList(k)} aria-label={tl("{v} {l}. Show the list",{v:(n??0).toLocaleString(),l:l})}><b>{(n??0).toLocaleString()}</b>{l}</button>})}</div>}
-    {bud&&Object.keys(bud.names||{}).filter(p=>bud[p].limit&&bud[p].share>=bud.warn_at).map(p=><div key={p} className="qbox budwarn" role="status"><b>{tl(bud[p].share>=1?"This month's {name} allowance is used up":"This month's {name} allowance is {p}% used",{name:bud.names[p],p:Math.round(100*bud[p].share)})}</b>
-      <p className="known" style={{margin:'4px 0 0'}}>{bud[p].share>=1?tl("New AI answers have stopped until the 1st; saved answers still work. You can raise the allowance under Settings → AI."):tl("When it is used up, new AI answers stop until the 1st. You can raise it under Settings → AI.")}</p></div>)}
     {flags>0&&<button className="card flagcard" style={{textAlign:'start',width:'100%'}} onClick={()=>setFp(true)}><span className="dot" style={{background:'var(--coral)'}}><Flag size={18}/></span><div style={{flex:1}}><b>{tl(flags===1?'1 AI answer flagged by students':'{n} AI answers flagged by students',{n:flags})}</b><span>{tl("Check it, then have it written again or let it stand")}</span></div><ChevronRight size={18}/></button>}
     {o&&<><h3 className="sec">{tl("Needs attention")}</h3>
       {o.attention.length?<Paged rows={o.attention} render={x=><button key={x.kind} className="card" style={{textAlign:'start'}} onClick={()=>x.kind==='more_ai'&&goUsers?goUsers('asked'):setList(ATTN_GO[x.kind]||'drafts')}><div style={{flex:1}}><b>{srv(x.text)}</b></div><ChevronRight size={18}/></button>}/>
@@ -1907,7 +1988,7 @@ function BulkSheet({act,ids,progs,toast,close,done}){
     <button className={'btn'+(act.kind==='disable'?' danger':'')} disabled={busy} onClick={run}>{busy?tl("Working…"):l}</button><button className="btn ghost" onClick={close}>{tl("Cancel")}</button></Sheet>}
 function Users({toast,me}){
   const [q,setQ]=useState(''),[prog,setProg]=useState(''),[sem,setSem]=useState(''),[order,setOrder]=useState('role'),[progs,setProgs]=useState([]),[plan,setPlan]=useState(()=>{const p=usersPlan;usersPlan='';return p})
-  const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef(),[selMode,setSelMode]=useState(false),[sel,setSel]=useState([]),[act,setAct]=useState(null)
+  const [view,setView]=useState(null),[ed,setEd]=useState(null),[bulk,setBulk]=useState(null),fileRef=useRef(),[selMode,setSelMode]=useState(false),[sel,setSel]=useState([]),[act,setAct]=useState(null),[proCsv,setProCsv]=useState(false)
   const {items,total,page,setPage,reload:load}=usePaged(offset=>`/admin/users?q=${encodeURIComponent(q)}&order=${order}&limit=${PAGE}&offset=${offset}`+(prog?'&program_id='+prog:'')+(sem?'&semester='+sem:'')+(plan?'&plan='+plan:''),[q,prog,sem,order,plan],toast)
   useEffect(()=>{api('/tree').then(t=>setProgs(t.map(p=>({id:p.id,name:p.name,term:p.term})))).catch(()=>{})},[])
   const pick=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const text=await f.text();setBulk({stage:'preview',text,res:await api('/admin/users/import',{method:'POST',body:{csv:text,dry_run:true}})})}catch(err){toast(err.message)}}
@@ -1920,8 +2001,9 @@ function Users({toast,me}){
       <select aria-label={tl("Filter by program")} value={prog} onChange={e=>{const id=e.target.value;setProg(id);if(+sem>semsOf(progs,id).length)setSem('')}}><option value="">{tl("All programs")}</option>{progs.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
       <select aria-label={tl("Filter by semester, year or grade")} value={sem} onChange={e=>setSem(e.target.value)}><option value="">{lab==='Term'?tl("All terms"):tl("All {lab}s",{lab:lab.toLowerCase()})}</option>{semsOf(progs,prog).map(n=><option key={n} value={n}>{lab} {n}</option>)}</select>
       <select aria-label={tl("Sort by")} value={order} onChange={e=>setOrder(e.target.value)}><option value="role">{tl("Sort: role, then name")}</option><option value="name">{tl("Sort: name")}</option><option value="program">{tl("Sort: program")}</option><option value="semester">{tl("Sort:")}{" "}{lab.toLowerCase()}</option><option value="newest">{tl("Sort: newest first")}</option></select>
-      <select aria-label={tl("Filter by AI plan")} value={plan} onChange={e=>setPlan(e.target.value)}><option value="">{tl("All plans")}</option><option value="lite">{tl("Lite")}</option><option value="pro">{tl("Pro")}</option><option value="asked">{tl("Asked for more AI")}</option></select></div>
+      <select aria-label={tl("Filter by AI plan")} value={plan} onChange={e=>setPlan(e.target.value)}><option value="">{tl("All plans")}</option><option value="lite">{tl("Lite")}</option><option value="pro">{tl("Pro")}</option><option value="pro_ending">{tl("Pro ending within 7 days")}</option><option value="own">{tl("Own key")}</option><option value="college">{tl("College")}</option><option value="family">{tl("Family key")}</option><option value="off">{tl("No AI")}</option><option value="asked">{tl("Asked for more AI")}</option></select></div>
     <div className="two"><button className="btn" onClick={()=>setEd({})}>{tl("New user")}</button><button className="btn ghost" onClick={()=>setBulk({stage:'pick'})}>{tl("Bulk upload")}</button></div>
+    <button className="btn ghost" style={{marginTop:10}} onClick={()=>setProCsv(true)}>{tl("Give Pro from a CSV")}</button>
     <button className="btn ghost" style={{marginTop:10}} aria-pressed={selMode} onClick={()=>{setSelMode(!selMode);setSel([])}}>{selMode?tl("Done selecting"):tl("Select several users")}</button>
     {selMode&&items.length>0&&<div className="selbar"><button className="tool" onClick={()=>setSel(items.map(u=>u.id))}>{tl("Select all {length} shown",{length:items.length})}</button>{sel.length>0&&<button className="tool" onClick={()=>setSel([])}>{tl("Clear")}</button>}</div>}
     <div style={{height:14}}/>
@@ -1935,6 +2017,7 @@ function Users({toast,me}){
     {selMode&&sel.length>0&&<div className="actbar" role="toolbar" aria-label={tl("Actions for selected users")}><b>{sel.length}{" "}{tl("selected")}</b>
       <button className="tool" onClick={()=>setAct({kind:'set_placement'})}>{tl("Move…")}</button><button className="tool" onClick={()=>setAct({kind:'disable'})}>{tl("Disable")}</button><button className="tool" onClick={()=>setAct({kind:'enable'})}>{tl("Enable")}</button><button className="tool" onClick={()=>setAct({kind:'reset_passwords'})}>{tl("Reset passwords")}</button></div>}
     {act&&<BulkSheet act={act} ids={sel} progs={progs} toast={toast} close={()=>setAct(null)} done={r=>{setAct({kind:'result',r});setSel([]);load()}}/>}
+    {proCsv&&<ProImport toast={toast} close={()=>setProCsv(false)} done={load}/>}
     {ed&&<UserSheet u={ed} me={me} progs={progs} toast={toast} close={()=>setEd(null)} done={()=>{setEd(null);load()}}/>}
     {bulk&&<Sheet page close={()=>setBulk(null)}>
       {bulk.stage==='pick'&&<><h3>{tl("Bulk upload users")}</h3><p className="known">{tl("One row per person with the columns name, email, password, role, program and semester (the year number for annual programs such as M.B.B.S). Leave the password blank to generate one. Role is student or admin and defaults to student. Program must match a name on the Programs tab, and semester is a number from 1 to 8. Emails that already exist are updated, and blank program or semester cells leave the current value alone.")}</p>
@@ -1946,6 +2029,25 @@ function Users({toast,me}){
         {r.credentials.length>0&&<button className="btn" onClick={()=>download('new-user-passwords.csv','name,email,password\n'+r.credentials.map(c=>[c.name,c.email,c.password].map(cell).join(',')).join('\n')+'\n')}>{tl("Download passwords")}</button>}
         <button className="btn ghost" onClick={()=>setBulk(null)}>{tl("Close")}</button></>}
     </Sheet>}</>}
+
+// Pro for many people at once: a CSV with each person's email or username and their last day of Pro ("end" stops it). Checked first, saved only on confirm.
+const PRO_TEMPLATE='email_or_username,pro_until\nasha@example.com,2026-12-31\nkavin,31-03-2027\nbala@example.com,end\n'
+function ProImport({toast,close,done}){
+  const [st,setSt]=useState({stage:'pick'}),[busy,setBusy]=useState(false),file=useRef(),r=st.res
+  const send=async(text,dry)=>{setBusy(true);try{const res=await api('/admin/users/pro-import',{method:'POST',body:{csv:text,dry_run:dry}});setSt({stage:dry?'preview':'done',text,res});if(!dry)done()}catch(e){toast(e.message)}setBusy(false)}
+  const pick=async e=>{const f=e.target.files[0];e.target.value='';if(f)send(await f.text(),true)}
+  const errs=r&&r.error_count>0&&<div className="prose" style={{maxHeight:'28vh',overflow:'auto',fontSize:14}}><b>{tl("{n} rows will be skipped",{n:r.error_count})}</b>{r.errors.map(e=><div key={e.row}>{tl("Row {row}:",{row:e.row})}{" "}{e.who?e.who+' · ':''}{tl(e.error)}</div>)}</div>
+  return <Sheet page close={close}><input ref={file} type="file" accept=".csv,.txt,text/csv" hidden onChange={pick}/>
+    {st.stage==='pick'&&<><h3>{tl("Give Pro from a CSV")}</h3>
+      <p className="known">{tl("One row per person: their email or username, and the last day of Pro, written as 2026-12-31 or 31-12-2026. Each person can have a different day. Write end to stop someone's Pro. Only people who registered themselves and school students have a plan. You see what will change before anything is saved.")}</p>
+      <button className="btn ghost" onClick={()=>download('pro-template.csv',PRO_TEMPLATE)}>{tl("Download template")}</button><button className="btn" disabled={busy} onClick={()=>file.current.click()}>{tl("Choose CSV file")}</button></>}
+    {st.stage==='preview'&&<><h3>{tl("Check before saving")}</h3><p className="known">{tl("{pro} will be Pro and {ended} will stop being Pro.",{pro:r.pro,ended:r.ended})}</p>
+      {r.rows.map(x=><div key={x.row} className="row"><div>{x.name}<small>{x.who}{x.was?' · '+tl("Pro now until {date}",{date:x.was}):''}</small></div><span className="chip">{x.until?tl("Pro until {date}",{date:x.until}):tl("Ends Pro")}</span></div>)}
+      {errs}
+      <button className="btn" disabled={busy||!r.rows.length} onClick={()=>send(st.text,false)}>{tl("Save for {n} people",{n:r.rows.length})}</button><button className="btn ghost" onClick={close}>{tl("Cancel")}</button></>}
+    {st.stage==='done'&&<><h3>{tl("Saved")}</h3><p className="known">{tl("{pro} are Pro now and {ended} stopped being Pro. People with an email address are told by email.",{pro:r.pro,ended:r.ended})}</p>
+      <button className="btn" onClick={close}>{tl("Close")}</button></>}
+  </Sheet>}
 
 // AI plans of self-registered people: lite (a free daily allowance on the college's key), their own key, or pro (more, given by an admin until a date)
 const PLAN_NAME={lite:'Lite',pro:'Pro',own:'Own key',college:'College',family:'Family key',off:'No AI'}
@@ -2178,7 +2280,7 @@ function Branding({toast,onSaved}){
     <button className="btn" disabled={busy} onClick={()=>save({name,logo_url:logo||undefined})}>{tl("Save name and logo")}</button></>}
 function AiConfig({toast,onBrand}){
   const confirm=useConfirm()
-  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState('ai'),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({}),[prov,setProv]=useState('')
+  const [cfg,setCfg]=useState({}),[key,setKey]=useState(''),[model,setModel]=useState(''),[st,setSt]=useState({}),[tab,setTab]=useState(()=>{const t=settingsTab||'ai';settingsTab='';return t}),[vkey,setVkey]=useState(''),[vmodel,setVmodel]=useState(''),[lim,setLim]=useState({}),[prov,setProv]=useState('')
   const load=()=>{api('/admin/settings').then(c=>{setCfg(c);setProv(p=>p||c.provider);setVmodel(c.vision_model);setLim(Object.fromEntries(Object.entries(c.budget||{}).map(([p,b])=>[p,String(b.limit||'')])))});api('/admin/stats').then(setSt)};useEffect(load,[])
   const run=useRun(toast,load),provs=cfg.providers||[],pv=provs.find(x=>x.id===prov),active=prov===cfg.provider
   useEffect(()=>{setModel(pv?.model_saved||'');setKey('')},[prov,pv?.model_saved])

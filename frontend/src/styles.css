@@ -495,3 +495,32 @@ html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:in
 .caldots i[class^=k-]{background:var(--k)}
 .calitem{position:relative;overflow:hidden}.calbar{position:absolute;inset-block:0;inset-inline-start:0;width:4px;background:var(--k)}
 .calnote{display:block;white-space:pre-wrap;margin-top:4px}
+
+/* the admin's dashboard: one row per thing to do, a dot for how soon */
+.card.dash{display:flex;align-items:center;gap:12px;text-align:start}.card.dash .btn{width:auto;margin:0;flex:none;padding:8px 14px}
+.card.dash .dot{width:10px;height:10px;min-width:10px;border-radius:50%;background:var(--mut)}.card.dash.now .dot{background:var(--bad)}.card.dash.soon .dot{background:var(--warn)}
+.card.dash small{display:block;margin-top:2px}
+@media (max-width:480px){.card.dash{flex-wrap:wrap}.card.dash .btn{margin-inline-start:22px}}
+
+/* dashboard graphs: the validated chart palette (light steps on the light surface, dark steps on the dark one), thin marks, recessive axes */
+:root{--v1:#2a78d6;--v2:#eb6834;--v3:#1baf7a;--v4:#eda100;--v5:#e87ba4;--v6:#6250d6}
+:root[data-theme=dark]{--v1:#3987e5;--v2:#d95926;--v3:#199e70;--v4:#c98500;--v5:#d55181;--v6:#9085e9}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--v1:#3987e5;--v2:#d95926;--v3:#199e70;--v4:#c98500;--v5:#d55181;--v6:#9085e9}}
+.vhead{display:flex;align-items:center;justify-content:space-between;gap:12px}.vhead select{width:auto;margin:0}
+.vgrid{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}@media (min-width:900px){.vgrid{grid-template-columns:1fr 1fr}}
+.vcard{background:var(--s1);border:1px solid var(--line);border-radius:var(--r-box);padding:14px 16px;box-shadow:var(--shadow);min-width:0}
+.vcard h4{margin:0 0 2px;font-size:15px}.vcard>.known{margin:0 0 10px;font-size:13px}
+.vchart{position:relative}.vcols{display:block;width:100%;height:150px;overflow:visible}
+.vaxis{stroke:var(--line);stroke-width:1;vector-effect:non-scaling-stroke}.vhit{fill:transparent}
+.vcol{cursor:pointer;outline:none}.vcol:hover .vhit,.vcol:focus-visible .vhit{fill:var(--accbg)}
+.vx{direction:ltr;display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:4px}
+.vtip{position:absolute;top:-6px;transform:translate(-50%,-100%);background:var(--tx);color:var(--bg);font-size:12px;line-height:1.35;padding:6px 9px;border-radius:6px;pointer-events:none;white-space:nowrap;z-index:2}
+.vbars{display:flex;flex-direction:column;gap:2px}
+.vbar{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:7px 6px;border:0;border-radius:6px;background:none;color:var(--tx);text-align:start;cursor:pointer;font:inherit}
+.vbar:hover,.vbar:focus-visible{background:var(--accbg)}.vlab{min-width:0}.vlab b{display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vlab small{display:block;font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vtrack{height:10px;background:var(--s2);border-radius:4px;overflow:hidden}.vtrack i{display:block;height:100%;border-radius:4px}
+.vval{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;min-width:3ch;text-align:end}
+.vlegend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px}.vlegend button{display:flex;align-items:center;gap:6px;border:0;background:none;color:var(--tx);font:inherit;font-size:13px;padding:2px 0;cursor:pointer}
+.vlegend i{width:10px;height:10px;border-radius:3px}.vlegend b{font-variant-numeric:tabular-nums;color:var(--mut);font-weight:600}
+.vseg{stroke:var(--s1);stroke-width:1.5px;vector-effect:non-scaling-stroke}  /* a surface gap between stacked segments */

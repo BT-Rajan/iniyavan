@@ -1,11 +1,14 @@
 package app.zigora.ui
 
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -24,6 +27,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -38,6 +43,10 @@ import app.zigora.data.KeyState
 import app.zigora.data.Me
 import app.zigora.data.Msg
 import app.zigora.data.ProgOpts
+import app.zigora.data.WardActivity
+import app.zigora.data.WardArea
+import app.zigora.data.WardMcq
+import app.zigora.data.WardScores
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.addJsonObject
@@ -215,6 +224,8 @@ fun StudentProgressScreen(id: Int, level: String, back: () -> Unit) {
                 bits += c.last_active?.let { tl("last studied {when}", "when" to day(it)) } ?: tl("not started yet")
                 ListRow(c.course, bits.joinToString(" · "), extra = { ScoreBar(if (c.topics > 0) 100 * c.completed / c.topics else 0) })
             }
+            d.activity?.let { WardActivityCard(it) }
+            d.scores?.let { WardScoresCard(it, d.mcq) }
             Quiet(tl("You see progress only, never their own notes or highlights."))
             if (d.can_reset) {  // a username account has no email to reset from: the parent or teacher sets a new password
                 SectionTitle(tl("Forgot their password?"))
@@ -292,4 +303,50 @@ private fun GuardianReminders(parent: Boolean) {
                     ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                 else { on = v; a.store.reminders = v; app.zigora.Reminders.schedule(ctx, v) }
             }) })
+}
+
+/** a student's study days over the last four weeks, their streak and the routine they set, as their parent or teacher sees it */
+@Composable
+private fun WardActivityCard(a: WardActivity) {
+    val loc = LocalConfiguration.current.locales[0]
+    SectionTitle(tl("Study activity"))
+    Quiet(tl("{streak}-day streak · studied on {week} of the last 7 days and {days} of the last 28 · {done} topics learned this week",
+        "streak" to a.streak, "week" to a.active_days_week, "days" to a.active_days_28, "done" to a.completed_this_week))
+    a.days.chunked(7).forEach { week ->
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            week.forEach { x ->
+                val wd = runCatching { java.time.LocalDate.parse(x.date).dayOfMonth.toString() }.getOrDefault("")  // the date, so the four weeks read as a calendar
+                Text(wd, Modifier.weight(1f).background(if (x.active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(50)).padding(vertical = 4.dp),
+                    textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall,
+                    color = if (x.active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    val r = a.routine
+    Quiet(if (r == null) tl("They have not set a study routine yet.") else {
+        val names = r.days.mapIndexedNotNull { i, c -> if (c == '1') java.time.DayOfWeek.of(i + 1).getDisplayName(java.time.format.TextStyle.SHORT, loc) else null }.joinToString(", ")
+        tl("Their routine: {days}, {minutes} minutes{at}", "days" to names, "minutes" to r.minutes, "at" to (r.at?.let { " " + tl("at {time}", "time" to it) } ?: ""))
+    }, Modifier.padding(top = 8.dp))
+}
+
+/** their quiz and test scores per course, the topics they are strong in and the ones to study again, and their MCQ practice */
+@Composable
+private fun WardScoresCard(sc: WardScores, mcq: WardMcq?) {
+    SectionTitle(tl("Scores"))
+    if (sc.quizzes_taken == 0) Quiet(tl("No quizzes or tests taken yet."))
+    else {
+        sc.courses.forEach { c -> ListRow(c.course, tl("Correct answers in quizzes and tests"), extra = { ScoreBar(c.percent) }, trailing = { Text("${c.percent}%") }) }
+        listOf(tl("Needs more study") to sc.needs_study, tl("Getting there") to sc.getting_there, tl("Strong") to sc.strong).forEach { (title, list: List<WardArea>) ->
+            if (list.isNotEmpty()) {
+                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp))
+                list.forEach { x -> ListRow(x.title, x.course, trailing = { Text("${x.percent}%") }) }
+            }
+        }
+    }
+    if (mcq != null) {
+        SectionTitle(tl("MCQ practice"))
+        Quiet(if (mcq.sets > 0) tl("{sets} sets done, {average}% correct on average. Last practised {when}.", "sets" to mcq.sets, "average" to (mcq.average ?: 0), "when" to (mcq.last_at?.let { day(it) } ?: ""))
+              else tl("No MCQ practice yet."))
+        if (mcq.revisit.isNotEmpty()) Quiet(tl("Topics to revisit: {topics}", "topics" to mcq.revisit.joinToString(", ")))
+    }
 }
