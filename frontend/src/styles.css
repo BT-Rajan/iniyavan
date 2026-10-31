@@ -531,3 +531,9 @@ html:has(.zgr) #root{min-height:0!important}html:has(.zgr) body *{font-family:in
 .ward small{margin:0}.wweek{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
 .wweek span{display:flex;align-items:center;justify-content:center;height:30px;border-radius:99px;background:var(--s2);color:var(--mut);font-size:12px;font-weight:600}
 .wweek span.on{background:var(--okbg);color:var(--ok)}
+
+/* a topic's diagram: the AI's interactive drawing, full screen, in a sandbox that can't load anything */
+.stepchip.diag{display:inline-flex;align-items:center;gap:4px}.stepchip.diag.locked{opacity:.8}.stepchip .pill.sm{margin-inline-start:4px}
+.diagview{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;background:var(--bg)}
+.diagbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--s1)}
+.diagview iframe{flex:1;width:100%;border:0;background:#fff}

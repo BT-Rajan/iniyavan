@@ -49,6 +49,7 @@ import kotlinx.serialization.json.put
 @Serializable data class PhotoR(val uri: String = "")
 @Serializable object NotesR
 @Serializable data class ReaderR(val id: Int)
+@Serializable data class DiagramR(val url: String)
 @Serializable data class StudyQuizR(val id: Int, val topic: Int = 0, val own: Int = 0)  // topic: a college topic's practice; own: a topic of the student's own course
 @Serializable object StudyR
 @Serializable data class StudyCourseR(val id: Int)
@@ -157,8 +158,9 @@ private fun Main(me: Me, incoming: Incoming?, handled: () -> Unit, wallpaper: (B
                                                openMaterial = { cid, name -> nav.navigate(MaterialR(cid, name)) }, openRevision = { u -> nav.navigate(RevisionR(u)) }) }
             composable<TopicR> { TopicScreen(it.toRoute<TopicR>().id, me, back = { nav.popBackStack() }, jump = { id -> nav.navigate(TopicR(id)) { popUpTo<TopicR> { inclusive = true } } },
                                              openReader = { id -> nav.navigate(ReaderR(id)) }, openPractice = { q -> nav.navigate(StudyQuizR(q, it.toRoute<TopicR>().id)) },
-                                             openMcq = { t -> nav.navigate(McqR(t)) },
+                                             openMcq = { t -> nav.navigate(McqR(t)) }, openDiagram = { u -> nav.navigate(DiagramR(u)) },
                                              openMaterial = { cid, name -> nav.navigate(MaterialR(cid, name)) }) }
+            composable<DiagramR> { DiagramScreen(it.toRoute<DiagramR>().url) { nav.popBackStack() } }
             composable<ReaderR> { e -> val id = e.toRoute<ReaderR>().id
                 val t = rememberLoad("reader", id) { get("/topics/$id", app.zigora.data.TopicFull.serializer()) }
                 Loaded(t) { ReaderScreen(it) { nav.popBackStack() } } }

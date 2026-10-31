@@ -25,7 +25,7 @@ def test_it_is_off_until_an_admin_sets_the_client_id_and_the_button_is_allowed_t
     assert env.c.put("/api/admin/settings", headers=env.stu, json={"google_client_id": WEB}).status_code == 403
     setup(env); assert env.c.get("/api/config").json()["google_client_id"] == WEB and env.c.get("/api/admin/settings", headers=env.admin).json()["google_client_id"] == WEB
     csp = env.c.get("/api/config").headers["content-security-policy"]
-    assert "script-src 'self' https://accounts.google.com/gsi/client" in csp and "frame-src https://accounts.google.com/gsi/" in csp and "frame-ancestors 'none'" in csp
+    assert "script-src 'self' https://accounts.google.com/gsi/client" in csp and "frame-src 'self' https://accounts.google.com/gsi/" in csp and "frame-ancestors 'none'" in csp
     env.c.put("/api/admin/settings", headers=env.admin, json={"google_client_id": ""}); assert env.c.get("/api/config").json()["google_client_id"] is None
 
 def test_an_account_is_found_by_its_email_then_by_its_linked_google_account(env, monkeypatch):

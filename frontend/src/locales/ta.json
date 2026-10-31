@@ -2402,5 +2402,20 @@
 "1 assignment": "1 ஒதுக்கீடு",
 "{n} assignments": "{n} ஒதுக்கீடுகள்",
 "{title}: due {due}": "{title}: கடைசி {due}",
-"You have used all {n} attempts for this assignment.": "இந்த ஒதுக்கீட்டுக்கான {n} முயற்சிகளையும் பயன்படுத்திவிட்டீர்கள்."
+"You have used all {n} attempts for this assignment.": "இந்த ஒதுக்கீட்டுக்கான {n} முயற்சிகளையும் பயன்படுத்திவிட்டீர்கள்.",
+"Drawing…": "வரைகிறது…",
+"Diagram": "வரைபடம்",
+"Diagram for students on Pro": "Pro மாணவர்களுக்கான வரைபடம்",
+"What should the diagram show? (optional)": "வரைபடம் எதைக் காட்ட வேண்டும்? (விருப்பத்தேர்வு)",
+"For example: the lime-soda process as a flow, step by step": "உதாரணம்: சுண்ணாம்பு-சோடா செயல்முறை, படிப்படியான ஓட்டமாக",
+"The AI draws an interactive diagram from the notes, once, and students open it full screen. Students on Lite see that it comes with Pro.": "AI குறிப்புகளிலிருந்து ஒரு ஊடாடும் வரைபடத்தை ஒருமுறை வரைகிறது; மாணவர்கள் அதை முழுத் திரையில் திறக்கிறார்கள். Lite மாணவர்கள் அது Pro உடன் கிடைக்கும் என்று பார்ப்பார்கள்.",
+"Off: no diagram for this topic.": "அணைக்கப்பட்டது: இந்தத் தலைப்புக்கு வரைபடம் இல்லை.",
+"Diagrams come with Pro. Add your own AI key, or ask your admin for Pro.": "வரைபடங்கள் Pro உடன் கிடைக்கும். உங்கள் சொந்த AI விசையைச் சேர்க்கவும், அல்லது உங்கள் நிர்வாகியிடம் Pro கேளுங்கள்.",
+"Diagrams come with Pro. Ask your admin for Pro.": "வரைபடங்கள் Pro உடன் கிடைக்கும். உங்கள் நிர்வாகியிடம் Pro கேளுங்கள்.",
+"Diagrams come with Pro.": "வரைபடங்கள் Pro உடன் கிடைக்கும்.",
+"This topic has no diagram": "இந்தத் தலைப்புக்கு வரைபடம் இல்லை",
+"The AI's diagram could not be read. Try again.": "AI வரைந்த வரைபடத்தைப் படிக்க முடியவில்லை. மீண்டும் முயலுங்கள்.",
+"The diagram could not be saved. Try again.": "வரைபடத்தைச் சேமிக்க முடியவில்லை. மீண்டும் முயலுங்கள்.",
+"Open the diagram again": "வரைபடத்தை மீண்டும் திறக்கவும்",
+"This link has expired. Open the diagram again.": "இந்த இணைப்பு காலாவதியானது. வரைபடத்தை மீண்டும் திறக்கவும்."
 }

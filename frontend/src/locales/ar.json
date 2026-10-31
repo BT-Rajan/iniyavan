@@ -2402,5 +2402,20 @@
 "1 assignment": "تكليف واحد",
 "{n} assignments": "{n} تكليفات",
 "{title}: due {due}": "{title}: الموعد {due}",
-"You have used all {n} attempts for this assignment.": "استخدمت كل محاولاتك الـ {n} لهذا التكليف."
+"You have used all {n} attempts for this assignment.": "استخدمت كل محاولاتك الـ {n} لهذا التكليف.",
+"Drawing…": "جارٍ الرسم…",
+"Diagram": "مخطط",
+"Diagram for students on Pro": "مخطط للطلاب المشتركين في Pro",
+"What should the diagram show? (optional)": "ماذا يجب أن يُظهر المخطط؟ (اختياري)",
+"For example: the lime-soda process as a flow, step by step": "مثال: عملية الجير والصودا كمخطط تدفق، خطوة بخطوة",
+"The AI draws an interactive diagram from the notes, once, and students open it full screen. Students on Lite see that it comes with Pro.": "يرسم الذكاء الاصطناعي مخططًا تفاعليًا من الملاحظات مرة واحدة، ويفتحه الطلاب بملء الشاشة. يرى طلاب Lite أنه متاح مع Pro.",
+"Off: no diagram for this topic.": "متوقف: لا مخطط لهذا الموضوع.",
+"Diagrams come with Pro. Add your own AI key, or ask your admin for Pro.": "المخططات متاحة مع Pro. أضف مفتاح الذكاء الاصطناعي الخاص بك، أو اطلب Pro من المسؤول.",
+"Diagrams come with Pro. Ask your admin for Pro.": "المخططات متاحة مع Pro. اطلب Pro من المسؤول.",
+"Diagrams come with Pro.": "المخططات متاحة مع Pro.",
+"This topic has no diagram": "لا يوجد مخطط لهذا الموضوع",
+"The AI's diagram could not be read. Try again.": "تعذّرت قراءة مخطط الذكاء الاصطناعي. حاول مرة أخرى.",
+"The diagram could not be saved. Try again.": "تعذّر حفظ المخطط. حاول مرة أخرى.",
+"Open the diagram again": "افتح المخطط مرة أخرى",
+"This link has expired. Open the diagram again.": "انتهت صلاحية هذا الرابط. افتح المخطط مرة أخرى."
 }

@@ -57,6 +57,7 @@ with Session_() as s:
                                correct=1, explanation="Calcium carbonate barely dissolves."))
     # MCQ practice: a small published bank on Hardness of Water (option texts are unique, so the capture can tap them by name)
     hw = s.query(Topic).filter_by(title="Hardness of Water").one()
+    hw.diagram, hw.diagram_note = True, "Temporary and permanent hardness, and what boiling does to each"  # a diagram for students on Pro
     for q, o, k in [("Water that won't lather easily with soap is", ["Hard water", "Soft water", "Distilled water", "Rain water"], 0),
                     ("Temporary hardness goes away on", ["Freezing", "Heating to a boil", "Filtering", "Stirring"], 1),
                     ("Permanent hardness comes from", ["Bicarbonates", "Chlorides and sulphates", "Dissolved oxygen", "Sodium salts"], 1),
@@ -90,12 +91,32 @@ R = {
                           "It wastes soap and scales boilers, so industry treats it."],
                "hook": "Why would boiling remove one kind of hardness and not the other?", "hook_answer": "Heat breaks bicarbonates into carbonates that don't dissolve and settle out; chlorides and sulphates stay dissolved."},
 }
-async def stand_in(key, model, messages, max_tokens=None, timeout=45):
-    sysmsg = messages[1]["content"] if len(messages) > 2 else messages[0]["content"]
+# a topic's diagram (Pro): the kind of page the AI draws, an inline SVG with parts to tap and a step-through
+DIAGRAM = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{margin:0;font:16px system-ui,sans-serif;color:#1e1626;background:#fff}h1{font-size:20px;margin:14px 16px 2px}p{margin:0 16px 8px;color:#655b6e}
+svg{width:100%;height:auto;max-height:70vh}.part{cursor:pointer}.part:hover rect,.part.on rect{stroke:#722f99;stroke-width:4}
+#info{margin:8px 16px;padding:12px 14px;border-radius:12px;background:#f3eef6;min-height:48px}.steps{display:flex;gap:8px;margin:8px 16px}
+button{font:inherit;padding:10px 14px;border-radius:999px;border:1px solid #c49be0;background:#fff;color:#722f99}button.on{background:#722f99;color:#fff}</style></head><body>
+<h1>Hard water: two kinds</h1><p>Tap a box, or step through what boiling does.</p>
+<svg viewBox="0 0 360 260" role="img" aria-label="Hard water splits into temporary and permanent hardness">
+<g class="part" data-i="0"><rect x="110" y="10" width="140" height="50" rx="12" fill="#fee7c8"/><text x="180" y="41" text-anchor="middle" font-size="16" font-weight="700">Hard water</text></g>
+<path d="M150 60 L80 110 M210 60 L280 110" stroke="#722f99" stroke-width="3" fill="none"/>
+<g class="part" data-i="1"><rect x="10" y="110" width="150" height="60" rx="12" fill="#e8f5ee"/><text x="85" y="135" text-anchor="middle" font-size="15" font-weight="700">Temporary</text><text x="85" y="156" text-anchor="middle" font-size="13">Ca, Mg bicarbonates</text></g>
+<g class="part" data-i="2"><rect x="200" y="110" width="150" height="60" rx="12" fill="#ffe1e1"/><text x="275" y="135" text-anchor="middle" font-size="15" font-weight="700">Permanent</text><text x="275" y="156" text-anchor="middle" font-size="13">chlorides, sulphates</text></g>
+<g id="boil" opacity="0.25"><path d="M85 170 L85 205" stroke="#2e7d5b" stroke-width="3"/><text x="85" y="225" text-anchor="middle" font-size="14" fill="#2e7d5b">boiling removes it</text>
+<path d="M275 170 L275 205" stroke="#c0392b" stroke-width="3"/><text x="275" y="225" text-anchor="middle" font-size="14" fill="#c0392b">boiling leaves it</text></g></svg>
+<div class="steps"><button data-s="0" class="on">1 · The water</button><button data-s="1">2 · Boil it</button></div><div id="info">Hard water carries dissolved calcium and magnesium salts.</div>
+<script>var I=["Hard water carries dissolved calcium and magnesium salts, so soap forms scum instead of lather.","Temporary hardness: bicarbonates break down on boiling, Ca(HCO3)2 -> CaCO3 + H2O + CO2, and the hardness settles out.","Permanent hardness: chlorides and sulphates stay dissolved after boiling; it needs ion exchange or the lime-soda process."]
+var info=document.getElementById("info");document.querySelectorAll(".part").forEach(function(g){g.addEventListener("click",function(){document.querySelectorAll(".part").forEach(function(x){x.classList.remove("on")});g.classList.add("on");info.textContent=I[g.dataset.i]})})
+document.querySelectorAll("[data-s]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-s]").forEach(function(x){x.classList.toggle("on",x===b)});document.getElementById("boil").setAttribute("opacity",b.dataset.s==="1"?"1":"0.25");info.textContent=b.dataset.s==="1"?"Boil it: the temporary side loses its hardness, the permanent side keeps it.":I[0]})})</script></body></html>"""
+
+async def stand_in(key, messages, max_tokens=None, timeout=45):  # in place of main.chat: the same messages in, (text, tokens) out
+    sysmsg = messages[0]["content"]
+    if "Reply with the HTML only" in sysmsg: return DIAGRAM, 900
     for k, v in R.items():
         if k in sysmsg: return json.dumps(v), 50
     return ("**Why it matters:** hard water wastes soap and damages boilers.\n\n1. Calcium and magnesium salts dissolve from rocks.\n2. Bicarbonates cause *temporary* hardness, which boiling removes.\n"
             "3. Chlorides and sulphates cause *permanent* hardness.\n\n*Example:* a kettle's white crust is calcium carbonate from temporary hardness."), 80
-main.deepseek = stand_in
+main.chat = stand_in
 
 uvicorn.run(main.app, host="127.0.0.1", port=int(os.environ.get("PROMO_PORT", "4400")), log_level="warning")

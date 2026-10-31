@@ -2,6 +2,9 @@
 
 package app.zigora.ui
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.outlined.Schema
+import androidx.compose.material.icons.outlined.Lock
 import android.annotation.SuppressLint
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -101,7 +104,8 @@ val PICKS = listOf("why", "example", "exam", "check")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openReader: (Int) -> Unit, openPractice: (Int) -> Unit, openMaterial: (Int, String) -> Unit, openMcq: (Int) -> Unit = {}) {
+fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openReader: (Int) -> Unit, openPractice: (Int) -> Unit, openMaterial: (Int, String) -> Unit, openMcq: (Int) -> Unit = {},
+                openDiagram: (String) -> Unit = {}) {
     val a = api(); val res = LocalResources.current; val scope = rememberCoroutineScope(); val snack = remember { SnackbarHostState() }
     val topic = rememberLoad("topic", id) { get("/topics/$id", TopicFull.serializer()) }
     val ai = rememberLoad("ai") { runCatching { get("/ai/status", AiStatus.serializer()) }.getOrDefault(AiStatus()) }
@@ -136,7 +140,7 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
             Loaded(topic) { t ->
                 val aiOn = (ai.state as? Load.Ok)?.value?.available == true
                 val aiOff = (ai.state as? Load.Ok)?.value?.off == true  // no parent's or teacher's key: the notes only
-                if (aiOn) Steps(id, student)
+                if (aiOn) Steps(id, student, t.diagram, openDiagram)
                 Body(t, me, aiOn, aiOff, known, openReader = { openReader(id) }, openMaterial = { openMaterial(t.course_id, t.course) })
                 if (student) OutlinedButton(onClick = { openMcq(id) }, modifier = Modifier.fillMaxWidth()) { Text(tl("MCQ practice on this topic")) }  // the Per topic way in; the bank needs no AI
                 if (student && aiOn) {
@@ -210,7 +214,7 @@ fun TopicScreen(id: Int, me: Me, back: () -> Unit, jump: (Int) -> Unit, openRead
 /** The gist and one curious question, then short steps the student picks. Each reply is a few lines and saved for everyone; the notes stay the reference. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Steps(id: Int, student: Boolean) {
+private fun Steps(id: Int, student: Boolean, diagram: String? = null, openDiagram: (String) -> Unit = {}) {
     val a = api(); val scope = rememberCoroutineScope()
     val gist = rememberLoad("gist", id) { get("/topics/$id/ai/gist", Step.serializer()) }
     val g = (gist.state as? Load.Ok)?.value
@@ -242,8 +246,16 @@ private fun Steps(id: Int, student: Boolean) {
         trail.forEach { (k, sd, rid) -> StepCard(id, rid, k, sd, student, onSimpler = if (trail.any { it.first == "simpler" }) null else ({ step("simpler") })) }
         if (err.isNotEmpty()) Quiet(err, Modifier.padding(top = 8.dp))
         val order = (g.you?.order?.takeIf { it.isNotEmpty() } ?: PICKS).filter { k -> trail.none { it.first == k } }
-        if (order.isNotEmpty()) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (order.isNotEmpty() || diagram != null) FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             order.forEach { k -> AssistChip(onClick = { step(k) }, enabled = busy.isEmpty(), label = { Text(if (busy == k) stringResource(R.string.thinking) else stepLabel(k)) }) }
+            // the teacher's diagram: drawn by the AI once, opened full screen; on Lite the server says it comes with Pro
+            if (diagram != null) AssistChip(enabled = busy.isEmpty(), onClick = { scope.launch {
+                busy = "diagram"; err = ""
+                try { val r = a.get("/topics/$id/diagram", app.zigora.data.DiagramOut.serializer()); onMain { openDiagram(r.frame_url) } } catch (e: Exception) { err = e.message.orEmpty() }
+                busy = ""
+            } }, leadingIcon = { Icon(if (diagram == "pro") Icons.Outlined.Lock else Icons.Outlined.Schema, null, Modifier.size(18.dp)) },
+                label = { Text(if (busy == "diagram") tl("Drawing…") else tl("Diagram")) },
+                trailingIcon = if (diagram == "pro") ({ Text(tl("Pro"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }) else null)
         }
         if (busy == "simpler") Quiet(stringResource(R.string.thinking))
     }
