@@ -2402,5 +2402,7 @@
 "1 assignment": "تكليف واحد",
 "{n} assignments": "{n} تكليفات",
 "{title}: due {due}": "{title}: الموعد {due}",
-"You have used all {n} attempts for this assignment.": "استخدمت كل محاولاتك الـ {n} لهذا التكليف."
+"You have used all {n} attempts for this assignment.": "استخدمت كل محاولاتك الـ {n} لهذا التكليف.",
+"See how each student is doing on the tests you gave": "انظر كيف يؤدي كل طالب في الاختبارات التي كلفته بها",
+"{n} assignment": "{n} تكليف"
 }

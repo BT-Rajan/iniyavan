@@ -1,5 +1,5 @@
 """A Zigora server for the onboarding screen tests (app/src/test/.../screens/OnboardingTest.kt), on a fresh SQLite file:
-a school program with a topic, a parent with a child who has no AI key, a teacher, a student the teacher has invited, three MCQs, an admin, a Lite student asking for more AI, and a Grade 6 test on the calendar.
+a school program with a topic, a parent with a child who has no AI key, a teacher, a student the teacher has invited, three MCQs, an admin, a Lite student asking for more AI, a Grade 6 test on the calendar, and an MCQ set the teacher assigned to the child.
 Every password is pw123456. Run from the repository root:  python mobile/screens_seed.py  (it serves on 127.0.0.1:5299)."""
 import os, sys, tempfile, datetime as dt
 here = os.path.dirname(os.path.abspath(__file__)); tmp = tempfile.mkdtemp()
@@ -39,5 +39,9 @@ with main.Session_() as s:
     s.add(main.MoreRequest(user_id=asha.id, note="Exams next week"))
     # the calendar: a test for Grade 6 in two days (the child sees it on Home and in the calendar; so does their parent)
     s.add(main.CalendarEvent(title="Science test", kind="test", day=main.local_day(dt.datetime.utcnow()) + dt.timedelta(days=2), at="10:00", scope="semester", program_id=sch.id, semester=6))
+    # an MCQ set Ms Rani assigned to Kavin, due in three days, with unlimited attempts (AssignTest.kt)
+    asg = main.Assignment(created_by=rani.id, kind="mcq", course_id=co.id, topic_ids=json.dumps([ts[1].id]), size=10, title="Water revision check",
+                          due_at=dt.datetime.utcnow() + dt.timedelta(days=3), attempts=0); s.add(asg); s.flush()
+    s.add(main.AssignmentStudent(assignment_id=asg.id, user_id=kid.id))
     s.commit()
 uvicorn.run(main.app, host="127.0.0.1", port=5299, log_level="warning")
