@@ -10,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.outlined.Password
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -85,7 +88,7 @@ fun ProfileScreen(me: Me, wallpaper: (Boolean) -> Unit, themeOf: (String) -> Uni
                     Quiet(pr.email.ifEmpty { pr.username })  // a child signs in with a username and has no email
                     if (pr.program.isNotEmpty()) Quiet(pr.program + (pr.semester?.let { " · ${pr.term} $it" } ?: ""))
                 }
-                pr.ai?.takeIf { (pr.self_registered || pr.role == "student") && it.plan != "college" }?.let { PlanCard(it) { p.reload() } }
+                pr.ai?.takeIf { (pr.self_registered || pr.role == "student") && it.plan != "college" }?.let { PlanCard(it, openKey) { p.reload() } }
                 pr.rewards?.let { r ->
                     SectionTitle(stringResource(R.string.rewards))
                     Panel {
@@ -175,9 +178,9 @@ fun NotificationsScreen(back: () -> Unit, openTopic: (Int) -> Unit) {
     }
 }
 
-/** a self-registered student's AI plan: today's free allowance on Lite, and the two ways to more (their own DeepSeek key, or asking the admin) */
+/** a self-registered student's AI plan: today's free allowance on Lite, and the two ways to more (their own AI key, or asking the admin) */
 @Composable
-private fun PlanCard(ai: AiPlan, changed: () -> Unit) {
+private fun PlanCard(ai: AiPlan, openKey: () -> Unit, changed: () -> Unit) {  // their own key is saved on My AI key, where they choose the provider
     val app = app(); val res = LocalResources.current; val scope = rememberCoroutineScope()
     var dialog by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
@@ -190,40 +193,34 @@ private fun PlanCard(ai: AiPlan, changed: () -> Unit) {
         when (ai.plan) {
             "pro" -> Quiet(stringResource(R.string.pro_until_note, ai.pro_until?.let { day(it) }.orEmpty()))
             "own" -> Quiet(stringResource(R.string.own_key_note))
-            "family" -> Quiet(tl("Your AI help runs on your parent's or teacher's DeepSeek key."))
+            "family" -> Quiet(tl("Your AI help runs on your parent's or teacher's AI key."))
             "off" -> Quiet(tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account."))
             else -> {
                 Quiet(stringResource(R.string.lite_note, ai.searches_limit, ai.minutes_limit))
                 Meter(stringResource(R.string.searches_today, ai.searches_used, ai.searches_limit), ai.searches_used, ai.searches_limit)
                 Meter(stringResource(R.string.minutes_today, ai.minutes_used, ai.minutes_limit), ai.minutes_used, ai.minutes_limit)
                 androidx.compose.foundation.layout.Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (ai.own_key) TextButton(onClick = { text = ""; msg = ""; dialog = "key" }) { Text(stringResource(R.string.use_own_key)) }
+                    if (ai.own_key) TextButton(onClick = openKey) { Text(stringResource(R.string.use_own_key)) }
                     TextButton(enabled = !ai.asked, onClick = { text = ""; msg = ""; dialog = "more" }) { Text(stringResource(if (ai.asked) R.string.asked_admin else R.string.ask_admin_more)) }
                 }
             }
         }
     }
     if (dialog.isNotEmpty()) AlertDialog(onDismissRequest = { dialog = "" },
-        title = { Text(stringResource(if (dialog == "key") R.string.use_own_key else R.string.ask_admin_more)) },
+        title = { Text(stringResource(R.string.ask_admin_more)) },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Quiet(stringResource(if (dialog == "key") R.string.own_key_how else R.string.ask_more_how))
-            androidx.compose.material3.OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = dialog == "key",
-                label = { Text(stringResource(if (dialog == "key") R.string.deepseek_key else R.string.note_optional)) },
-                visualTransformation = if (dialog == "key") androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-                keyboardOptions = if (dialog == "key") androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password) else androidx.compose.foundation.text.KeyboardOptions.Default)
+            Quiet(stringResource(R.string.ask_more_how))
+            androidx.compose.material3.OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.note_optional)) })
             if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
         } },
-        confirmButton = { TextButton(enabled = !busy && (dialog != "key" || text.isNotBlank()), onClick = {
+        confirmButton = { TextButton(enabled = !busy, onClick = {
             scope.launch {
                 busy = true; msg = ""
-                try {
-                    if (dialog == "key") app.api.raw("PUT", "/me/ai-key", buildJsonObject { put("key", text.trim()) })
-                    else app.api.raw("POST", "/me/plan/request", buildJsonObject { put("note", text.trim()) })
-                    dialog = ""; changed()
-                } catch (e: Exception) { msg = e.message ?: res.getString(R.string.try_again) }
+                try { app.api.raw("POST", "/me/plan/request", buildJsonObject { put("note", text.trim()) }); dialog = ""; changed() }
+                catch (e: Exception) { msg = e.message ?: res.getString(R.string.try_again) }
                 busy = false
             }
-        }) { Text(stringResource(if (busy) R.string.thinking else if (dialog == "key") R.string.save_key else R.string.send_request)) } },
+        }) { Text(stringResource(if (busy) R.string.thinking else R.string.send_request)) } },
         dismissButton = { TextButton(onClick = { dialog = "" }) { Text(stringResource(R.string.cancel)) } })
 }
 
@@ -242,8 +239,8 @@ private fun DigestToggle(initial: Boolean) {
     }) })
 }
 
-/** My AI key: save or remove a self-registered person's own DeepSeek key (checked with DeepSeek first, stored encrypted) */
-@OptIn(ExperimentalMaterial3Api::class)
+/** My AI key: save or remove a self-registered person's own AI key from any of the providers (checked with that provider first, stored encrypted) */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MyKeyScreen(guardian: Boolean = false, back: () -> Unit) {  // guardian: a parent's or teacher's key, which covers their school students
     val a = api(); val scope = rememberCoroutineScope()
@@ -252,19 +249,24 @@ fun MyKeyScreen(guardian: Boolean = false, back: () -> Unit) {  // guardian: a p
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
+    var prov by remember { mutableStateOf<String?>(null) }  // the provider picked here; until then, the saved key's
     Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.my_ai_key)) },
         navigationIcon = { IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } }) }) { pad ->
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Loaded(k) { st ->
                 Text(if (st.key_set) stringResource(R.string.key_on, st.key_hint) else stringResource(R.string.key_off), style = MaterialTheme.typography.titleMedium)
-                Quiet(if (guardian) tl("Your DeepSeek key powers AI help for the school students linked to you. Usage is billed to your DeepSeek account. The key is stored encrypted and never shown to them.") else stringResource(R.string.key_explain))
-                androidx.compose.material3.OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.deepseek_key)) },
+                Quiet(if (guardian) tl("Your AI key powers AI help for the school students linked to you. Usage is billed to your account with that provider. The key is stored encrypted and never shown to them.") else stringResource(R.string.key_explain))
+                val chosen = prov ?: st.provider; val pv = st.providers.firstOrNull { it.id == chosen }
+                Text(tl("AI provider"), style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { st.providers.forEach { x -> FilterChip(x.id == chosen, { prov = x.id }, label = { Text(x.name) }) } }
+                if (pv != null) Quiet(tl("Create a key at {site}.", "site" to pv.console))
+                androidx.compose.material3.OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(tl("{name} API key", "name" to (pv?.name ?: "AI"))) },
                     placeholder = { Text(stringResource(if (st.key_set) R.string.key_replace else R.string.key_placeholder)) },
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password))
                 if (msg.isNotEmpty()) Text(msg, color = MaterialTheme.colorScheme.error)
                 androidx.compose.material3.Button(enabled = !busy && key.isNotBlank(), onClick = { scope.launch {
                     busy = true; msg = ""
-                    try { a.raw("PUT", "/me/ai-key", buildJsonObject { put("key", key.trim()) }); key = ""; k.reload() } catch (e: Exception) { msg = e.message.orEmpty() }
+                    try { a.raw("PUT", "/me/ai-key", buildJsonObject { put("key", key.trim()); put("provider", chosen) }); key = ""; prov = null; k.reload() } catch (e: Exception) { msg = e.message.orEmpty() }
                     busy = false
                 } }) { Text(stringResource(if (busy) R.string.checking_key else R.string.save_key)) }
                 if (st.key_set) androidx.compose.material3.OutlinedButton(onClick = { confirm = true }) { Text(stringResource(R.string.remove_my_key)) }

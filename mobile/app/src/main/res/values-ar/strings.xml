@@ -6,7 +6,7 @@
     <string name="about_diagram">السؤال عن رسم توضيحي</string>
     <string name="about_diagram_hint">يُرسل الصورة نفسها ليرى الذكاء الاصطناعي الرسم</string>
     <string name="about_text_1">رفيق دراسة لطلاب الهندسة. يضيف المسؤول البرامج والفصول والمقررات والوحدات والموضوعات مع نمط الأسئلة وإرشادات الإجابة. افتح موضوعًا لتحصل على شرح واضح ونموذج إجابة يتبع الإرشادات.</string>
-    <string name="about_text_2">يتذكر التطبيق الموضوعات التي قرأتها. تُنشأ الشروحات ونماذج الإجابات مرة واحدة باستخدام DeepSeek وتُشارَك، فتفتح فورًا.</string>
+    <string name="about_text_2">يتذكر التطبيق الموضوعات التي قرأتها. تُنشأ الشروحات ونماذج الإجابات مرة واحدة باستخدام الذكاء الاصطناعي وتُشارَك، فتفتح فورًا.</string>
     <string name="account">الحساب</string>
     <string name="add">إضافة</string>
     <string name="add_a_file">إضافة ملف</string>
@@ -57,7 +57,6 @@
     <string name="daily_email">أرسل لي ملخصًا يوميًا بالجديد</string>
     <string name="daily_note">ملاحظة يومية هادئة</string>
     <string name="daily_note_hint">مرة في اليوم، فقط عند اقتراب موعد حدده المعلم أو حدث في التقويم، أو عند وجود اختبار جديد</string>
-    <string name="deepseek_key">مفتاح DeepSeek API</string>
     <string name="done">تم</string>
     <string name="done_answers_below">تم. الإجابات في الأسفل.</string>
     <string name="done_new_set">تم. مجموعة جديدة متاحة متى أردت.</string>
@@ -101,7 +100,7 @@
     <string name="institution">المؤسسة</string>
     <string name="interactive_note_long">هذا الموضوع صفحة تفاعلية. افتحها أعلاه لاستخدامها وتظليل نصها.</string>
     <string name="ive_learned_this">تعلّمت هذا</string>
-    <string name="key_explain">اختياري. بدون مفتاح أنت على Lite: حصة يومية مجانية من الذكاء الاصطناعي على مفتاح كليتك. مع مفتاح DeepSeek الخاص بك لا يوجد حدّ يومي، ويُحتسب الاستخدام على حسابك في DeepSeek. أنشئ مفتاحًا في platform.deepseek.com، والصقه هنا واحفظه. نتحقق منه مع DeepSeek أولًا، ثم نخزّنه مشفّرًا. لا يُعرض كاملًا مرة أخرى أبدًا.</string>
+    <string name="key_explain">اختياري. بدون مفتاح أنت على Lite: حصة يومية مجانية من الذكاء الاصطناعي على مفتاح كليتك. مع مفتاحك الخاص من DeepSeek أو ChatGPT أو Claude أو Qwen أو Perplexity لا يوجد حدّ يومي، ويُحتسب الاستخدام على حسابك لدى ذلك المزوّد. اختر المزوّد، والصق مفتاحه واحفظه. نتحقق منه مع المزوّد أولًا، ثم نخزّنه مشفّرًا. لا يُعرض كاملًا مرة أخرى أبدًا.</string>
     <string name="key_off">لا مفتاح بعد: أنت على Lite</string>
     <string name="key_on">الذكاء الاصطناعي يعمل · المفتاح %1$s</string>
     <string name="key_placeholder">sk-…</string>
@@ -181,8 +180,7 @@
     <string name="open_interactive">افتح الصفحة التفاعلية</string>
     <string name="open_title">فتح %1$s</string>
     <string name="original">الأصل</string>
-    <string name="own_key_how">الصق مفتاح DeepSeek API (من platform.deepseek.com). نتحقق منه ثم نخزّنه مشفّرًا؛ ويُحتسب الاستخدام على حسابك في DeepSeek.</string>
-    <string name="own_key_note">تستخدم مفتاح DeepSeek الخاص بك، فلا يوجد حدّ يومي.</string>
+    <string name="own_key_note">تستخدم مفتاح الذكاء الاصطناعي الخاص بك، فلا يوجد حدّ يومي.</string>
     <string name="page_of">%1$d من %2$d</string>
     <string name="part_n_words">الجزء %1$d · %2$d كلمة</string>
     <string name="password">كلمة المرور</string>
@@ -212,7 +210,7 @@
     <string name="reading_photo">جارٍ قراءة النص في الصورة…</string>
     <string name="reading_scanned_n">جارٍ قراءة الصفحات الممسوحة… %1$d من %2$d</string>
     <string name="register_lead">سنرسل إليك رمزًا بالبريد لتأكيد عنوانك.</string>
-    <string name="register_password_note">8 أحرف على الأقل. تبدأ مساعدة الذكاء الاصطناعي على Lite: حصة يومية مجانية. يمكنك لاحقًا إضافة مفتاح DeepSeek الخاص بك للمزيد.</string>
+    <string name="register_password_note">8 أحرف على الأقل. تبدأ مساعدة الذكاء الاصطناعي على Lite: حصة يومية مجانية. يمكنك لاحقًا إضافة مفتاح الذكاء الاصطناعي الخاص بك للمزيد.</string>
     <string name="remember_this">هل تتذكر هذا؟</string>
     <string name="remove">إزالة</string>
     <string name="remove_bookmark">إزالة الإشارة المرجعية</string>

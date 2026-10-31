@@ -16,7 +16,7 @@ def setup():
         s.add_all([GuardianLink(guardian_id=mum.id, student_id=kid.id), GuardianLink(guardian_id=tch.id, student_id=kid.id)]); s.commit()
         return {x.name: x.id for x in (kid, mum, tch, uni, added)}
 def key(uid):
-    with Session_() as s: return main.key_for(s.get(User, uid), s)
+    with Session_() as s: k = main.key_for(s.get(User, uid), s); return k.key if k else None
 def set_key(uid, k):
     with Session_() as s: s.get(User, uid).ai_key = seal(k) if k else None; s.commit()
 def login(env, who): return {"Authorization": "Bearer " + env.c.post("/api/login", json={"email": who, "password": "pw"}).json()["token"]}

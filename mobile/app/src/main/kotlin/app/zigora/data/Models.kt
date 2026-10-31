@@ -77,7 +77,9 @@ import kotlinx.serialization.json.JsonObject
                                  val self_registered: Boolean = false, val ai: AiPlan? = null, val rewards: Rewards? = null)
 @Serializable data class Note(val key: String, val text: String, val sub: String = "", val unread: Boolean = false)
 @Serializable data class Notes(val items: List<Note> = emptyList(), val digest: Boolean = false, val mail: Boolean = false)
-@Serializable data class KeyState(val own_key: Boolean = false, val key_set: Boolean = false, val key_hint: String = "")
+@Serializable data class KeyState(val own_key: Boolean = false, val key_set: Boolean = false, val key_hint: String = "", val provider: String = "deepseek",
+                                  val provider_name: String = "DeepSeek", val providers: List<AiProvider> = emptyList())
+@Serializable data class AiProvider(val id: String = "", val name: String = "", val console: String = "")
 @Serializable data class AndroidRelease(val version: String? = null, val code: Int? = null, val date: String? = null, val url: String? = null)
 
 @Serializable data class LineExplain(val id: Int? = null, val text: String = "")

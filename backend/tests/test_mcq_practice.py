@@ -67,7 +67,7 @@ class FakeAI:  # stands in for DeepSeek: writes questions from the notes it is s
         if FakeAI.mode == "some-bad":  # a few broken ones among them
             qs[0]["options"] = qs[0]["options"][:3]; qs[1]["correct"] = 9; qs[2]["text"] = "Who won the football world cup in 1998?"; qs[2]["options"] = ["France", "Brazil", "Italy", "Spain"]; qs[2]["explanation"] = "Sport."
         return json.dumps({"questions": qs}), 100
-def fake_ai(monkeypatch, mode="ok"): FakeAI.mode, FakeAI.sent, FakeAI.calls = mode, [], 0; monkeypatch.setattr(main, "deepseek", FakeAI.run)
+def fake_ai(monkeypatch, mode="ok"): FakeAI.mode, FakeAI.sent, FakeAI.calls = mode, [], 0; monkeypatch.setattr(main, "chat", lambda k, messages, **kw: (FakeAI.run)(k.key, k.model, messages, **kw))
 
 # ---- who may do what
 def test_parents_have_no_mcq_access_and_teachers_who_follow_see_only_a_summary(env):

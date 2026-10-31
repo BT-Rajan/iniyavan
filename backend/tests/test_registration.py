@@ -101,7 +101,7 @@ def test_self_registered_users_are_lite_on_the_shared_key_and_can_save_their_own
     FakeClient.mode = "ok"; key = "sk-" + "z" * 30; r = reg.c.put("/api/me/ai-key", headers=h, json={"key": f" {key} "}); assert r.status_code == 200 and r.json()["key_hint"] == "…zzzz"
     with Session_() as s: raw = s.query(User).filter_by(email="asha@college.edu").one().ai_key
     assert raw and key not in raw and main.unseal(raw) == key  # stored encrypted
-    g = reg.c.get("/api/me/ai-key", headers=h).json(); assert g == {"own_key": True, "key_set": True, "key_hint": "…zzzz"} and key not in str(g)
+    g = reg.c.get("/api/me/ai-key", headers=h).json(); assert {k: g[k] for k in ("own_key", "key_set", "key_hint", "provider")} == {"own_key": True, "key_set": True, "key_hint": "…zzzz", "provider": "deepseek"} and key not in str(g)
     assert reg.c.get("/api/ai/status", headers=h).json()["plan"] == "own"
     assert reg.c.delete("/api/me/ai-key", headers=h).status_code == 200 and reg.c.get("/api/ai/status", headers=h).json()["plan"] == "lite"
 

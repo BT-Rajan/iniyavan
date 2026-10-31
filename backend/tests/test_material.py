@@ -44,7 +44,7 @@ class MatchAI(FakeAI):  # also answers the matching prompt, by topic titles in t
         return await FakeAI.__call__(key, model, messages, max_tokens, timeout)
 
 def setup(env, monkeypatch):
-    monkeypatch.setattr(main, "deepseek", MatchAI()); MatchAI.calls = []; FakeAI.calls = []
+    monkeypatch.setattr(main, "chat", lambda k, messages, **kw: (MatchAI())(k.key, k.model, messages, **kw)); MatchAI.calls = []; FakeAI.calls = []
     with Session_() as s: s.merge(main.Setting(k="deepseek_key", v="sk-test")); s.commit()
     env.csv(SYLLABUS); i = ids(); enrol("stu@x.com", i["prog"]["Mech"], 1)
     with Session_() as s: i["t"] = {t.title: t.id for t in s.query(Topic)}

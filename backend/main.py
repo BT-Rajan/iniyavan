@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import NamedTuple
 import anthropic, asyncio, base64, csv, functools, html as htmllib, io, json, logging, os, re, smtplib, subprocess, hashlib, hmac, secrets, threading, time, datetime as dt, httpx, jwt, nh3
 from dotenv import load_dotenv
 from email.message import EmailMessage
@@ -46,7 +47,8 @@ class User(Base):
     institution = Column(String(150), nullable=True); id_number = Column(String(60), nullable=True); phone = Column(String(30), nullable=True)  # given at self-registration
     self_registered = Column(Boolean, default=False)  # signed up on their own and verified their email: "lite" on the college's AI key, unless they bring their own key or are made pro
     pro_until = Column(DateTime, nullable=True)  # a self-registered person an admin made "pro": the college's AI key with the usual limits until then
-    ai_key = Column(Text, nullable=True)  # their own DeepSeek key, encrypted (see seal); only self-registered users have one
+    ai_key = Column(Text, nullable=True)  # their own AI key, encrypted (see seal); only self-registered people and parents or teachers have one
+    ai_provider = Column(String(20), nullable=True)  # whose key ai_key is (see PROVIDERS); none means DeepSeek, the only kind before 0032
     digest = Column(Boolean, default=False); digest_at = Column(DateTime, nullable=True)
     google_sub = Column(String(64), unique=True, nullable=True)  # the Google account that signs in to this one (Google's own id for it, which never changes)
     cal_token = Column(String(64), unique=True, nullable=True)  # a hash of the private link a phone's calendar subscribes to (the link itself is never stored)
@@ -265,6 +267,7 @@ class AIEgress(Base):  # one row for every request that left for the AI provider
     id = Column(Integer, primary_key=True); user_id = Column(Integer, index=True); kind = Column(String(20)); topic_id = Column(Integer, nullable=True)
     chars = Column(Integer, default=0); ok = Column(Boolean, default=True); at = Column(DateTime, default=dt.datetime.utcnow, index=True)
     tokens = Column(Integer, default=0); own = Column(Boolean, default=False)  # tokens the provider billed; own = paid with the person's own key, not the college's
+    provider = Column(String(20), nullable=True)  # which AI answered (see PROVIDERS); rows before 0032 have none: photos were Claude, the rest DeepSeek
 
 def _dk(p, salt, it): return hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), it).hex()
 def hp(p, iters=None):
@@ -849,7 +852,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
                                                      ("program_id", "INTEGER NULL"), ("semester", "INTEGER NULL"), ("children", "TEXT NULL"))]),
               ("0029_mcq_practice", lambda c: Base.metadata.create_all(c, tables=[McqItem.__table__, McqAttempt.__table__, McqAttemptItem.__table__, McqQuota.__table__])),  # new tables only
               ("0030_users_google", lambda c: google_columns(c)),
-              ("0031_calendar", lambda c: calendar_tables(c))]
+              ("0031_calendar", lambda c: calendar_tables(c)),
+              ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -1490,23 +1494,64 @@ def admin_program(pid: int, _: User = Depends(admin), s: Session = Depends(db)):
                                "archived": bool(x.archived_at or p.archived_at), "archived_self": bool(x.archived_at)} for x in sems],
             "student_list": [{"id": u.id, "name": u.name, "semester": u.semester, "active": u.active} for u in studs]}
 AI_DOWN = "AI unavailable. Try again later."
-def ai_key(s): return setting(s, "deepseek_key") or (os.getenv("DEEPSEEK_API_KEY") or "").strip()  # one key, set by the admin, serves every student
-async def deepseek(key, model, messages, max_tokens=None, timeout=45):
+# ---- the AI providers. The college answers with one of them at a time (Settings > AI); a person's own key can be any of them.
+# ---- Every one but Claude takes OpenAI-style chat requests; Claude goes through Anthropic's SDK, as photos do.
+class Provider(NamedTuple): name: str; url: str; model: str; env: str; console: str
+PROVIDERS = {
+    "deepseek": Provider("DeepSeek", "https://api.deepseek.com/chat/completions", "deepseek-chat", "DEEPSEEK_API_KEY", "platform.deepseek.com"),
+    "openai": Provider("ChatGPT", "https://api.openai.com/v1/chat/completions", "gpt-4.1-mini", "OPENAI_API_KEY", "platform.openai.com"),
+    "claude": Provider("Claude", "", "claude-opus-5-5", "ANTHROPIC_API_KEY", "platform.claude.com"),
+    "qwen": Provider("Qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus", "DASHSCOPE_API_KEY", "dashscope.console.aliyun.com"),
+    "perplexity": Provider("Perplexity", "https://api.perplexity.ai/chat/completions", "sonar", "PERPLEXITY_API_KEY", "perplexity.ai/settings/api"),
+}
+class AIKey(NamedTuple): provider: str; key: str; model: str; own: bool  # own: paid by the person (or their parent or teacher), not the college
+def ai_provider(s): p = setting(s, "ai_provider") or "deepseek"; return p if p in PROVIDERS else "deepseek"  # the college's: one at a time
+def key_setting(p): return {"deepseek": "deepseek_key", "claude": "vision_key"}.get(p, p + "_key")  # one Claude key serves text and photos
+def model_setting(p): return "model" if p == "deepseek" else p + "_model"
+def provider_key(s, p): return setting(s, key_setting(p)) or (os.getenv(PROVIDERS[p].env) or "").strip()
+def provider_model(s, p): return setting(s, model_setting(p)) or PROVIDERS[p].model
+def ai_key(s):  # the college's key for its chosen provider: one key serves every student
+    p = ai_provider(s); k = provider_key(s, p)
+    return AIKey(p, k, provider_model(s, p), False) if k else None
+def own_ai_key(s, u):  # the key a person saved for themselves (a parent's or teacher's also serves their school students)
+    if not u.ai_key: return None
+    p = u.ai_provider if u.ai_provider in PROVIDERS else "deepseek"
+    return AIKey(p, unseal(u.ai_key), provider_model(s, p), True)
+async def chat(k, messages, max_tokens=None, timeout=45):
     """The only way a text request leaves the server (photos go through vision(), which does the same). The built-in safety rules (guardrails.py) always go first, ahead of any task prompt an admin
-    can edit; what people wrote is fenced as material, not instructions; and a reply that leaks the rules is withheld."""
-    sent = [{"role": "system", "content": GUARDRAILS}] + [{"role": m["role"], "content": fence(m["content"]) if m["role"] == "user" else m["content"]} for m in messages]
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        r = await c.post("https://api.deepseek.com/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                         json={"model": model, "messages": sent, **({"max_tokens": max_tokens} if max_tokens else {})})
-    r.raise_for_status(); j = r.json(); text = j["choices"][0]["message"]["content"]
+    can edit; what people wrote is fenced as material, not instructions; and a reply that leaks the rules is withheld. Returns (text, tokens the provider billed)."""
+    system = "\n\n".join([GUARDRAILS] + [m["content"] for m in messages if m["role"] == "system"])
+    talk = [{"role": m["role"], "content": fence(m["content"]) if m["role"] == "user" else m["content"]} for m in messages if m["role"] != "system"]
+    if k.provider == "claude":
+        client = anthropic.AsyncAnthropic(api_key=k.key, max_retries=1, timeout=timeout)
+        r = await client.beta.messages.create(model=k.model, max_tokens=max_tokens or 16000, system=system, messages=talk, output_config={"effort": "medium"},
+                                              betas=["server-side-fallback-2026-07-01"], fallbacks="default")  # a declined request is retried on a fallback model by the API itself
+        if r.stop_reason == "refusal": return REFUSED_TEXT, 0
+        text = "".join(b.text for b in r.content if b.type == "text").strip(); tokens = (r.usage.input_tokens or 0) + (r.usage.output_tokens or 0)
+    else:
+        sent = ([{"role": "system", "content": GUARDRAILS}] + [{"role": m["role"], "content": fence(m["content"]) if m["role"] == "user" else m["content"]} for m in messages]
+                if k.provider == "deepseek" else [{"role": "system", "content": system}] + talk)  # others get the rules and the task as one system message (Perplexity accepts only one)
+        cap = {} if not max_tokens else {"max_completion_tokens": max_tokens} if k.provider == "openai" else {"max_tokens": max_tokens}
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(PROVIDERS[k.provider].url, headers={"Authorization": f"Bearer {k.key}"}, json={"model": k.model, "messages": sent, **cap})
+        r.raise_for_status(); j = r.json(); text = j["choices"][0]["message"]["content"]; tokens = j.get("usage", {}).get("total_tokens", 0)
     if not text: raise ValueError("empty answer")
-    return checked(text), j.get("usage", {}).get("total_tokens", 0)
+    return checked(text), tokens
+REFUSED_TEXT = "I can't help with that. Ask me about something you are studying."
+async def ping(k):  # checks a key with the smallest request its provider accepts; raises what the provider said
+    if k.provider == "claude":
+        await anthropic.AsyncAnthropic(api_key=k.key, max_retries=0, timeout=20).messages.create(model=k.model, max_tokens=16, messages=[{"role": "user", "content": "Reply with the word OK."}])
+        return
+    async with httpx.AsyncClient(timeout=20) as c:  # a reply cut short is fine: only whether the key and model are accepted matters
+        r = await c.post(PROVIDERS[k.provider].url, headers={"Authorization": f"Bearer {k.key}"},
+                         json={"model": k.model, "messages": [{"role": "user", "content": "Reply with the word OK."}], ("max_completion_tokens" if k.provider == "openai" else "max_tokens"): 16})
+    r.raise_for_status()
 VISION_MODEL = "claude-opus-5-5"  # the default model for photos of diagrams; an admin can choose another under Settings
 def vision_key(s): return setting(s, "vision_key") or (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-def vision_on(u, s): return bool(vision_key(s)) and ai_plan(u) in ("college", "pro")  # the college's Claude key: not for lite people, whose own key can only be DeepSeek
+def vision_on(u, s): return bool(vision_key(s)) and ai_plan(u) in ("college", "pro")  # the college's Claude key: not for lite people or people on their own key
 REFUSED = "I can't help with that photo. Ask me about something you are studying."
 async def vision(key, model, system, image_jpeg, text, max_tokens=4000):
-    """The only way a photo leaves the server: to Claude, which can see diagrams. Like deepseek(), the built-in safety rules come first,
+    """The only way a photo leaves the server: to Claude, which can see diagrams. Like chat(), the built-in safety rules come first,
     what people wrote is fenced as material, and a reply that leaks the rules is withheld. Returns (text, tokens)."""
     client = anthropic.AsyncAnthropic(api_key=key, max_retries=1, timeout=90)
     r = await client.beta.messages.create(
@@ -1525,54 +1570,66 @@ def added_pupil(u): return u.role == "student" and not u.self_registered and sta
 def guardian_key(u, s):  # a school student's AI runs on a linked parent's or teacher's own key, a parent's first; never the college's
     if s is None: return None
     for g in sorted(guardians_of(s, u.id), key=lambda g: (g.relation != "parent", g.id)):
-        if g.active and g.ai_key: return unseal(g.ai_key)
+        if g.active and g.ai_key: return own_ai_key(s, g)
     return None
-def key_for(u, s):  # a self-registered person's own key when they saved one; otherwise the admin's (for lite people, within the free daily allowance)
+def key_for(u, s):  # an AIKey: a self-registered person's own key when they saved one; otherwise the admin's (for lite people, within the free daily allowance)
     if school_learner(u): return guardian_key(u, s)  # without one they study without AI
-    if u.role == "guardian": return unseal(u.ai_key) if u.ai_key else None  # a parent's or teacher's key is for their students; they never use the college's
-    return unseal(u.ai_key) if u.self_registered and u.ai_key else ai_key(s)
+    if u.role == "guardian": return own_ai_key(s, u)  # a parent's or teacher's key is for their students; they never use the college's
+    return own_ai_key(s, u) if u.self_registered and u.ai_key else ai_key(s)
 def ai_off(u, s): return school_learner(u) and not guardian_key(u, s)  # the app hides AI altogether, rather than offering it and failing
-NEEDS_OWN_KEY = "Add your own DeepSeek API key under AI key in the menu to use AI help."
+NEEDS_OWN_KEY = "Add your own AI key under AI key in the menu to use AI help."
 NEEDS_GUARDIAN_KEY = "AI help is off. A parent or teacher can turn it on by adding their AI key to their account."
 @app.get("/api/ai/status")
 def ai_status(u: User = Depends(me), s: Session = Depends(db)):
     return {"available": bool(key_for(u, s)), "own_key": bool(u.self_registered) and not school_learner(u), "vision": vision_on(u, s), "ocr": ocr_ready(), "plan": ai_plan(u), "off": ai_off(u, s)}
-class OwnKey(BaseModel): key: str
-KEY_TRIES = 10  # saving a key checks it with DeepSeek; at most this many tries an hour per person
+class OwnKey(BaseModel): key: str; provider: str = "deepseek"
+KEY_TRIES = 10  # saving a key checks it with its provider; at most this many tries an hour per person
+def refused_code(e):  # the HTTP status a provider answered with, or None when it did not answer
+    if isinstance(e, httpx.HTTPStatusError): return e.response.status_code
+    if isinstance(e, anthropic.APIStatusError): return e.status_code
+    return None
+def providers_list(): return [{"id": p, "name": v.name, "model": v.model, "console": v.console} for p, v in PROVIDERS.items()]
 @app.get("/api/me/ai-key")
 def my_ai_key(u: User = Depends(me)):
-    k = unseal(u.ai_key) if u.ai_key else ""
-    return {"own_key": bool(u.self_registered), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else ""}
+    k = unseal(u.ai_key) if u.ai_key else ""; p = u.ai_provider if u.ai_provider in PROVIDERS else "deepseek"
+    return {"own_key": bool(u.self_registered), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "provider": p, "provider_name": PROVIDERS[p].name, "providers": providers_list()}
 @app.put("/api/me/ai-key")
 async def set_my_ai_key(b: OwnKey, u: User = Depends(me), s: Session = Depends(db)):
     if not u.self_registered: raise HTTPException(403, "Your account uses the key your admin saved. You do not need your own.")
     if school_learner(u): raise HTTPException(403, "A parent or teacher adds the AI key for school students.")
+    if b.provider not in PROVIDERS: raise HTTPException(400, "Choose DeepSeek, ChatGPT, Claude, Qwen or Perplexity.")
     if s.query(func.count(AuditLog.id)).filter(AuditLog.user_id == u.id, AuditLog.method == "PUT", AuditLog.path == "/api/me/ai-key",
                                                 AuditLog.at >= dt.datetime.utcnow() - dt.timedelta(hours=1)).scalar() >= KEY_TRIES:
-        raise HTTPException(429, "Too many tries. Wait an hour, then save your key again.")  # each try asks DeepSeek, so this must not become a way to test stolen keys
-    k = b.key.strip()
-    if not 20 <= len(k) <= 200 or any(ch.isspace() for ch in k): raise HTTPException(400, "That does not look like a DeepSeek API key. Copy the whole key from your DeepSeek account.")
-    try: await deepseek(k, setting(s, "model", "deepseek-chat"), [{"role": "user", "content": "Reply with the word OK."}], max_tokens=5, timeout=20)
-    except httpx.HTTPStatusError as e: raise HTTPException(400, "DeepSeek rejected this key (" + str(e.response.status_code) + ")." + (" Check that you copied it correctly." if e.response.status_code in (401, 403) else " Check your DeepSeek balance."))
-    except Exception: raise HTTPException(400, "Could not reach DeepSeek to check the key. Try again in a moment.")
-    me_row = s.get(User, u.id); me_row.ai_key = seal(k); close_requests(s, u.id); s.commit()
-    return {"ok": True, "key_hint": "…" + k[-4:]}
+        raise HTTPException(429, "Too many tries. Wait an hour, then save your key again.")  # each try asks the provider, so this must not become a way to test stolen keys
+    k = b.key.strip(); name = PROVIDERS[b.provider].name
+    if not 20 <= len(k) <= 300 or any(ch.isspace() for ch in k): raise HTTPException(400, f"That does not look like a {name} API key. Copy the whole key from your {name} account.")
+    try: await ping(AIKey(b.provider, k, provider_model(s, b.provider), True))
+    except Exception as e:
+        code = refused_code(e)
+        if code is None: raise HTTPException(400, f"Could not reach {name} to check the key. Try again in a moment.")
+        raise HTTPException(400, f"{name} rejected this key ({code})." + (" Check that you copied it correctly." if code in (401, 403) else f" Check your {name} balance."))
+    me_row = s.get(User, u.id); me_row.ai_key = seal(k); me_row.ai_provider = b.provider; close_requests(s, u.id); s.commit()
+    return {"ok": True, "key_hint": "…" + k[-4:], "provider": b.provider}
 @app.delete("/api/me/ai-key")
 def delete_my_ai_key(u: User = Depends(me), s: Session = Depends(db)):
-    s.get(User, u.id).ai_key = None; s.commit(); return {"ok": True}
+    row = s.get(User, u.id); row.ai_key = None; row.ai_provider = None; s.commit(); return {"ok": True}
 class Cfg(BaseModel):
     deepseek_key: str | None = None; model: str | None = None; remove_key: bool = False; self_registration: bool | None = None; allowed_domains: str | None = None
     vision_key: str | None = None; vision_model: str | None = None; remove_vision_key: bool = False
     budget_deepseek: int | None = None; budget_claude: int | None = None  # tokens a month on the college's keys; 0 means no limit
+    ai_provider: str | None = None  # which provider answers for the college (see PROVIDERS)
+    keys: dict[str, str] | None = None; models: dict[str, str] | None = None; budgets: dict[str, int] | None = None; remove_keys: list[str] | None = None  # by provider
     lite_searches: int | None = None; lite_minutes: int | None = None  # the free daily allowance of self-registered (lite) people
     google_client_id: str | None = None  # Sign in with Google: the web client ID (more, comma separated); empty turns it off
 @app.get("/api/admin/settings")
 def get_cfg(_: User = Depends(admin), s: Session = Depends(db)):
-    k = ai_key(s)
-    vk = vision_key(s)
-    return {"mail_on": mail_on(s), "google_client_id": ",".join(google_ids(s)), "google_from_env": not setting(s, "google_client_id") and bool(os.getenv("GOOGLE_CLIENT_ID")), "key_set": bool(k), "key_hint": ("…" + k[-4:]) if k else "", "model": setting(s, "model", "deepseek-chat"),
+    ak = ai_key(s); k = ak.key if ak else ""; p = ai_provider(s)
+    vk = vision_key(s); hint = lambda x: ("…" + x[-4:]) if x else ""
+    return {"provider": p, "provider_name": PROVIDERS[p].name, "providers": [{**x, "key_set": bool(provider_key(s, x["id"])), "key_hint": hint(provider_key(s, x["id"])),
+            "model_saved": setting(s, model_setting(x["id"])), "budget": budget(s, x["id"])} for x in providers_list()],
+            "mail_on": mail_on(s), "google_client_id": ",".join(google_ids(s)), "google_from_env": not setting(s, "google_client_id") and bool(os.getenv("GOOGLE_CLIENT_ID")), "key_set": bool(k), "key_hint": hint(k), "model": provider_model(s, p),
             "vision_set": bool(vk), "vision_hint": ("…" + vk[-4:]) if vk else "", "vision_model": setting(s, "vision_model", VISION_MODEL), "ocr": ocr_ready(),
-            "budget": {p: budget(s, p) for p in ("deepseek", "claude")},
+            "budget": {x: budget(s, x) for x in PROVIDERS},
             "self_registration": setting(s, "self_registration") == "1", "allowed_domains": setting(s, "allowed_domains"), "self_registered_users": s.query(User).filter_by(self_registered=True).count(),
             "lite": dict(zip(("searches", "minutes"), lite_limits(s)))}
 @app.put("/api/admin/settings")
@@ -1580,7 +1637,21 @@ def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     if b.remove_key: s.query(Setting).filter_by(k="deepseek_key").delete()  # turns AI off for everyone until a new key is saved
     for k, v in (("deepseek_key", b.deepseek_key), ("model", b.model)):
         if v and v.strip() and not (k == "deepseek_key" and b.remove_key): s.merge(Setting(k=k, v=v.strip()))
-    for p, v in (("deepseek", b.budget_deepseek), ("claude", b.budget_claude)):
+    if b.ai_provider is not None:
+        if b.ai_provider not in PROVIDERS: raise HTTPException(400, "Choose DeepSeek, ChatGPT, Claude, Qwen or Perplexity.")
+        s.merge(Setting(k="ai_provider", v=b.ai_provider))
+    if any(p not in PROVIDERS for d in (b.keys, b.models, b.budgets, b.remove_keys) if d for p in d): raise HTTPException(400, "Choose DeepSeek, ChatGPT, Claude, Qwen or Perplexity.")
+    for p in b.remove_keys or []: s.query(Setting).filter_by(k=key_setting(p)).delete()  # the college's AI is off while its chosen provider has no key
+    for p, v in (b.keys or {}).items():
+        if v and v.strip() and p not in (b.remove_keys or []):
+            if len(v.strip()) > 300 or any(ch.isspace() for ch in v.strip()): raise HTTPException(400, "That does not look like an API key. Copy the whole key.")
+            s.merge(Setting(k=key_setting(p), v=v.strip()))
+    for p, v in (b.models or {}).items():
+        if v is not None:
+            if len(v.strip()) > 100: raise HTTPException(400, "That model name is too long")
+            if v.strip(): s.merge(Setting(k=model_setting(p), v=v.strip()))
+            else: s.query(Setting).filter_by(k=model_setting(p)).delete()  # back to the provider's default model
+    for p, v in [("deepseek", b.budget_deepseek), ("claude", b.budget_claude)] + list((b.budgets or {}).items()):
         if v is not None:
             if not 0 <= v <= 10**12: raise HTTPException(400, "Enter a monthly allowance in tokens, or 0 for no limit")
             s.merge(Setting(k="budget_" + p, v=str(v)))
@@ -1604,11 +1675,13 @@ def put_cfg(b: Cfg, _: User = Depends(admin), s: Session = Depends(db)):
     s.commit(); return {"ok": True}
 @app.post("/api/admin/ai/test")
 async def test_ai(_: User = Depends(admin), s: Session = Depends(db)):
-    key = ai_key(s)
-    if not key: return {"ok": False, "message": "No key saved yet."}
-    try: await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "user", "content": "Reply with the word OK."}], max_tokens=5, timeout=20)
-    except httpx.HTTPStatusError as e: return {"ok": False, "message": "DeepSeek rejected the request (" + str(e.response.status_code) + "). " + ("The key looks invalid." if e.response.status_code in (401, 403) else "Check the model name and your balance." if e.response.status_code in (400, 402, 404) else "Try again shortly.")}
-    except Exception: return {"ok": False, "message": "No answer from DeepSeek. Check the server's internet access and try again."}
+    k = ai_key(s); name = PROVIDERS[ai_provider(s)].name
+    if not k: return {"ok": False, "message": f"No {name} key saved yet."}
+    try: await ping(k)
+    except Exception as e:
+        code = refused_code(e)
+        if code is None: return {"ok": False, "message": f"No answer from {name}. Check the server's internet access and try again."}
+        return {"ok": False, "message": f"{name} rejected the request ({code}). " + ("The key looks invalid." if code in (401, 403) else "Check the model name and your balance." if code in (400, 402, 404) else "Try again in a moment.")}
     return {"ok": True, "message": "The key works. Students can use AI now."}
 @app.post("/api/admin/vision/test")
 async def test_vision(_: User = Depends(admin), s: Session = Depends(db)):
@@ -3358,7 +3431,7 @@ def key_or_fail(u, s):  # without a key AI is off, even for saved answers
     key = key_for(u, s)
     if not key and school_learner(u): raise HTTPException(503, NEEDS_GUARDIAN_KEY)
     if not key and u.self_registered: raise HTTPException(503, NEEDS_OWN_KEY)
-    if not key: raise ai_down(u, "no DeepSeek key is saved. Add one under AI config.")
+    if not key: raise ai_down(u, f"no {PROVIDERS[ai_provider(s)].name} key is saved. Add one under Settings > AI.")
     return key
 # ---- plans for self-registered people. Lite: the college's AI key with a small free allowance each local day (searches, and minutes of learning with AI).
 # ---- Own key: their own DeepSeek key, no allowance. Pro: an admin lets them use the college's key like a college student until a date.
@@ -3389,7 +3462,7 @@ def lite_tick(s, u):  # counts the current minute once, however many requests or
     s.commit()
     if tick: lite_warn(s, u, r.minutes, lite_limits(s)[1], "minutes of learning with AI")
     return r
-LITE_MORE = " Saved answers still work. To keep going today, add your own DeepSeek key, or ask your admin for more."
+LITE_MORE = " Saved answers still work. To keep going today, add your own AI key, or ask your admin for more."
 def lite_more(u): return LITE_MORE if u.self_registered else " Saved answers still work. To keep going today, ask your admin for more."  # only people who signed up can bring a key
 def lite_search_left(u, s):  # before asking: is a free search left today? Nothing is used up yet
     if ai_plan(u) != "lite": return
@@ -3495,17 +3568,19 @@ def my_profile(u: User = Depends(me), s: Session = Depends(db)):
     pr = s.get(Program, u.program_id) if u.program_id else None
     return {"name": u.name, "email": u.email, "username": u.username, "role": u.role, "lang": u.lang or "en", "program": pr.name if pr else "", "semester": u.semester, "term": term_label(pr) if pr else "",
             "self_registered": bool(u.self_registered), "ai": plan_json(u, s), **({"rewards": rewards(s, u.id)} if u.role == "student" else {})}
-def own_key(u): return bool(u.self_registered and u.ai_key)  # paying with their own DeepSeek key: outside the college's allowance
-def egress(s, u, kind, topic_id, chars, ok, tokens=0):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
-    try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok, tokens=tokens or 0, own=own_key(u) and kind != "vision")); s.commit()
+def egress(s, u, kind, topic_id, chars, ok, tokens=0, key=None):  # the ledger of what leaves for the AI provider (sizes and kinds only, never the text); it must never break a request
+    try: s.add(AIEgress(user_id=u.id, kind=kind[:20], topic_id=topic_id, chars=chars, ok=ok, tokens=tokens or 0, provider=key.provider if key else "claude" if kind == "vision" else "deepseek",
+                        own=bool(key and key.own))); s.commit()
     except Exception: s.rollback()
+def egress_provider():  # the provider of a ledger row, in SQL: rows from before 0032 have none (photos were Claude, the rest DeepSeek)
+    return func.coalesce(AIEgress.provider, case((AIEgress.kind == "vision", "claude"), else_="deepseek"))
 # ---- the college's monthly AI allowance: tokens per provider, set by an admin. When one is used up, new AI requests on the college's key stop until
 # ---- the 1st; saved answers keep working, and people paying with their own key are not affected. Admins are warned at BUDGET_WARN of it.
 BUDGET_WARN = 0.8
 def month_start(): now = dt.datetime.utcnow(); return dt.datetime(now.year, now.month, 1)
 def budget(s, provider):  # {"limit": tokens or 0 for none, "used": tokens this month on the college's key}
     q = s.query(func.coalesce(func.sum(AIEgress.tokens), 0)).filter(AIEgress.at >= month_start(), AIEgress.own == False)  # noqa: E712
-    q = q.filter(AIEgress.kind == "vision") if provider == "claude" else q.filter(AIEgress.kind != "vision")
+    q = q.filter(egress_provider() == provider)
     try: limit = max(0, int(setting(s, "budget_" + provider) or 0))
     except ValueError: limit = 0
     return {"limit": limit, "used": int(q.scalar() or 0)}
@@ -3513,24 +3588,20 @@ def budget_or_fail(u, s, provider):
     b = budget(s, provider)
     if b["limit"] and b["used"] >= b["limit"]:
         raise HTTPException(503, "This month's AI allowance is used up. Saved answers still work, and new ones can be asked again from the 1st."
-                            + (f" (Admin: the {'Claude' if provider == 'claude' else 'DeepSeek'} allowance is set under Settings.)" if u.role == "admin" else ""))
+                            + (f" (Admin: the {PROVIDERS[provider].name} allowance is set under Settings.)" if u.role == "admin" else ""))
 async def ask_ai(u, s, key, system, msg, max_tokens=None, timeout=60, kind="other", topic_id=None):
-    size = len(system) + len(msg)
-    if not own_key(u): budget_or_fail(u, s, "deepseek")
+    size = len(system) + len(msg); name = PROVIDERS[key.provider].name
+    if not key.own: budget_or_fail(u, s, key.provider)
     if kind not in LITE_SEARCH_KINDS + ("mcq",): lite_time_or_fail(u, s)  # searches were counted when asked; an MCQ set is counted as a set
     try:
-        out = await deepseek(key, setting(s, "model", "deepseek-chat"), [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
-        egress(s, u, kind, topic_id, size, True, out[1]); return out
-    except httpx.HTTPStatusError as e:
-        egress(s, u, kind, topic_id, size, False)
-        log.warning("DeepSeek answered %s", e.response.status_code)
-        if own_key(u): raise HTTPException(503, f"DeepSeek refused your key ({e.response.status_code}). Check it, or your DeepSeek balance, under AI key in the menu.")
-        raise ai_down(u, "DeepSeek refused the request (" + str(e.response.status_code) + "). Check the key, model name and balance under AI config.")
+        out = await chat(key, [{"role": "system", "content": system}, {"role": "user", "content": msg}], max_tokens=max_tokens, timeout=timeout)
+        egress(s, u, kind, topic_id, size, True, out[1], key); return out
     except Exception as e:
-        egress(s, u, kind, topic_id, size, False)
-        log.warning("DeepSeek call failed: %s", type(e).__name__)
-        if own_key(u): raise HTTPException(503, "DeepSeek did not answer. Try again in a moment.")
-        raise ai_down(u, "DeepSeek did not answer.")
+        egress(s, u, kind, topic_id, size, False, 0, key); code = refused_code(e)
+        log.warning("%s call failed: %s", name, code or type(e).__name__)
+        if key.own and code: raise HTTPException(503, f"{name} refused the key ({code}). Check it, or the {name} balance, under AI key in the menu.")
+        if key.own: raise HTTPException(503, f"{name} did not answer. Try again in a moment.")
+        raise ai_down(u, f"{name} refused the request ({code}). Check the key, model name and balance under AI config." if code else f"{name} did not answer.")
 def topic_msg(f, kind, mine=None):  # what the AI is told about a topic
     body = words_of(f["content"], f["content_format"])  # the AI gets the words of an HTML topic, not its tags or scripts
     return (f"Program: {f['program']}\nSemester: {f['semester']}\nCourse: {f['course']}\nUnit: {f['unit']}\nTopic: {f['title']}\n\nTopic content:\n{body}\n\n"
@@ -3782,13 +3853,75 @@ async def photo_ask(b: PhotoAsk, u: User = Depends(me), s: Session = Depends(db)
             egress(s, u, "vision", None, size, False); log.warning("Claude call failed: %s", type(e).__name__)
             raise ai_down(u, "Claude did not answer. Check the Claude key and model under Settings." if isinstance(e, anthropic.APIStatusError) else "Claude did not answer.")
         egress(s, u, "vision", None, size, True, _t); lite_search_used(u, s); return {"text": out, "via": "claude"}
-    out, _t = await ask_ai(u, s, key_or_fail(u, s), prompt, msg, max_tokens=900, kind="photo")
-    lite_search_used(u, s); return {"text": out, "via": "deepseek"}
+    key = key_or_fail(u, s); out, _t = await ask_ai(u, s, key, prompt, msg, max_tokens=900, kind="photo")
+    lite_search_used(u, s); return {"text": out, "via": key.provider}
+# ---- what the AI costs: the tokens the providers billed on the college's keys (people's own keys cost the college nothing), priced at the rates an
+# ---- admin enters (per million tokens, any currency), by plan, by kind and by person: the figures a Pro or family price has to stand on.
+# ---- People are grouped by their plan now (someone who became Pro last week counts as Pro for the whole period).
+def cost_rates(s):  # what the admin entered: each provider's price for a million tokens, and the currency sign
+    def num(k):
+        try: v = float(setting(s, k) or 0); return v if 0 <= v <= 1_000_000 else 0.0
+        except ValueError: return 0.0
+    return {"prices": {p: num("cost_" + p) for p in PROVIDERS}, "currency": setting(s, "cost_currency") or "₹"}
+def plan_now(u): return "staff" if is_staff(u) else ai_plan(u)
+def spread(xs):  # average, median, 90th percentile and highest of a list of numbers
+    if not xs: return {"avg": 0, "median": 0, "p90": 0, "max": 0}
+    v = sorted(xs); at = lambda q: v[min(len(v) - 1, int(q * (len(v) - 1) + 0.5))]
+    return {"avg": round(sum(v) / len(v), 4), "median": round(at(.5), 4), "p90": round(at(.9), 4), "max": round(v[-1], 4)}
+@app.get("/api/admin/costs")
+def ai_costs(days: int = 30, format: str = "json", _: User = Depends(admin), s: Session = Depends(db)):
+    """What the AI cost the college: the tokens each provider billed on the college's keys, at the admin's prices; by plan, by kind and by person.
+    Tokens on people's own keys (or a parent's or teacher's) cost the college nothing and are counted apart."""
+    days = min(max(days, 1), 400); since = dt.datetime.utcnow() - dt.timedelta(days=days); r = cost_rates(s); per30 = 30 / days
+    price = lambda prov, t: t * r["prices"].get(prov, 0) / 1_000_000
+    rows = s.query(AIEgress.user_id, AIEgress.kind, egress_provider(), AIEgress.own, func.count(AIEgress.id), func.coalesce(func.sum(AIEgress.tokens), 0)) \
+        .filter(AIEgress.at >= since).group_by(AIEgress.user_id, AIEgress.kind, egress_provider(), AIEgress.own).all()
+    people = {u.id: u for u in s.query(User)}
+    mine = defaultdict(lambda: {"requests": 0, "tokens": defaultdict(int), "cost": 0.0, "own_tokens": 0})
+    kinds = defaultdict(lambda: {"requests": 0, "tokens": 0, "cost": 0.0, "own_tokens": 0}); provs = defaultdict(lambda: {"tokens": 0, "cost": 0.0, "own_tokens": 0})
+    for uid, kind, prov, own, n, t in rows:
+        t = int(t); k = kinds[kind]; m = mine[uid]; pv = provs[prov]; k["requests"] += n; m["requests"] += n
+        if own: k["own_tokens"] += t; m["own_tokens"] += t; pv["own_tokens"] += t; continue
+        c = price(prov, t); k["tokens"] += t; k["cost"] += c; m["tokens"][prov] += t; m["cost"] += c; pv["tokens"] += t; pv["cost"] += c
+    plans = defaultdict(lambda: {"people": 0, "active": 0, "requests": 0, "tokens": 0, "cost": 0.0, "costs": []})
+    for u in people.values():
+        if u.active: plans[plan_now(u)]["people"] += 1
+    for uid, m in mine.items():
+        u = people.get(uid); pl = plans[plan_now(u) if u else "deleted"]; pl["active"] += 1; pl["requests"] += m["requests"]
+        pl["tokens"] += sum(m["tokens"].values()); pl["cost"] += m["cost"]; pl["costs"].append(m["cost"] * per30)
+    users = sorted(({"id": uid, "name": people[uid].name if uid in people else "(deleted)", "email": (people[uid].email or people[uid].username or "") if uid in people else "",
+                     "plan": plan_now(people[uid]) if uid in people else "deleted", "requests": m["requests"], "tokens": dict(m["tokens"]), "own_tokens": m["own_tokens"], "cost": round(m["cost"], 4)}
+                    for uid, m in mine.items()), key=lambda x: (-x["cost"], -sum(x["tokens"].values())))
+    used = [p for p in PROVIDERS if p in provs]
+    if format == "csv":
+        return csv_response(f"ai-costs-{days}-days.csv", ["Name", "Email or username", "Plan", "Requests"] + [f"{PROVIDERS[p].name} tokens" for p in used] + ["Own-key tokens", f"Cost ({r['currency']})"],
+                            [[x["name"], x["email"], x["plan"], x["requests"]] + [x["tokens"].get(p, 0) for p in used] + [x["own_tokens"], x["cost"]] for x in users])
+    total = sum(m["cost"] for m in mine.values())
+    return {"days": days, "rates": r, "priced": any(r["prices"].values()), "provider": ai_provider(s),
+            "total": {"cost": round(total, 4), "per_30_days": round(total * per30, 4), "tokens": sum(v["tokens"] for v in provs.values()),
+                      "own_tokens": sum(m["own_tokens"] for m in mine.values()), "requests": sum(m["requests"] for m in mine.values())},
+            "providers": [{"provider": p, "name": PROVIDERS[p].name, "tokens": provs[p]["tokens"], "own_tokens": provs[p]["own_tokens"], "cost": round(provs[p]["cost"], 4)} for p in used],
+            "plans": [{"plan": k, "people": v["people"], "active": v["active"], "requests": v["requests"], "tokens": v["tokens"], "cost": round(v["cost"], 4), "per_active_30_days": spread(v["costs"])}
+                      for k, v in sorted(plans.items(), key=lambda x: -x[1]["cost"])],
+            "kinds": [{"kind": k, **{x: (round(v[x], 4) if x == "cost" else v[x]) for x in v}} for k, v in sorted(kinds.items(), key=lambda x: (-x[1]["cost"], -x[1]["tokens"]))],
+            "top": users[:20]}
+class RatesIn(BaseModel): prices: dict[str, float] | None = None; currency: str | None = None
+@app.put("/api/admin/costs/rates")
+def set_cost_rates(b: RatesIn, _: User = Depends(admin), s: Session = Depends(db)):
+    for p, v in (b.prices or {}).items():
+        if p not in PROVIDERS: raise HTTPException(400, "Choose DeepSeek, ChatGPT, Claude, Qwen or Perplexity.")
+        if not 0 <= v <= 1_000_000: raise HTTPException(400, "Enter the price for a million tokens, or 0")
+        s.merge(Setting(k="cost_" + p, v=str(v)))
+    if b.currency is not None:
+        c = b.currency.strip()
+        if not 1 <= len(c) <= 4: raise HTTPException(400, "Use a short currency sign, such as ₹ or $")
+        s.merge(Setting(k="cost_currency", v=c))
+    s.commit(); return cost_rates(s)
 @app.get("/api/admin/budget")
 def budget_status(_: User = Depends(admin), s: Session = Depends(db)):
-    out = {p: budget(s, p) for p in ("deepseek", "claude")}
+    out = {p: budget(s, p) for p in PROVIDERS}
     for b in out.values(): b["share"] = round(b["used"] / b["limit"], 3) if b["limit"] else 0
-    return {**out, "warn_at": BUDGET_WARN}
+    return {**out, "warn_at": BUDGET_WARN, "names": {p: v.name for p, v in PROVIDERS.items()}}
 # ---- a topic's notes in the reader's language (Arabic or Tamil): translated once per topic and language, in parts, then kept and shared
 TRANSLATABLE = ("markdown", "html")
 def note_parts(text, fmt, size=3000):  # the notes cut at paragraph or block ends into parts of about `size` characters
