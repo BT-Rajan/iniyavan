@@ -32,7 +32,10 @@ import kotlinx.serialization.json.JsonObject
 @Serializable data class TopicFull(val id: Int, val title: String, val course: String = "", val course_id: Int = 0, val unit: String = "", val semester: String = "", val program: String = "",
                                    val content: String? = null, val content_format: String = "markdown", val question_pattern: String? = null, val guideline: String? = null,
                                    val my_notes: String? = null, val frame_url: String? = null, val status: String = "not_started", val learning_due_at: String? = null,
-                                   val bookmarked: Boolean = false, val nav: Nav? = null)
+                                   val bookmarked: Boolean = false, val nav: Nav? = null,
+                                   val diagram: String? = null)  // null: no diagram; "pro": the teacher wants one and it comes with Pro; "on": it opens
+/** a topic's diagram: the sandboxed page to open full screen */
+@Serializable data class DiagramOut(val frame_url: String, val cached: Boolean = false)
 @Serializable data class Learning(val status: String = "not_started")
 @Serializable data class AiStatus(val available: Boolean = false, val own_key: Boolean = false, val vision: Boolean = false, val ocr: Boolean = false, val plan: String = "college", val off: Boolean = false)
 @Serializable data class You(val order: List<String> = emptyList(), val question_first: Boolean = false, val level: String? = null)

@@ -39,7 +39,7 @@ jobs:
 
       - name: Shots
         working-directory: mobile
-        run: ./gradlew --no-daemon testDebugUnitTest -Pscreens -PscreensServer=http://127.0.0.1:4400 --tests 'app.zigora.screens.PromoTest'
+        run: ./gradlew --no-daemon testDebugUnitTest -Pscreens -PscreensServer=http://127.0.0.1:4400 --tests 'app.zigora.screens.PromoTest' --tests 'app.zigora.screens.DiagramTest'
 
       - name: Commit the shots to the branch
         run: |

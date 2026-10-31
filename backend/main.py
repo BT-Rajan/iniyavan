@@ -140,6 +140,8 @@ class Topic(Base):
     position = Column(Integer, nullable=True)  # order within the unit, set by the course's owner
     learning_due_at = Column(DateTime, nullable=True)  # learn-by deadline, a UTC instant like every timestamp here; null = no deadline
     archived_at = Column(DateTime, nullable=True)  # set while this item is archived (hidden from students, nothing deleted); everything under it is archived with it
+    diagram = Column(Boolean, default=False)  # the teacher wants a diagram for this topic: the AI draws one (an interactive HTML page) for students on Pro
+    diagram_note = Column(Text, nullable=True)  # what the teacher wants drawn, if they say ("a flow diagram of the lime-soda process")
 class TopicVersion(Base):  # a snapshot of a topic's text each time it is saved, so an earlier version can be read and restored
     __tablename__ = "topic_versions"
     id = Column(Integer, primary_key=True); topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), index=True)
@@ -332,8 +334,8 @@ if ORIGINS: app.add_middleware(CORSMiddleware, allow_origins=ORIGINS, allow_meth
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # the app bundle is ~850 KB; compressed it is about a quarter of that
 GSI = "https://accounts.google.com/gsi/"  # Sign in with Google: its script, the frame with its button, and its style, as Google's own CSP guide lists them
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' " + GSI + "style; font-src 'self' data:; "
-       "script-src 'self' " + GSI + "client; frame-src " + GSI + "; connect-src 'self' " + GSI + "; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
-FRAME_PATH = re.compile(r"^/api/(topics/\d+/frame|frame-preview/[\w-]+)$")
+       "script-src 'self' " + GSI + "client; frame-src 'self' " + GSI + "; connect-src 'self' " + GSI + "; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+FRAME_PATH = re.compile(r"^/api/(topics/\d+/frame|topics/\d+/diagram/frame|frame-preview/[\w-]+)$")
 SKIP_AUDIT = re.compile(r"/(read|bookmark|attempt|complete)$|/ai/|^/api/me/lang$")  # student reading activity is already tracked as progress; a language choice is only a preference
 def audit_write(uid, method, path, status):
     with Session_() as s: s.add(AuditLog(user_id=uid, method=method, path=path[:200], status=status)); s.commit()
@@ -860,7 +862,8 @@ MIGRATIONS = [("0001_topics_unit_id", _addcol("topics", "unit_id", "INT NULL")),
               ("0031_calendar", lambda c: calendar_tables(c)),
               ("0032_ai_providers", lambda c: [_addcol("users", "ai_provider", "VARCHAR(20) NULL")(c), _addcol("ai_egress", "provider", "VARCHAR(20) NULL")(c)]),
               ("0033_progress_history", lambda c: Base.metadata.create_all(c, tables=[ProgressHistory.__table__])),
-              ("0034_assignments", lambda c: [Base.metadata.create_all(c, tables=[Assignment.__table__, AssignmentStudent.__table__]), _addcol("mcq_attempts", "assignment_id", "INTEGER NULL")(c)])]
+              ("0034_assignments", lambda c: [Base.metadata.create_all(c, tables=[Assignment.__table__, AssignmentStudent.__table__]), _addcol("mcq_attempts", "assignment_id", "INTEGER NULL")(c)]),
+              ("0035_topic_diagram", lambda c: [_addcol("topics", "diagram", "BOOLEAN NULL")(c), _addcol("topics", "diagram_note", "TEXT NULL")(c)])]
 def upgrade_schema():  # creates any missing tables, then applies pending migrations in order
     Base.metadata.create_all(engine)
     with engine.connect() as c: done = {r[0] for r in c.execute(text("SELECT id FROM schema_migrations"))}
@@ -2105,6 +2108,7 @@ class TopicIn(BaseModel):
     title: str; unit_id: int; content: str = ""; sample_content: str = ""; question_pattern: str = ""; guideline: str = ""; published: bool = True
     content_format: str = "markdown"  # "markdown" or "html"; HTML is cleaned when it is saved
     learning_due_at: dt.datetime | None = None  # ISO 8601 with a time zone; null removes the deadline; leave out to keep it
+    diagram: bool = False; diagram_note: str = ""  # the teacher asks for an AI diagram (shown to students on Pro), and what it should show
 M = {"programs": Program, "semesters": Semester, "courses": Course, "units": Unit, "topics": Topic}
 @app.get("/api/tree")
 def tree(u: User = Depends(me), s: Session = Depends(db)):
@@ -2250,6 +2254,9 @@ def topic_fields(b, s, keep_fmt=None):
     if not title or len(title) > 200: raise HTTPException(400, "Give the topic a title (up to 200 characters)")
     f = {**b.dict(exclude_unset=True), "title": title, "course_id": un.course_id}  # fields left out are left alone
     if "learning_due_at" in f: f["learning_due_at"] = due_value(b.learning_due_at)
+    if "diagram_note" in f:
+        f["diagram_note"] = (f["diagram_note"] or "").strip() or None
+        if f["diagram_note"] and len(f["diagram_note"]) > DIAGRAM_NOTE_MAX: raise HTTPException(400, f"Keep what the diagram should show under {DIAGRAM_NOTE_MAX} characters")
     if "content_format" in f or "content" in f:
         fmt = f.get("content_format") or keep_fmt or "markdown"  # content sent without a format keeps the topic's format
         if fmt not in FORMATS: raise HTTPException(400, "Content format must be markdown or html")
@@ -3043,7 +3050,8 @@ def full(t, s):
     un = s.get(Unit, t.unit_id) if t.unit_id else None
     return {"id": t.id, "title": t.title, "course_id": co.id, "unit_id": t.unit_id, "unit": un.name if un else "", "course": co.name,
             "semester": sem.name if sem else "", "program": (s.get(Program, sem.program_id if sem else co.program_id) or Program(name="")).name,
-            "content": shown_content(t), "content_format": fmt_of(t), "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False}
+            "content": shown_content(t), "content_format": fmt_of(t), "sample_content": t.sample_content, "question_pattern": t.question_pattern, "guideline": t.guideline, "published": t.published is not False,
+            "diagram_on": bool(t.diagram), "diagram_note": t.diagram_note or ""}
 def version_row(v, names, cur): return {"id": v.id, "saved_at": (v.saved_at.isoformat() + "Z") if v.saved_at else None, "by": names.get(v.saved_by) if v.saved_by else None, "note": v.note or "",
                                           "current": all((getattr(v, k) or "") == cur[k] for k in VFIELDS)}
 @app.get("/api/topics/{tid}/versions")
@@ -3236,7 +3244,7 @@ def topic(tid: int, u: User = Depends(me), s: Session = Depends(db)):
     p = s.query(Progress).filter_by(user_id=u.id, topic_id=tid).first()
     edit = can_edit(u, topic_course_id(t, s), s)
     frame = {"frame_url": f"/api/topics/{tid}/frame?t={frame_pass(u, tid)}"} if fmt_of(t) == "interactive" else {}
-    return {**full(t, s), **frame, **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "my_notes": my_notes(s, u.id, tid), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
+    return {**full(t, s), **frame, "diagram": diagram_state(u, t, s), **learning_state(t.learning_due_at, p, dt.datetime.utcnow()), "my_notes": my_notes(s, u.id, tid), "can_edit": edit, "nav": topic_neighbours(t, edit, s), "bookmarked": s.query(Bookmark).filter_by(user_id=u.id, topic_id=tid).first() is not None}
 # ---- interactive topics run in a sandboxed frame; highlights are saved per person ----
 # The page gets an opaque origin (CSP sandbox without allow-same-origin), so its scripts can't read the app's sign-in, call the API as the reader or
 # touch the app's page. It talks to the app only through postMessage, and the app accepts just the highlight messages below.
@@ -3283,6 +3291,58 @@ def topic_frame(tid: int, t: str = "", s: Session = Depends(db)):
     try: data = json.loads(row.data) if row and row.data else {}
     except ValueError: data = {}
     return frame_page(tp.content, data if isinstance(data, dict) else {}, keep=True)
+# ---- a topic's diagram: the teacher turns it on (and may say what to draw); the AI draws an interactive HTML page once per topic and language.
+# ---- Students on Lite see that there is one, and that it comes with Pro; everyone else can open it, full screen, in a sandbox stricter than a
+# ---- teacher's page: its own scripts and styles run, but nothing can be loaded from anywhere (no network), since the AI wrote it.
+DIAGRAM_NOTE_MAX = 1000; DIAGRAM_BYTES = 64_000  # the page is kept in ai_cache.text (64 KB in MySQL)
+DIAGRAM_PLANS = ("college", "own", "pro", "family")  # Lite (and AI off) don't get diagrams
+DIAGRAM_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; frame-ancestors 'self'"
+DIAGRAM_PRO = "Diagrams come with Pro."
+def diagram_state(u, t, s):  # None: no diagram for this topic; "pro": the teacher wants one, and it comes with Pro; "on": it can be opened
+    if not getattr(t, "diagram", False): return None
+    return "on" if is_staff(u) or ai_plan(u) in DIAGRAM_PLANS else "pro"
+def diagram_hash(u, t, s):  # changes with the topic, the teacher's note and the reader's language (the prompt carries it)
+    return hashlib.sha256("|".join([topic_hash(t, "diagram", in_lang(u, prompt_for(s, "diagram"))), t.diagram_note or ""]).encode()).hexdigest()
+def diagram_html(text):  # the page the AI wrote, or None when it isn't one (cut off, no drawing, too big)
+    t = re.sub(r"^\s*```(?:html)?\s*|\s*```\s*$", "", (text or "").strip(), flags=re.I)
+    i = min([x for x in (t.lower().find("<!doctype"), t.lower().find("<html")) if x >= 0], default=-1)
+    if i < 0: return None
+    t = t[i:]
+    if "</html>" not in t.lower() or not re.search(r"<(svg|canvas)\b", t, re.I) or len(t.encode()) > DIAGRAM_BYTES: return None
+    return t
+@app.get("/api/topics/{tid}/diagram")
+async def topic_diagram(tid: int, u: User = Depends(me), s: Session = Depends(db)):
+    t = s.get(Topic, tid)
+    if not t: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, t, s); state = diagram_state(u, t, s)
+    if state is None: raise HTTPException(404, "This topic has no diagram")
+    if state == "pro": raise HTTPException(403, DIAGRAM_PRO + (" Add your own AI key, or ask your admin for Pro." if u.self_registered else " Ask your admin for Pro."))
+    ch = diagram_hash(u, t, s); key = key_or_fail(u, s)
+    hit = s.query(AICache).filter_by(topic_id=tid, kind="diagram", chash=ch).first(); cached = hit is not None
+    if hit: hit.hits += 1; s.commit()
+    else:
+        msg = topic_msg(full(t, s), "diagram") + (f"\nThe teacher asks for this diagram: {t.diagram_note}\n" if t.diagram_note else "")
+        text, tokens = await ask_ai(u, s, key, in_lang(u, prompt_for(s, "diagram")), msg, max_tokens=6000, kind="topic_diagram", topic_id=tid)
+        page = diagram_html(text)
+        if not page: raise HTTPException(502, "The AI's diagram could not be read. Try again.")  # not saved, so the next try draws again
+        hit = AICache(topic_id=tid, kind="diagram", chash=ch, text=page, tokens=tokens)
+        try: s.add(hit); s.commit()
+        except Exception: s.rollback(); hit = s.query(AICache).filter_by(topic_id=tid, kind="diagram", chash=ch).first()  # drawn at the same moment by someone else
+        if not hit: raise HTTPException(502, "The diagram could not be saved. Try again.")
+    return {"frame_url": f"/api/topics/{tid}/diagram/frame?t={frame_pass(u, tid)}", "cached": cached, "id": hit.id}
+@app.get("/api/topics/{tid}/diagram/frame")
+def diagram_frame(tid: int, t: str = "", s: Session = Depends(db)):
+    try: c = jwt.decode(t, SECRET, algorithms=["HS256"])
+    except Exception: raise HTTPException(401, "This link has expired. Open the diagram again.")
+    if c.get("use") != "frame" or c.get("tid") != tid: raise HTTPException(401, "This link has expired. Open the diagram again.")
+    u, tp = s.get(User, c.get("uid")), s.get(Topic, tid)
+    if not u or not u.active or c.get("k") != fp(u): raise HTTPException(401, "Please sign in again")
+    if not tp: raise HTTPException(404, "Topic not found")
+    check_topic_access(u, tp, s)
+    if diagram_state(u, tp, s) != "on": raise HTTPException(403, DIAGRAM_PRO)
+    row = s.query(AICache).filter_by(topic_id=tid, kind="diagram", chash=diagram_hash(u, tp, s)).first()
+    if not row: raise HTTPException(404, "Open the diagram again")
+    return HTMLResponse(row.text, headers={"Content-Security-Policy": DIAGRAM_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 PREVIEWS = {}  # id -> (expires, html): an unsaved interactive page the editor is previewing, kept a few minutes in memory
 class PreviewIn(BaseModel): html: str
 @app.post("/api/topics/frame-preview")
@@ -3617,6 +3677,12 @@ PROMPTS = {  # the built-in prompts; an admin can replace any of them under Sett
  "photo": ("A student photographed part of a textbook or question paper and has a question about it. You get the text read from the photo (it may have reading mistakes: "
            "fix obvious ones silently) and, when they ask about a diagram, the photo itself. Answer their question clearly and briefly: at most 150 words, or numbered steps "
            "when they ask you to solve something. Use Markdown and $...$ for maths. If the photo or text is too unclear to answer, say what is unclear and ask them to retake it."),
+ "diagram": ("You draw one diagram that helps an engineering student understand a topic, as a single self-contained HTML page. Use inline SVG for the drawing and a little "
+             "inline JavaScript to make it interactive: tapping or hovering a part shows a short label or explanation, and where the idea has stages or a flow, step buttons "
+             "or a slider walk through them. Use no external files, fonts, images or network requests. It must read well full screen on a phone (portrait) and on a laptop: "
+             "a viewBox that scales, large tap targets, text of at least 14px, a white background, dark text and two or three clear colours. Label every part with the "
+             "topic's own terms. Stay accurate to the notes. Put a one-line title at the top and one line of instructions (what to tap). If the teacher said what to draw, "
+             "draw that. Reply with the HTML only, starting with <!doctype html>."),
  "search": ("You are the search helper inside a study app for college students. The student typed a search about something they are studying and the app has no good match in its own notes, "
             "or they asked for a second opinion. Answer it as a clear, accurate tutor: start with a one-line definition, then explain the core idea simply, give one example, and end with 3 recap bullets. "
             "Use Markdown; show comparisons and families of related items as a table with every row on its own line. Fit the answer to the student's program and level when it is given. "
@@ -3635,6 +3701,7 @@ PROMPT_INFO = {"explain": ("Explain tab", "Used when a student opens Explain on 
                "doubt": ("Doubt (a marked phrase)", "Used when a student marks a phrase they do not follow and asks the AI. Only the program, semester, course and topic names and the phrase are sent, never the notes."),
                "translate": ("Notes in my language", "Translates a topic's notes into a student's language (Arabic or Tamil), once per topic and language; everyone shares the translation."),
                "photo": ("Ask from a photo", "Used when a student photographs a question, text or diagram and asks about it. With a diagram, the photo goes to Claude; otherwise only the text read from it goes to DeepSeek."),
+               "diagram": ("Topic diagram (Pro)", "Drawn when a student on Pro opens the diagram of a topic whose teacher turned diagrams on. The topic's notes and the teacher's note on what to draw are sent. Saved per topic and language, so each costs tokens once."),
                "search": ("Student search", "Used when a search finds nothing in the app's own topics, or the student taps Recheck with AI.")}
 MAX_PROMPT = 4000
 def prompt_for(s, kind): return setting(s, "prompt_" + kind).strip() or PROMPTS[kind]
@@ -3900,7 +3967,7 @@ def question_first(u, t, s):
 @app.get("/api/topics/{tid}/ai/{kind}")
 async def ai(tid: int, kind: str, u: User = Depends(me), s: Session = Depends(db)):
     t = s.get(Topic, tid)
-    if not t or kind not in PROMPTS or kind in ("search", "line", "doubt"): raise HTTPException(404, "Not found")
+    if not t or kind not in PROMPTS or kind in ("search", "line", "doubt", "diagram"): raise HTTPException(404, "Not found")  # a diagram has its own way in (Pro only)
     check_topic_access(u, t, s)
     you = learner(u, s) if u.role == "student" else None
     f = full(t, s); prompt = in_lang(u, prompt_for(s, kind) + (CHECK_LEVEL.get(you["level"], "") if you and kind == "check" else ""))

@@ -15,6 +15,8 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -147,3 +149,27 @@ fun InteractivePage(url: String, handle: WebHandle, modifier: Modifier = Modifie
 fun WebHandle.toFrame(data: JsonObject) = view?.evaluateJavascript("window.zgNative&&zgNative($data)", null)
 
 private fun goneQuietly(v: WebView): Boolean { (v.parent as? ViewGroup)?.removeView(v); v.destroy(); return true }
+
+/** A topic's diagram, full screen: the AI's page from the server's sandbox (its scripts run, nothing can be loaded and it can't reach the app). */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun DiagramScreen(url: String, close: () -> Unit) {
+    val ctx = LocalContext.current; val base = api().base
+    val view = remember {
+        WebView(ctx).apply {
+            settings.javaScriptEnabled = true; settings.domStorageEnabled = false; settings.allowFileAccess = false; settings.allowContentAccess = false
+            setBackgroundColor(android.graphics.Color.WHITE)
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest) = true  // the diagram never goes anywhere else
+                override fun onRenderProcessGone(v: WebView, d: RenderProcessGoneDetail) = goneQuietly(v)
+            }
+            loadUrl(base + url)
+        }
+    }
+    DisposableEffect(Unit) { onDispose { view.destroy() } }
+    androidx.compose.material3.Scaffold(topBar = {
+        androidx.compose.material3.TopAppBar(title = { androidx.compose.material3.Text(tl("Diagram")) }, navigationIcon = {
+            androidx.compose.material3.IconButton(onClick = close) { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Close, tl("Close")) } })
+    }) { pad -> AndroidView(factory = { view }, modifier = Modifier.padding(pad).fillMaxSize()) }
+}

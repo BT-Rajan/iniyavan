@@ -2,7 +2,7 @@ import {useState,useEffect,useCallback,useRef,createContext,useContext,Children,
 import {createPortal} from 'react-dom'
 import {Md,Body} from './content.jsx'
 import {ROOT,at} from './base.js'
-import {ClipboardCheck,CalendarDays,Plus,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks} from 'lucide-react'
+import {ClipboardCheck,CalendarDays,Plus,Users as UsersIcon,GraduationCap,Sparkles,BarChart3,Info,LogOut,Menu,X,ArrowUp,ArrowDown,Search,ChevronLeft,ChevronRight,Sun,Moon,Monitor,Upload,Copy,Check,Pencil,Trash2,Bookmark,Link2,Eye,EyeOff,History,TrendingUp,Clock,AlertTriangle,Play,Target,RotateCcw,ClipboardList,Archive,ArchiveRestore,Lock,FileText,Bell,BookOpen,Highlighter,Maximize2,Minimize2,Globe,Printer,Flag,Camera,ImagePlus,ListChecks,Shapes} from 'lucide-react'
 import '@fontsource/bricolage-grotesque/600.css'
 import '@fontsource/bricolage-grotesque/800.css'
 import '@fontsource/instrument-sans/400.css'
@@ -1583,7 +1583,7 @@ function Topic({id:first,back,toast,role}){
     {cp&&<CopySheet kind="topic" id={id} title={t.title} toast={toast} close={()=>setCp(false)}/>}
     {hist&&<HistorySheet tid={id} toast={toast} close={()=>setHist(false)} done={()=>{setHist(false);setV(v+1)}}/>}
     {t.can_edit&&!t.published&&<p className="known" style={{marginTop:0}}>{tl("Draft · students cannot see it")}</p>}
-    {aiOk&&<TopicSteps id={id} student={role==='student'}/>}
+    {aiOk&&<TopicSteps id={id} student={role==='student'} diagram={pv&&t.diagram?'on':t.diagram}/>}
     {aiOff?<p className="known">{tl("AI help is off. A parent or teacher can turn it on by adding their AI key to their account.")}</p>:<Tabs label={tl("Topic sections")} items={[['notes',tl("Notes")],['explain',tl("Explain")],['answer',tl("Sample answer")]]} value={tab} onChange={setTab}/>}
     {known.length>0&&tab==='explain'&&<p className="known">{tl("You’ve already covered:")}{" "}{known.join(', ')}</p>}
     {tab==='notes'&&t.content&&<button className="btn lead" onClick={()=>setReading(true)}><Maximize2 size={16}/> {t.content_format==='interactive'?tl("Open the interactive page"):tl("Read in full screen")}</button>}
@@ -1622,9 +1622,11 @@ function StepCard({id,rid,k,d,student,onSimpler}){
 // the top of a topic page: the gist and one curious question, then short steps the reader picks. It adapts to each student, privately:
 // the steps they use most come first, quick checks get easier or harder from their own "I had it" / "Not quite", and after a few topics
 // in a unit the question comes first with the gist one tap away. Every reply is a few lines and saved for everyone; the notes stay the reference
-function TopicSteps({id,student}){
+function TopicSteps({id,student,diagram}){
   const [g,setG]=useState(null),[you,setYou]=useState(null),[err,setErr]=useState(''),[trail,setTrail]=useState([]),[busy,setBusy]=useState(''),[open,setOpen]=useState(false)
-  const [gid,setGid]=useState(null)
+  const [gid,setGid]=useState(null),[dia,setDia]=useState({busy:false,url:'',msg:''})
+  // the topic's diagram, when its teacher turned one on: drawn by the AI once, then shared; on Lite the server says it comes with Pro
+  const diagramOpen=async()=>{setDia({busy:true,url:'',msg:''});try{setDia({busy:false,url:(await api(`/topics/${id}/diagram`)).frame_url,msg:''})}catch(e){setDia({busy:false,url:'',msg:e.message})}}
   useEffect(()=>{setG(null);setYou(null);setOpen(false);setErr('');setTrail([]);api(`/topics/${id}/ai/gist`).then(r=>{setG(r.data);setGid(r.id);setYou(r.you||null)}).catch(e=>setErr(e.message))},[id])
   const step=async k=>{setBusy(k);setErr('');try{const r=await api(`/topics/${id}/ai/${k}`);setTrail(x=>[...x.filter(y=>y.k!==k),{k,d:r.data,rid:r.id,raw:r.text}])}catch(e){setErr(e.message)}setBusy('')}
   if(err&&!g)return null  // without AI the page is the notes, as before
@@ -1638,7 +1640,11 @@ function TopicSteps({id,student}){
         {g.hook&&!open&&<Hook q={g.hook} a={g.hook_answer}/>}<FlagLink source="topic" id={gid} topicId={id}/></>}
     {g&&<>{trail.map(x=><StepCard key={x.k} id={id} rid={x.rid} k={x.k} d={x.d} student={student} onSimpler={trail.some(y=>y.k==='simpler')?null:()=>step('simpler')}/>)}
       {err&&<p className="known" role="alert">{err}</p>}
-      {left.length>0&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}</div>}
+      {(left.length>0||diagram)&&<div className="stepchips">{left.map(([k,l])=><button key={k} className="stepchip" disabled={!!busy} onClick={()=>step(k)}>{busy===k?tl("Thinking…"):l}</button>)}
+        {diagram&&<button className={'stepchip diag'+(diagram==='pro'?' locked':'')} disabled={dia.busy} onClick={diagramOpen}>{diagram==='pro'?<Lock size={14}/>:<Shapes size={14}/>}{" "}{dia.busy?tl("Drawing…"):tl("Diagram")}{diagram==='pro'&&<span className="pill sm">{tl("Pro")}</span>}</button>}</div>}
+      {dia.msg&&<p className="known" role="status">{dia.msg}</p>}
+      {dia.url&&<div className="diagview" role="dialog" aria-modal="true" aria-label={tl("Diagram")}><div className="diagbar"><b>{tl("Diagram")}</b><button className="ic" aria-label={tl("Close")} onClick={()=>setDia({busy:false,url:'',msg:''})}><X size={18}/></button></div>
+        <iframe title={tl("Diagram")} src={at(dia.url)} sandbox="allow-scripts"/></div>}
       {busy==='simpler'&&<p className="known">{tl("Thinking…")}</p>}</>}
   </section>}
 // Ask from a photo: snap a question, a paragraph or a diagram in a book. The photo is shrunk in the browser, the server reads its text (nothing leaves),
@@ -1860,9 +1866,9 @@ const FILES_HELP='Pick the content: an HTML file or a Markdown .md file. To keep
 function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a topic, or null for a new one in unitId
   const confirm=useConfirm()
   const fac=role==='faculty',[prev,setPrev]=useState(false),[up,setUp]=useState(false),fileRef=useRef(null),taRef=useRef(null),filesRef=useRef(null),[busy,setBusy]=useState(false)
-  const [tree,setTree]=useState([]),[f,setF]=useState({title:'',unit_id:unitId||'',content:'',content_format:'markdown',sample_content:'',question_pattern:'',guideline:'',published:!fac,due:''}),[cid,setCid]=useState(null)
+  const [tree,setTree]=useState([]),[f,setF]=useState({title:'',unit_id:unitId||'',content:'',content_format:'markdown',sample_content:'',question_pattern:'',guideline:'',published:!fac,due:'',diagram:false,diagram_note:''}),[cid,setCid]=useState(null)
   const [fromFiles,setFromFiles]=useState(null),[shown,setShown]=useState(''),[imp,setImp]=useState(false)
-  useEffect(()=>{api('/tree').then(setTree).catch(()=>{});if(edit)api('/topics/'+edit.id).then(t=>{setCid(t.course_id);setF({title:t.title,unit_id:t.unit_id||'',content:t.content||'',content_format:t.content_format||'markdown',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false,due:localInput(t.learning_due_at)})}).catch(e=>toast(e.message))},[])
+  useEffect(()=>{api('/tree').then(setTree).catch(()=>{});if(edit)api('/topics/'+edit.id).then(t=>{setCid(t.course_id);setF({title:t.title,unit_id:t.unit_id||'',content:t.content||'',content_format:t.content_format||'markdown',sample_content:t.sample_content||'',question_pattern:t.question_pattern||'',guideline:t.guideline||'',published:t.published!==false,due:localInput(t.learning_due_at),diagram:!!t.diagram_on,diagram_note:t.diagram_note||''})}).catch(e=>toast(e.message))},[])
   const html=f.content_format==='html',inter=f.content_format==='interactive',[frameUrl,setFrameUrl]=useState('')
   useEffect(()=>{if(!prev||!inter)return;let live=true;setFrameUrl('');api('/topics/frame-preview',{method:'POST',body:{html:f.content}}).then(r=>live&&setFrameUrl(r.url)).catch(e=>toast(e.message));return()=>{live=false}},[prev,inter,f.content])
   useEffect(()=>{if(!prev||!html)return;let live=true;api('/topics/clean-html',{method:'POST',body:{html:f.content}}).then(r=>live&&setShown(r.html)).catch(e=>toast(e.message));return()=>{live=false}},[prev,html,f.content])
@@ -1902,6 +1908,10 @@ function TopicEditor({role,toast,done,cancel,edit,unitId}){  // edit = {id} of a
     <label>{tl("Learning deadline")}</label><div className="qopt"><input type="datetime-local" aria-label={tl("Learning deadline")} value={f.due} onChange={set('due')}/>{f.due&&<button type="button" className="tool" onClick={()=>setF({...f,due:''})}>{tl("No deadline")}</button>}</div>
     <p className="known" style={{marginTop:4}}>{f.due?tl("Students should have learnt this topic by then. They can still open it afterwards."):tl("No deadline")}</p>
     <label className="chk"><input type="checkbox" checked={f.published!==false} onChange={e=>setF({...f,published:e.target.checked})}/>{" "}{tl("Published (students can see this topic)")}</label>
+    <label className="chk"><input type="checkbox" checked={!!f.diagram} onChange={e=>setF({...f,diagram:e.target.checked})}/>{" "}{tl("Diagram for students on Pro")}</label>
+    {f.diagram&&<><label htmlFor="dgn">{tl("What should the diagram show? (optional)")}</label><textarea id="dgn" maxLength={1000} value={f.diagram_note} onChange={set('diagram_note')}
+      placeholder={tl("For example: the lime-soda process as a flow, step by step")}/></>}
+    <p className="known" style={{marginTop:4}}>{f.diagram?tl("The AI draws an interactive diagram from the notes, once, and students open it full screen. Students on Lite see that it comes with Pro."):tl("Off: no diagram for this topic.")}</p>
     {T('sample_content','Sample content','A sample question and answer')}{T('guideline','How an answer should be','Intro, labelled diagram, steps, units, conclusion')}
     <button className="btn" disabled={busy||!f.title.trim()} onClick={save}>{edit?tl("Save changes"):tl("Save topic")}</button></div></>}
 function UnitSheet({un,cid,courses,close,done,toast}){  // courses is given to admins only: moving a unit to another course is theirs to do
